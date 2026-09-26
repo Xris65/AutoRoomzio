@@ -87,6 +87,16 @@ class StorageService {
     return prefs.getStringList('booked_dates') ?? [];
   }
 
+  Future<void> saveIgnoredDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('ignored_dates', dates);
+  }
+
+  Future<List<String>> getIgnoredDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('ignored_dates') ?? [];
+  }
+
   // ── Days (recurring) ──────────────────────────────────────────────────────
 
   Future<void> saveDays(List<int> days) async {

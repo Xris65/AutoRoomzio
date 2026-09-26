@@ -29,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime _focusedDay = DateTime.now();
   Set<String> _requestedDates = {};
   Set<String> _bookedDates = {};
+  Set<String> _ignoredDates = {};
 
   final Map<int, String> _weekDays = {
     1: 'Lundi',
@@ -49,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final name = await _storage.getWorkspaceName();
     final requested = await _storage.getRequestedDates();
     final booked = await _storage.getBookedDates();
+    final ignored = await _storage.getIgnoredDates();
     final autoEnabled = await _storage.getAutomationEnabled();
     if (mounted) {
       setState(() {
@@ -56,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _workspaceName = name;
         _requestedDates = requested.toSet();
         _bookedDates = booked.toSet();
+        _ignoredDates = ignored.toSet();
         _automationEnabled = autoEnabled;
         _isLoading = false;
       });
@@ -291,6 +294,10 @@ class _HomeScreenState extends State<HomeScreen> {
       final date = now.add(Duration(days: i));
       final dateStr = date.toIso8601String().split('T').first;
       
+      if (_ignoredDates.contains(dateStr)) {
+        continue;
+      }
+      
       if (_requestedDates.contains(dateStr)) {
         upcoming.add({"date": date, "source": "Calendrier", "isBooked": _bookedDates.contains(dateStr)});
       } else if (_automationEnabled && _selectedDays.contains(date.weekday)) {
@@ -428,6 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               _buildLegend(Colors.green, 'Réservé'),
               _buildLegend(Colors.blue, 'En attente'),
+              _buildLegend(Colors.red.withValues(alpha: 0.8), 'Bloqué'),
             ],
           ),
         )
@@ -439,6 +447,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final dateStr = day.toIso8601String().split('T').first;
     final isBooked = _bookedDates.contains(dateStr);
     final isRequested = _requestedDates.contains(dateStr);
+    final isIgnored = _ignoredDates.contains(dateStr);
 
     Color? bgColor;
     Color textColor = isOutside ? Colors.grey : Theme.of(context).colorScheme.onSurface;
@@ -448,6 +457,9 @@ class _HomeScreenState extends State<HomeScreen> {
       textColor = Colors.white;
     } else if (isRequested) {
       bgColor = Colors.blue;
+      textColor = Colors.white;
+    } else if (isIgnored) {
+      bgColor = Colors.red.withValues(alpha: 0.8);
       textColor = Colors.white;
     } else if (isToday) {
       bgColor = Colors.lightBlue.withValues(alpha: 0.3);
@@ -462,7 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
       alignment: Alignment.center,
       child: Text(
         '${day.day}',
-        style: TextStyle(color: textColor, fontWeight: (isBooked || isRequested) ? FontWeight.bold : FontWeight.normal),
+        style: TextStyle(color: textColor, fontWeight: (isBooked || isRequested || isIgnored) ? FontWeight.bold : FontWeight.normal),
       ),
     );
   }
@@ -507,6 +519,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       Set<String> newBookedDates = {};
       Set<String> newRequestedDates = Set.from(_requestedDates);
+      Set<String> newIgnoredDates = Set.from(_ignoredDates);
 
       for (final dateStr in datesToCheck) {
         final isReserved = await _api.isAlreadyReserved(dateStr, accessToken, floorId, workspaceId);
@@ -514,6 +527,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (isReserved) {
           newBookedDates.add(dateStr);
           newRequestedDates.add(dateStr);
+          newIgnoredDates.remove(dateStr); // If it's booked, override ignore
         } else {
           if (_bookedDates.contains(dateStr)) {
             // It was booked locally but not on server -> user cancelled it externally
@@ -526,9 +540,11 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _bookedDates = newBookedDates;
           _requestedDates = newRequestedDates;
+          _ignoredDates = newIgnoredDates;
         });
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
+        _storage.saveIgnoredDates(_ignoredDates.toList());
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -581,22 +597,34 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             _requestedDates.remove(dateStr);
             _bookedDates.remove(dateStr);
+            _ignoredDates.add(dateStr); // Add to ignored after canceling
             _focusedDay = day;
           });
           _storage.saveRequestedDates(_requestedDates.toList());
           _storage.saveBookedDates(_bookedDates.toList());
+          _storage.saveIgnoredDates(_ignoredDates.toList());
         } finally {
           if (mounted) setState(() => _isCalendarBusy = false);
         }
       }
       return;
     } else if (_requestedDates.contains(dateStr)) {
-      // It's only pending (blue), remove immediately without API call or popup
+      // It's pending (blue). Tapping it means user wants to ignore it.
       setState(() {
         _requestedDates.remove(dateStr);
+        _ignoredDates.add(dateStr);
         _focusedDay = day;
       });
       _storage.saveRequestedDates(_requestedDates.toList());
+      _storage.saveIgnoredDates(_ignoredDates.toList());
+      return;
+    } else if (_ignoredDates.contains(dateStr)) {
+      // It's ignored (red). Tapping it restores to Neutral.
+      setState(() {
+        _ignoredDates.remove(dateStr);
+        _focusedDay = day;
+      });
+      _storage.saveIgnoredDates(_ignoredDates.toList());
       return;
     }
 

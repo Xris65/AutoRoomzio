@@ -18,6 +18,7 @@ void callbackDispatcher() {
     
     final requestedDates = await storage.getRequestedDates();
     final bookedDates = await storage.getBookedDates();
+    final ignoredDates = await storage.getIgnoredDates();
     Set<String> newBooked = Set.from(bookedDates);
 
     if (floorId == null || workspaceId == null) {
@@ -38,6 +39,11 @@ void callbackDispatcher() {
     for (int i = 1; i <= 14; i++) {
       final targetDate = now.add(Duration(days: i));
       final dateStr = formatter.format(targetDate);
+
+      if (ignoredDates.contains(dateStr)) {
+        debugPrint("⛔ User ignored $dateStr. Skip.");
+        continue;
+      }
 
       if (daysToBook.contains(targetDate.weekday) || requestedDates.contains(dateStr)) {
         debugPrint("📅 Analyzing $dateStr");
