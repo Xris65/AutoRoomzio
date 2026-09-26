@@ -97,15 +97,11 @@ class _HomeScreenState extends State<HomeScreen> {
           existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
           constraints: Constraints(networkType: NetworkType.connected),
         );
-        
-        // Exécuter immédiatement une première fois
-        Workmanager().registerOneOffTask(
-          "immediate_run",
-          "autoReservationTask",
-          existingWorkPolicy: ExistingWorkPolicy.replace,
-          constraints: Constraints(networkType: NetworkType.connected),
-        );
       }
+      
+      // Lancer l'exécution immédiate dans l'application (synchrone pour l'UX)
+      await _runAutomationNow();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✅ Automatisation activée'), backgroundColor: Colors.green),
@@ -625,6 +621,40 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(source == 'Calendrier' ? 'Réservation supprimée' : 'Jour bloqué ($dateStr)')),
         );
+      }
+    } finally {
+      if (mounted) setState(() => _isCalendarBusy = false);
+    }
+  }
+
+  Future<void> _runAutomationNow() async {
+    setState(() => _isCalendarBusy = true);
+    try {
+      final token = await _api.refreshMyToken();
+      final workspaceId = await _storage.getWorkspaceId();
+      if (token == null || workspaceId == null) return;
+
+      final now = DateTime.now();
+      bool madeChanges = false;
+      
+      for (int i = 1; i <= 13; i++) {
+        final targetDate = now.add(Duration(days: i));
+        final dateStr = targetDate.toIso8601String().split('T').first;
+
+        if (_ignoredDates.contains(dateStr) || _bookedDates.contains(dateStr)) continue;
+
+        if (_requestedDates.contains(dateStr) || _selectedDays.contains(targetDate.weekday)) {
+          final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
+          if (success) {
+            _bookedDates.add(dateStr);
+            madeChanges = true;
+          }
+        }
+      }
+      
+      if (madeChanges) {
+        setState(() {}); // refresh UI
+        _storage.saveBookedDates(_bookedDates.toList());
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
