@@ -177,15 +177,17 @@ class _SetupScreenState extends State<SetupScreen> {
     }
   }
 
-  Future<void> _confirm() async {
-    if (_selectedWorkspace == null || _selectedFloor == null || _selectedSite == null) {
+  Future<void> _confirm(Map<String, dynamic> ws) async {
+    setState(() => _selectedWorkspace = ws);
+    
+    if (_selectedFloor == null || _selectedSite == null) {
       return;
     }
     await _storage.saveSiteId(_selectedSite!['id'].toString());
     await _storage.saveFloorId(_selectedFloor!['id'].toString());
-    await _storage.saveWorkspaceId(_selectedWorkspace!['id'].toString());
+    await _storage.saveWorkspaceId(ws['id'].toString());
     await _storage.saveWorkspaceName(
-      _selectedWorkspace!['name']?.toString() ?? _selectedWorkspace!['id'].toString(),
+      ws['name']?.toString() ?? ws['id'].toString(),
     );
 
     if (!mounted) return;
@@ -196,7 +198,6 @@ class _SetupScreenState extends State<SetupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Apply filters
     final filteredSites = _sites.where((s) {
       final name = s['name']?.toString() ?? s['id'].toString();
       return name.toLowerCase().contains(_siteSearch.toLowerCase());
@@ -231,21 +232,7 @@ class _SetupScreenState extends State<SetupScreen> {
                     if (step == 3 && _selectedRoomPrefix != null) setState(() => _currentStep = 3);
                   },
                   controlsBuilder: (context, details) {
-                    if (_currentStep == 3 && _selectedWorkspace != null) {
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 24),
-                        child: ElevatedButton(
-                          onPressed: _confirm,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size.fromHeight(50),
-                          ),
-                          child: const Text('Confirmer cette place', style: TextStyle(fontSize: 16)),
-                        ),
-                      );
-                    }
-                    return const SizedBox.shrink();
+                    return const SizedBox.shrink(); // Hide default buttons completely
                   },
                   steps: [
                     Step(
@@ -343,7 +330,7 @@ class _SetupScreenState extends State<SetupScreen> {
                           return _SelectTile(
                             label: shortName,
                             selected: _selectedWorkspace?['id'] == ws['id'],
-                            onTap: () => setState(() => _selectedWorkspace = ws),
+                            onTap: () => _confirm(ws),
                           );
                         }).toList(),
                       ),
