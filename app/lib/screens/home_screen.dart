@@ -1296,7 +1296,8 @@ class _HomeScreenState extends State<HomeScreen> {
         visibleDates.add(d.toIso8601String().split('T').first);
       }
       
-      final occupiedDates = await _api.getWorkspaceOccupancy(accessToken, workspaceId, visibleDates);
+      final floorId = await _storage.getFloorId();
+      final occupiedDates = floorId != null ? await _api.getWorkspaceOccupancy(accessToken, workspaceId, floorId, visibleDates) : <String>{};
 
       final myBookings = await _api.getMyReservations(accessToken, workspaceId);
       final bookedHere = myBookings.here;
