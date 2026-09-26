@@ -49,11 +49,20 @@ class _HomeScreenState extends State<HomeScreen> {
   int _projectionsCount = 4;
   int _bookingHorizon = 13;
   bool _hideWeekends = true; // Actif par défaut
-  bool _vacationMode = false;
+  DateTime? _vacationStart;
+  DateTime? _vacationEnd;
   bool _compactMode = false;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
   late PageController _pageController;
+
+  bool _isVacation(DateTime date) {
+    if (_vacationStart == null || _vacationEnd == null) return false;
+    final d = DateTime(date.year, date.month, date.day);
+    final s = DateTime(_vacationStart!.year, _vacationStart!.month, _vacationStart!.day);
+    final e = DateTime(_vacationEnd!.year, _vacationEnd!.month, _vacationEnd!.day);
+    return d.compareTo(s) >= 0 && d.compareTo(e) <= 0;
+  }
 
   @override
   void initState() {
@@ -95,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final initialTab = await _storage.getInitialTab();
     final horizon = await _storage.getBookingHorizon();
     final hideWe = await _storage.getHideWeekends();
-    final vac = await _storage.getVacationMode();
+    final vac = await _storage.getVacationDates();
     final comp = await _storage.getCompactMode();
     
     if (mounted) {
@@ -112,7 +121,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _projectionsCount = projCount;
         _bookingHorizon = horizon;
         _hideWeekends = hideWe;
-        _vacationMode = vac;
+        _vacationStart = vac['start'] != null ? DateTime.tryParse(vac['start']!) : null;
+        _vacationEnd = vac['end'] != null ? DateTime.tryParse(vac['end']!) : null;
         _compactMode = comp;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
@@ -340,7 +350,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_vacationMode)
+                  if (_vacationStart != null && _vacationEnd != null)
                     Container(
                       margin: const EdgeInsets.only(bottom: 16),
                       padding: const EdgeInsets.all(12),
@@ -349,14 +359,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: Colors.orange),
                       ),
-                      child: const Row(
+                      child: Row(
                         children: [
-                          Icon(Icons.beach_access, color: Colors.orange),
-                          SizedBox(width: 12),
+                          const Icon(Icons.beach_access, color: Colors.orange),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'Mode Congés activé. L\'automatisation est en pause.',
-                              style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                              'Mode Congés activé du ${_vacationStart!.day}/${_vacationStart!.month} au ${_vacationEnd!.day}/${_vacationEnd!.month}. L\'automatisation est en pause sur ces dates.',
+                              style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
                             ),
                           ),
                         ],
@@ -437,23 +447,26 @@ class _HomeScreenState extends State<HomeScreen> {
                               final todayIsWeekend = today.weekday == DateTime.saturday || today.weekday == DateTime.sunday;
                               final tomorrowIsWeekend = tomorrow.weekday == DateTime.saturday || tomorrow.weekday == DateTime.sunday;
 
-                              final disableToday = _vacationMode || (_hideWeekends && todayIsWeekend);
-                              final disableTomorrow = _vacationMode || (_hideWeekends && tomorrowIsWeekend);
+                              final todayIsVacation = _isVacation(today);
+                              final tomorrowIsVacation = _isVacation(tomorrow);
+
+                              final disableToday = todayIsVacation || (_hideWeekends && todayIsWeekend);
+                              final disableTomorrow = tomorrowIsVacation || (_hideWeekends && tomorrowIsWeekend);
 
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   ElevatedButton.icon(
                                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                    icon: Icon(_vacationMode ? Icons.beach_access : (disableToday ? Icons.weekend : Icons.flash_on), size: 16),
-                                    label: Text(_vacationMode ? 'En Congés' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
+                                    icon: Icon(todayIsVacation ? Icons.beach_access : (disableToday ? Icons.weekend : Icons.flash_on), size: 16),
+                                    label: Text(todayIsVacation ? 'En Congés' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
                                     onPressed: disableToday ? null : () => _quickBook(0),
                                   ),
                                   const SizedBox(height: 8),
                                   ElevatedButton.icon(
                                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                    icon: Icon(_vacationMode ? Icons.beach_access : (disableTomorrow ? Icons.weekend : Icons.flash_on), size: 16),
-                                    label: Text(_vacationMode ? 'En Congés' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
+                                    icon: Icon(tomorrowIsVacation ? Icons.beach_access : (disableTomorrow ? Icons.weekend : Icons.flash_on), size: 16),
+                                    label: Text(tomorrowIsVacation ? 'En Congés' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
                                     onPressed: disableTomorrow ? null : () => _quickBook(1),
                                   ),
                                 ],
@@ -525,20 +538,64 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   // ── Mode Congés ──────────────────────────────────────────────
                   Card(
-                    color: _vacationMode ? Colors.orange.withValues(alpha: 0.1) : null,
+                    color: (_vacationStart != null && _vacationEnd != null) ? Colors.orange.withValues(alpha: 0.1) : null,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
-                      side: _vacationMode ? const BorderSide(color: Colors.orange) : BorderSide.none,
+                      side: (_vacationStart != null && _vacationEnd != null) ? const BorderSide(color: Colors.orange) : BorderSide.none,
                     ),
-                    child: SwitchListTile(
+                    child: ListTile(
                       title: const Text('Mode Congés / Pause', style: TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: const Text('Suspendre toutes les réservations automatiques temporairement', style: TextStyle(fontSize: 12)),
-                      value: _vacationMode,
-                      activeColor: Colors.orange,
-                      secondary: Icon(Icons.beach_access, color: _vacationMode ? Colors.orange : Colors.grey),
-                      onChanged: (val) {
-                        setState(() => _vacationMode = val);
-                        _storage.saveVacationMode(val);
+                      subtitle: Text(
+                        (_vacationStart != null && _vacationEnd != null)
+                          ? 'Du ${_vacationStart!.day}/${_vacationStart!.month} au ${_vacationEnd!.day}/${_vacationEnd!.month}'
+                          : 'Suspendre temporairement l\'automatisation',
+                        style: TextStyle(fontSize: 12, color: (_vacationStart != null && _vacationEnd != null) ? Colors.orange : null),
+                      ),
+                      leading: Icon(Icons.beach_access, color: (_vacationStart != null && _vacationEnd != null) ? Colors.orange : Colors.grey),
+                      trailing: (_vacationStart != null && _vacationEnd != null)
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, color: Colors.orange),
+                            tooltip: 'Annuler les congés',
+                            onPressed: () {
+                              setState(() {
+                                _vacationStart = null;
+                                _vacationEnd = null;
+                              });
+                              _storage.saveVacationDates(null, null);
+                            },
+                          )
+                        : const Icon(Icons.calendar_today, color: Colors.grey, size: 20),
+                      onTap: () async {
+                        final picked = await showDateRangePicker(
+                          context: context,
+                          firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                          lastDate: DateTime.now().add(const Duration(days: 365)),
+                          initialDateRange: (_vacationStart != null && _vacationEnd != null)
+                              ? DateTimeRange(start: _vacationStart!, end: _vacationEnd!)
+                              : null,
+                          saveText: 'VALIDER',
+                          builder: (context, child) {
+                            return Theme(
+                              data: Theme.of(context).copyWith(
+                                colorScheme: Theme.of(context).colorScheme.copyWith(
+                                  primary: Colors.orange,
+                                  onPrimary: Colors.white,
+                                ),
+                              ),
+                              child: child!,
+                            );
+                          },
+                        );
+                        if (picked != null) {
+                          setState(() {
+                            _vacationStart = picked.start;
+                            _vacationEnd = picked.end;
+                          });
+                          _storage.saveVacationDates(
+                            picked.start.toIso8601String(),
+                            picked.end.toIso8601String(),
+                          );
+                        }
                       },
                     ),
                   ),
@@ -643,6 +700,7 @@ class _HomeScreenState extends State<HomeScreen> {
       bool isBooked = _bookedDates.contains(dateStr);
       bool isRequested = _requestedDates.contains(dateStr);
       bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday);
+      if (_isVacation(date)) isRecurring = false;
 
       if (isRequested) {
         upcoming.add({"date": date, "source": "Calendrier", "isBooked": isBooked});
@@ -899,10 +957,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _runAutomationNow() async {
-    if (_vacationMode) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Impossible : Le mode congés est activé.')));
-      return;
-    }
     setState(() => _isCalendarBusy = true);
     try {
       final token = await _api.refreshMyToken();
@@ -917,6 +971,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final isWeekend = targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday;
         
         if (_hideWeekends && isWeekend) continue;
+        if (_isVacation(targetDate)) continue;
 
         final dateStr = targetDate.toIso8601String().split('T').first;
 

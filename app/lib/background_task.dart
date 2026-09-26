@@ -26,10 +26,12 @@ void callbackDispatcher() {
       return Future.value(true);
     }
 
-    final vacationMode = await storage.getVacationMode();
-    if (vacationMode) {
-      debugPrint("🌴 Vacation mode is ON, skipping automation.");
-      return Future.value(true);
+    final vacationData = await storage.getVacationDates();
+    DateTime? vStart;
+    DateTime? vEnd;
+    if (vacationData['start'] != null && vacationData['end'] != null) {
+      vStart = DateTime.parse(vacationData['start']!);
+      vEnd = DateTime.parse(vacationData['end']!);
     }
 
     final token = await api.refreshMyToken();
@@ -50,6 +52,17 @@ void callbackDispatcher() {
       final isWeekend = targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday;
       
       if (hideWeekends && isWeekend) continue;
+      
+      if (vStart != null && vEnd != null) {
+        final d = DateTime(targetDate.year, targetDate.month, targetDate.day);
+        final start = DateTime(vStart.year, vStart.month, vStart.day);
+        final end = DateTime(vEnd.year, vEnd.month, vEnd.day);
+        if (d.compareTo(start) >= 0 && d.compareTo(end) <= 0) {
+          debugPrint("🌴 Vacation mode is ON for ${targetDate.toString().split(' ').first}, skipping automation.");
+          continue;
+        }
+      }
+
       final dateStr = formatter.format(targetDate);
 
       if (ignoredDates.contains(dateStr)) {

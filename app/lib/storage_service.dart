@@ -255,14 +255,23 @@ class StorageService {
   }
   // ── New Customizations ───────────────────────────────────────────────────
 
-  Future<void> saveVacationMode(bool val) async {
+  Future<void> saveVacationDates(String? startStr, String? endStr) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('vacation_mode', val);
+    if (startStr != null && endStr != null) {
+      await prefs.setString('vacation_start', startStr);
+      await prefs.setString('vacation_end', endStr);
+    } else {
+      await prefs.remove('vacation_start');
+      await prefs.remove('vacation_end');
+    }
   }
 
-  Future<bool> getVacationMode() async {
+  Future<Map<String, String?>> getVacationDates() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('vacation_mode') ?? false;
+    return {
+      'start': prefs.getString('vacation_start'),
+      'end': prefs.getString('vacation_end'),
+    };
   }
 
   Future<void> saveCompactMode(bool val) async {
