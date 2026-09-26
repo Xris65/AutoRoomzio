@@ -54,16 +54,28 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
 
     for (var feature in widget.features) {
-      final coords = feature['geometry']?['coordinates'] as List?;
+      final geom = feature['geometry'];
+      if (geom == null) continue;
+      final type = geom['type'];
+      final coords = geom['coordinates'] as List?;
       if (coords == null) continue;
-      for (var point in coords) {
-        if (point is! List || point.length < 2) continue;
-        final x = (point[0] as num).toDouble();
-        final y = (point[1] as num).toDouble();
+      
+      void processPoint(List p) {
+        if (p.length < 2) return;
+        final x = (p[0] as num).toDouble();
+        final y = (p[1] as num).toDouble();
         if (x < minX) minX = x;
         if (y < minY) minY = y;
         if (x > maxX) maxX = x;
         if (y > maxY) maxY = y;
+      }
+
+      if (type == 'Point') {
+        processPoint(coords);
+      } else {
+        for (var point in coords) {
+          if (point is List) processPoint(point);
+        }
       }
     }
 
@@ -127,20 +139,33 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
               final isBookable = workspace != null;
               final isSelected = widget.selectedWorkspaceId != null && widget.selectedWorkspaceId == wsId;
 
-              final coords = feature['geometry']?['coordinates'] as List?;
+              final geom = feature['geometry'];
+              if (geom == null) continue;
+              final type = geom['type'];
+              final coords = geom['coordinates'] as List?;
               if (coords == null || coords.isEmpty) continue;
 
               double fMinX = double.infinity, fMinY = double.infinity;
               double fMaxX = double.negativeInfinity, fMaxY = double.negativeInfinity;
-              for (var point in coords) {
-                if (point is! List || point.length < 2) continue;
-                final x = (point[0] as num).toDouble();
-                final y = (point[1] as num).toDouble();
+              
+              void processFeaturePoint(List p) {
+                if (p.length < 2) return;
+                final x = (p[0] as num).toDouble();
+                final y = (p[1] as num).toDouble();
                 if (x < fMinX) fMinX = x;
                 if (y < fMinY) fMinY = y;
                 if (x > fMaxX) fMaxX = x;
                 if (y > fMaxY) fMaxY = y;
               }
+
+              if (type == 'Point') {
+                processFeaturePoint(coords);
+              } else {
+                for (var point in coords) {
+                  if (point is List) processFeaturePoint(point);
+                }
+              }
+              if (fMinX == double.infinity) continue;
 
               final left = fMinX - minX + padding;
               final top = fMinY - minY + padding;
@@ -156,9 +181,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                  final name = workspace['name']?.toString() ?? propName ?? "";
                  final parts = name.split('-');
                  label = parts.isNotEmpty && parts.last.isNotEmpty ? parts.last : name;
-                 if (label.isEmpty) {
-                   label = "props: ${props.keys.take(3).join(',')}";
-                 }
                  
                  final lastDash = name.lastIndexOf('-');
                  if (lastDash > 0 && lastDash < name.length - 1) {
@@ -178,8 +200,24 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                  }
               } else if (!isDesk) {
                  final roomWs = wsId != null ? allWsMap[wsId] : null;
-                 final keys = props.keys.join(',');
-                 label = roomWs?['name']?.toString() ?? propName ?? "props: $keys";
+                 label = roomWs?['name']?.toString() ?? propName ?? "";
+              }
+
+              if (width == 0 && height == 0) {
+                 if (label.isEmpty) continue;
+                 featureWidgets.add(
+                   Positioned(
+                     left: left - 50,
+                     top: top - 10,
+                     width: 100,
+                     child: Text(
+                       label,
+                       textAlign: TextAlign.center,
+                       style: const TextStyle(fontSize: 10, color: Colors.black87, fontWeight: FontWeight.bold),
+                     ),
+                   )
+                 );
+                 continue;
               }
 
               Color bgColor;

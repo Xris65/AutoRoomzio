@@ -33,7 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Set<String> _requestedDates = {};
   Set<String> _bookedDates = {};
   Set<String> _ignoredDates = {};
-  Set<String> _occupiedByOthersDates = {};
+  Map<String, String> _bookedElsewhereMap = {};
 
   final Map<int, String> _weekDays = {
     1: 'Lundi',
@@ -154,7 +154,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _requestedDates = requested.toSet();
         _bookedDates = booked.toSet();
         _ignoredDates = ignored.toSet();
-        _occupiedByOthersDates = elsewhere.toSet();
+        _bookedElsewhereMap = {for (var d in elsewhere) d: "Ailleurs"};
         _automationEnabled = autoEnabled;
         _automationTime = TimeOfDay(hour: autoTimeMap['hour']!, minute: autoTimeMap['minute']!);
         _notifySuccess = notifSuccess;
@@ -252,7 +252,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _bookedDates = {};
         _requestedDates = {};
         _ignoredDates = {};
-        _occupiedByOthersDates = {};
+        _bookedElsewhereMap = {};
         _workspaceName = null;
       });
       await _storage.saveBookedDates([]);
@@ -744,12 +744,12 @@ class _HomeScreenState extends State<HomeScreen> {
       
       bool isBooked = _bookedDates.contains(dateStr);
       bool isRequested = _requestedDates.contains(dateStr);
-      bool isOccupied = _occupiedByOthersDates.contains(dateStr) && _showAllReservations;
+      bool isOccupied = _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
       bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday);
       if (_isVacation(date)) isRecurring = false;
 
       if (isOccupied) {
-        upcoming.add({"date": date, "source": "Ailleurs", "isBooked": true});
+        upcoming.add({"date": date, "source": "Ailleurs", "isBooked": true, "name": _bookedElsewhereMap[dateStr]});
       } else if (isRequested) {
         upcoming.add({"date": date, "source": "Calendrier", "isBooked": isBooked});
       } else if (isBooked) {
@@ -795,7 +795,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             title: Text('$weekDayName ${date.day}/${date.month}'),
             subtitle: Text(
-              source == 'Ailleurs' ? 'Réservé sur un autre bureau' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)'),
+              source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)'),
               style: TextStyle(color: source == 'Ailleurs' ? Colors.orange.shade900 : (isBooked ? Colors.green : Colors.blue), fontSize: _compactMode ? 10 : 12),
             ),
             trailing: Row(
@@ -934,7 +934,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final isBooked = _bookedDates.contains(dateStr);
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
-    final isOccupiedByOthers = !isBooked && _occupiedByOthersDates.contains(dateStr) && _showAllReservations;
+    final isOccupiedByOthers = !isBooked && _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
 
     Color? bgColor;
     Color textColor = isOutside ? Colors.grey : Theme.of(context).colorScheme.onSurface;
@@ -1130,7 +1130,7 @@ class _HomeScreenState extends State<HomeScreen> {
           newBookedDates.add(dateStr);
           newRequestedDates.add(dateStr);
           newIgnoredDates.remove(dateStr);
-        } else if (bookedElsewhere.contains(dateStr)) {
+        } else if (bookedElsewhere.containsKey(dateStr)) {
           // Already booked elsewhere this day — remove from requested (can't double-book)
           newRequestedDates.remove(dateStr);
         } else {
@@ -1150,12 +1150,12 @@ class _HomeScreenState extends State<HomeScreen> {
           _bookedDates = newBookedDates;
           _requestedDates = newRequestedDates;
           _ignoredDates = newIgnoredDates;
-          _occupiedByOthersDates = bookedElsewhere; // reuse field for "booked elsewhere by me"
+          _bookedElsewhereMap = bookedElsewhere; // reuse field for "booked elsewhere by me"
         });
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
-        _storage.saveBookedElsewhereDates(_occupiedByOthersDates.toList());
+        _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
         _storage.saveLastSyncTime(); // Cache TTL
       }
     } finally {
@@ -1245,11 +1245,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     leading: Icon(Icons.weekend, color: Colors.grey),
                     title: Text('Les nouvelles réservations le week-end sont désactivées.', style: TextStyle(color: Colors.grey, fontSize: 12)),
                   )
-                else if (_occupiedByOthersDates.contains(dateStr))
+                else if (_bookedElsewhereMap.containsKey(dateStr))
                   ListTile(
                     leading: Icon(Icons.person_off, color: Colors.orange.shade900),
-                    title: Text('Libérer mon autre bureau', style: TextStyle(color: Colors.orange.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
-                    subtitle: const Text("Annule la réservation que vous avez faite ailleurs ce jour-là.", style: TextStyle(fontSize: 11)),
+                    title: Text('Libérer mon autre bureau (${_bookedElsewhereMap[dateStr] ?? "Ailleurs"})', style: TextStyle(color: Colors.orange.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
+                    subtitle: const Text("Annule la réservation que vous avez faite sur cet autre bureau ce jour-là.", style: TextStyle(fontSize: 11)),
                     onTap: () => Navigator.pop(context, 'cancel_elsewhere'),
                   )
                 else
@@ -1340,9 +1340,9 @@ class _HomeScreenState extends State<HomeScreen> {
           final success = await _api.cancelBookingByDate(token, dateStr);
           if (success) {
             setState(() {
-               _occupiedByOthersDates.remove(dateStr);
+               _bookedElsewhereMap.remove(dateStr);
             });
-            _storage.saveBookedElsewhereDates(_occupiedByOthersDates.toList());
+            _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
             if (mounted) _showTopToast('Votre réservation a été annulée.', isSuccess: true);
           } else {
             if (mounted) _showTopToast('Impossible d\'annuler la réservation.', isError: true);

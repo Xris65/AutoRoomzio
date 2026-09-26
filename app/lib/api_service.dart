@@ -100,69 +100,47 @@ class RoomzApiService {
   /// Fetch ALL workspaces on a given floor (unfiltered).
   Future<List<Map<String, dynamic>>> getAllWorkspaces(String token, String siteId, String floorId) async {
     final List<Map<String, dynamic>> allWorkspaces = [];
-    final today = DateTime.now().toIso8601String().split('T').first;
+    int offset = 0;
+    final int limit = 100;
     
-    // The GET endpoints seem to be deprecated (return 404). MyRoomzWeb now uses the POST calendars endpoint.
-    // We make two requests to get both Desks and Rooms so the map has all names.
-    for (final type in ["Desk", "Room", ""]) {
-      try {
-        final postResponse = await http.post(
-          Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
+    try {
+      while (true) {
+        final url = "$_apiBase/floors/$floorId/workspaces/all?length=$limit&offset=$offset";
+        final response = await http.get(
+          Uri.parse(url),
           headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
-          body: jsonEncode({
-            "availableWorkspaceOnly": false,
-            "date": today,
-            "timeSlot": "FullDay",
-            "tagIds": [],
-            if (type.isNotEmpty) "workspaceType": type
-          }),
         );
         
-        if (postResponse.statusCode == 200) {
-          final data = jsonDecode(postResponse.body);
-          final list = data['data'] as List? ?? [];
-          for (var ws in list) {
-            // Map the calendars schema to standard workspace schema
-            final mapped = Map<String, dynamic>.from(ws);
-            mapped['id'] = ws['workspaceId'] ?? ws['id'];
-            mapped['isReservable'] = ws['isReservable'] ?? true;
-            mapped['bookable'] = ws['bookable'] ?? true;
-            mapped['isBookable'] = ws['isBookable'] ?? true;
-            mapped['type'] = type.isEmpty ? (ws['workspaceType'] ?? "Desk") : type;
-            allWorkspaces.add(mapped);
-          }
-          lastApiKeys = "POST 200 Calendars ($type)";
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          lastApiKeys = "GET 200 /workspaces/all";
+          
+          final list = data is List
+              ? List<Map<String, dynamic>>.from(data)
+              : List<Map<String, dynamic>>.from(
+                  data['data'] ?? data['workspaces'] ?? data['items'] ?? data['results'] ?? data['value'] ?? []);
+                  
+          allWorkspaces.addAll(list);
+          
+          if (list.length < limit) break; // Reached the end
+          offset += limit;
         } else {
-           debugPrint("❌ POST $type failed: ${postResponse.statusCode}");
+          debugPrint("❌ GET /workspaces/all failed: ${response.statusCode}");
+          break; // Stop on error
         }
-      } catch (e) {
-         debugPrint("❌ Exception fetching $type: $e");
       }
+    } catch (e) {
+      debugPrint("❌ Exception fetching /workspaces/all: $e");
     }
 
     if (allWorkspaces.isNotEmpty) {
-      // Remove duplicates
-      final uniqueMap = {for (var ws in allWorkspaces) ws['id']: ws};
-      
-      // The calendars endpoint doesn't include the 'name' field, it only gives workspaceId and status!
-      // We MUST fetch the GeoJSON to extract the names and merge them in.
-      try {
-        final features = await getFloorPlanData(token, siteId, floorId);
-        for (var f in features) {
-          final props = f['properties'] ?? {};
-          final wsId = props['workspaceId']?.toString();
-          if (wsId != null && uniqueMap.containsKey(wsId)) {
-            final name = props['name']?.toString() ?? props['title']?.toString() ?? props['label']?.toString() ?? props['workspaceName']?.toString() ?? props['text']?.toString() ?? props['description']?.toString();
-            if (name != null && name.isNotEmpty) {
-               uniqueMap[wsId]!['name'] = name;
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint("❌ Failed to merge names from GeoJSON: $e");
+      // Normalize schema
+      for (var ws in allWorkspaces) {
+        ws['id'] = ws['workspaceId'] ?? ws['id'];
+        ws['name'] = ws['name'] ?? ws['title'] ?? ws['label'] ?? ws['workspaceName'] ?? ws['id'];
+        ws['type'] = ws['workspaceType'] ?? ws['type'] ?? "Desk";
       }
-      
-      return uniqueMap.values.toList();
+      return allWorkspaces;
     }
 
     lastApiKeys = "ERR: 404 everywhere";
@@ -240,7 +218,7 @@ class RoomzApiService {
   /// Returns a record with:
   ///   - `here`: dates booked at the given workspaceId
   ///   - `elsewhere`: dates booked at ANY other workspace (same user, different desk)
-  Future<({Set<String> here, Set<String> elsewhere})> getMyReservations(
+  Future<({Set<String> here, Map<String, String> elsewhere})> getMyReservations(
       String token, String workspaceId) async {
     try {
       final response = await http.get(
@@ -251,7 +229,7 @@ class RoomzApiService {
         final data = jsonDecode(response.body);
         final bookings = data['bookings'] as List? ?? [];
         final Set<String> here = {};
-        final Set<String> elsewhere = {};
+        final Map<String, String> elsewhere = {};
         for (final b in bookings) {
           if (b['type'] != 'Reserved') continue;
           final dateStr = b['eventDate']?.toString().split('T').first;
@@ -259,7 +237,8 @@ class RoomzApiService {
           if (b['workspaceId'] == workspaceId) {
             here.add(dateStr);
           } else {
-            elsewhere.add(dateStr);
+            final wsName = b['workspaceName']?.toString() ?? b['workspaceTitle']?.toString() ?? b['workspace']?['name']?.toString() ?? "Ailleurs";
+            elsewhere[dateStr] = wsName;
           }
         }
         return (here: here, elsewhere: elsewhere);
@@ -268,7 +247,7 @@ class RoomzApiService {
     } catch (e) {
       debugPrint("❌ Exception getMyReservations: $e");
     }
-    return (here: <String>{}, elsewhere: <String>{});
+    return (here: <String>{}, elsewhere: <String, String>{});
   }
 
   /// Finds a booking on a specific date (any workspace) and cancels it.

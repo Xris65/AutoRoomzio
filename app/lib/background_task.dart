@@ -51,7 +51,7 @@ void callbackDispatcher() {
     // Fetch user's existing bookings — at this desk AND at other desks
     final myBookings = await api.getMyReservations(token, workspaceId);
     final bookedHere = myBookings.here;
-    final bookedElsewhere = myBookings.elsewhere;
+    final bookedElsewhere = myBookings.elsewhere.keys.toSet();
     
     // Check next 13 days (max horizon for Roomz)
     for (int i = 1; i <= 13; i++) {
