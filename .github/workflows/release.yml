@@ -1,59 +1,55 @@
-name: Build and Release Android App
+name: Release
 
 on:
   push:
     branches:
       - main
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
-  build:
-    name: Build & Release APK
+  release-please:
     runs-on: ubuntu-latest
-    
-    permissions:
-      contents: write # Needed to create releases
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
         with:
-          fetch-depth: 0 # Required for changelog generation
+          release-type: dart
+          path: app
+
+      - name: Checkout code
+        if: ${{ steps.release.outputs.release_created }}
+        uses: actions/checkout@v4
 
       - name: Setup Java
+        if: ${{ steps.release.outputs.release_created }}
         uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
 
       - name: Setup Flutter
+        if: ${{ steps.release.outputs.release_created }}
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
       - name: Install dependencies
+        if: ${{ steps.release.outputs.release_created }}
         working-directory: ./app
         run: flutter pub get
 
-      - name: Analyze code
-        working-directory: ./app
-        run: flutter analyze
-
       - name: Build APK
+        if: ${{ steps.release.outputs.release_created }}
         working-directory: ./app
         run: flutter build apk --release
 
-      - name: Generate Version Tag
-        id: generate_tag
+      - name: Upload APK to Release
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v1.0.${{ github.run_number }}"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          git tag $TAG
-          git push origin $TAG
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.generate_tag.outputs.tag }}
-          name: Release ${{ steps.generate_tag.outputs.tag }}
-          generate_release_notes: true
-          files: app/build/app/outputs/flutter-apk/app-release.apk
+          gh release upload ${{ steps.release.outputs.tag_name }} ./app/build/app/outputs/flutter-apk/app-release.apk
