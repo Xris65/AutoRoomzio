@@ -653,7 +653,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ..._vacations.map((v) {
                             return ListTile(
                               dense: true,
-                              title: Text('Du / au /'),
+                              title: Text('Du ${v.start.day}/${v.start.month}/${v.start.year} au ${v.end.day}/${v.end.month}/${v.end.year}'),
                               trailing: IconButton(
                                 icon: const Icon(Icons.delete, color: Colors.redAccent, size: 20),
                                 onPressed: () {
