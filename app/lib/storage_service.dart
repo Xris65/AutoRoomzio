@@ -321,6 +321,17 @@ class StorageService {
     return prefs.getBool('autostart_verified') ?? false;
   }
 
+  Future<void> saveLastAutomationRun() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_automation_run', DateTime.now().millisecondsSinceEpoch);
+  }
+
+  Future<DateTime?> getLastAutomationRun() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ms = prefs.getInt('last_automation_run');
+    return ms != null ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
+  }
+
   Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
