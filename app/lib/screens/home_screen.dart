@@ -590,90 +590,99 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final dateStr = day.toIso8601String().split('T').first;
+    final isBooked = _bookedDates.contains(dateStr);
+    final isRequested = _requestedDates.contains(dateStr);
+    final isIgnored = _ignoredDates.contains(dateStr);
 
-    if (_bookedDates.contains(dateStr)) {
-      // Prompt to cancel
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Annuler la réservation ?'),
-          content: Text('Voulez-vous libérer votre place pour le $dateStr ?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Non'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Oui, libérer', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        ),
-      );
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text('Gestion du $dateStr', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+              if (!isBooked && !isRequested)
+                ListTile(
+                  leading: const Icon(Icons.check_circle_outline, color: Colors.blue),
+                  title: const Text('Réserver ce jour'),
+                  onTap: () => Navigator.pop(context, 'reserve'),
+                ),
+              if (isBooked || isRequested)
+                ListTile(
+                  leading: const Icon(Icons.cancel_outlined, color: Colors.red),
+                  title: Text(isBooked ? 'Libérer la place' : 'Annuler la demande'),
+                  onTap: () => Navigator.pop(context, 'cancel'),
+                ),
+              if (!isIgnored)
+                ListTile(
+                  leading: const Icon(Icons.block, color: Colors.redAccent),
+                  title: const Text('Bloquer (Ignorer l\'automatisation)'),
+                  onTap: () => Navigator.pop(context, 'block'),
+                ),
+              if (isIgnored)
+                ListTile(
+                  leading: const Icon(Icons.lock_open, color: Colors.green),
+                  title: const Text('Débloquer ce jour'),
+                  onTap: () => Navigator.pop(context, 'unblock'),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      }
+    );
 
-      if (confirm == true) {
-        setState(() => _isCalendarBusy = true);
-        try {
+    if (action == null) return;
+
+    setState(() {
+      _isCalendarBusy = true;
+      _focusedDay = day;
+    });
+
+    try {
+      if (action == 'reserve') {
+        setState(() {
+          _ignoredDates.remove(dateStr);
+          _requestedDates.add(dateStr);
+        });
+        _storage.saveRequestedDates(_requestedDates.toList());
+        _storage.saveIgnoredDates(_ignoredDates.toList());
+
+        final accessToken = await _api.refreshMyToken();
+        final workspaceId = await _storage.getWorkspaceId();
+        if (accessToken != null && workspaceId != null) {
+          final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
+          if (success) {
+            setState(() => _bookedDates.add(dateStr));
+            _storage.saveBookedDates(_bookedDates.toList());
+          }
+        }
+      } else if (action == 'cancel' || action == 'block') {
+        if (isBooked) {
           final token = await _api.refreshMyToken();
           final workspaceId = await _storage.getWorkspaceId();
           if (token != null && workspaceId != null) {
             await _api.cancelReservation(dateStr, token, workspaceId);
           }
-          setState(() {
-            _requestedDates.remove(dateStr);
-            _bookedDates.remove(dateStr);
-            _ignoredDates.add(dateStr); // Add to ignored after canceling
-            _focusedDay = day;
-          });
-          _storage.saveRequestedDates(_requestedDates.toList());
-          _storage.saveBookedDates(_bookedDates.toList());
-          _storage.saveIgnoredDates(_ignoredDates.toList());
-        } finally {
-          if (mounted) setState(() => _isCalendarBusy = false);
         }
-      }
-      return;
-    } else if (_requestedDates.contains(dateStr)) {
-      // It's pending (blue). Tapping it means user wants to ignore it.
-      setState(() {
-        _requestedDates.remove(dateStr);
-        _ignoredDates.add(dateStr);
-        _focusedDay = day;
-      });
-      _storage.saveRequestedDates(_requestedDates.toList());
-      _storage.saveIgnoredDates(_ignoredDates.toList());
-      return;
-    } else if (_ignoredDates.contains(dateStr)) {
-      // It's ignored (red). Tapping it restores to Neutral.
-      setState(() {
-        _ignoredDates.remove(dateStr);
-        _focusedDay = day;
-      });
-      _storage.saveIgnoredDates(_ignoredDates.toList());
-      return;
-    }
-
-    // Otherwise, toggle on and attempt to book
-    setState(() {
-      _focusedDay = day;
-      _requestedDates.add(dateStr);
-      _isCalendarBusy = true;
-    });
-
-    try {
-      _storage.saveRequestedDates(_requestedDates.toList());
-
-      final accessToken = await _api.refreshMyToken();
-      if (accessToken == null) return;
-      final workspaceId = await _storage.getWorkspaceId();
-      if (workspaceId == null) return;
-
-      final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
-      if (success) {
         setState(() {
-          _bookedDates.add(dateStr);
+          _requestedDates.remove(dateStr);
+          _bookedDates.remove(dateStr);
+          if (action == 'block' || isBooked) {
+            _ignoredDates.add(dateStr);
+          }
         });
+        _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveBookedDates(_bookedDates.toList());
+        _storage.saveIgnoredDates(_ignoredDates.toList());
+      } else if (action == 'unblock') {
+        setState(() => _ignoredDates.remove(dateStr));
+        _storage.saveIgnoredDates(_ignoredDates.toList());
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
