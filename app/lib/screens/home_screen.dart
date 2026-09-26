@@ -159,15 +159,18 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           _buildHomeTab(),
           _buildCalendarTab(),
+          _buildAutomationTab(),
           _buildSettingsTab(),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
+        type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Accueil'),
           BottomNavigationBarItem(icon: Icon(Icons.calendar_month_rounded), label: 'Calendrier'),
+          BottomNavigationBarItem(icon: Icon(Icons.auto_awesome), label: 'Automate'),
           BottomNavigationBarItem(icon: Icon(Icons.settings_rounded), label: 'Paramètres'),
         ],
       ),
@@ -223,6 +226,48 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 24),
 
+          // ── Prochaines réservations ──────────────────────────────────
+          if (_workspaceName != null) ...[
+            const Text(
+              '🔮 Prochaines réservations',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            _buildUpcomingBookings(),
+          ],
+          if (_workspaceName == null)
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: Text(
+                'Configurez d\'abord votre bureau en cliquant sur la carte ci-dessus.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAutomationTab() {
+    if (_workspaceName == null) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Configurez d\'abord votre bureau dans l\'onglet Accueil pour utiliser l\'automatisation.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
           // ── Toggle Automatisation ────────────────────────────────────
           Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -230,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Automatisation', style: TextStyle(fontWeight: FontWeight.bold)),
               subtitle: const Text('Réserver automatiquement mes places', style: TextStyle(fontSize: 12)),
               value: _automationEnabled,
-              onChanged: _workspaceName == null ? null : _toggleAutomation,
+              onChanged: _toggleAutomation,
               secondary: Icon(
                 _automationEnabled ? Icons.auto_awesome : Icons.auto_awesome_outlined,
                 color: _automationEnabled ? Colors.green : Colors.grey,
@@ -241,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
           // ── Jours récurrents ─────────────────────────────────────────
           const Text(
-            '📅 Jours de présence au bureau',
+            '📅 Jours de présence récurrents',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
@@ -262,26 +307,6 @@ class _HomeScreenState extends State<HomeScreen> {
               }).toList(),
             ),
           ),
-          const SizedBox(height: 24),
-
-          // ── Prochaines réservations ──────────────────────────────────
-          if (_workspaceName != null) ...[
-            const Text(
-              '🔮 Prochaines réservations',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            _buildUpcomingBookings(),
-          ],
-          if (_workspaceName == null)
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: Text(
-                'Configurez d\'abord votre bureau en cliquant sur la carte ci-dessus.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
-            ),
         ],
       ),
     );
