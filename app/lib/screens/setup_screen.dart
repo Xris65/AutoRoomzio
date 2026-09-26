@@ -86,11 +86,19 @@ class _SetupScreenState extends State<SetupScreen> {
         setState(() {
           _sites = sites;
           
-          if (initialWorkspace != null && initialRoomPrefix != null) {
+          if (initialSite != null) {
             _selectedSite = initialSite;
             _floors = initialFloors;
+            _currentStep = 1;
+          }
+          
+          if (initialFloor != null) {
             _selectedFloor = initialFloor;
             _rooms = initialRooms;
+            _currentStep = 2;
+          }
+          
+          if (initialWorkspace != null && initialRoomPrefix != null) {
             _selectedRoomPrefix = initialRoomPrefix;
             _selectedWorkspace = initialWorkspace;
             _currentStep = 3;
