@@ -1,3 +1,4 @@
+﻿import '../storage_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -11,8 +12,10 @@ class OptimizationScreen extends StatefulWidget {
 }
 
 class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBindingObserver {
+  final _storage = StorageService();
   bool _isBatteryOptimized = true;
   bool _isNotifGranted = false;
+  bool _isAutostartVerified = false;
 
   @override
   void initState() {
@@ -140,7 +143,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
             _PermissionTile(
               title: "Démarrage Automatique",
               description: "Requis (surtout Xiaomi, Huawei, Oppo) pour relancer l'automatisation après un redémarrage.",
-              isOk: null, // We can't definitively check this
+              isOk: _isAutostartVerified,
               onTap: _requestAutoStart,
               actionLabel: "Vérifier l'autostart",
             ),
@@ -251,3 +254,5 @@ class _PermissionTile extends StatelessWidget {
     );
   }
 }
+
+
