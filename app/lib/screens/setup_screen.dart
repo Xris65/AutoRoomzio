@@ -321,15 +321,27 @@ class _SelectTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    
     return Card(
-      color: selected ? Colors.blue.shade50 : null,
+      elevation: selected ? 0 : 1,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: selected ? const BorderSide(color: Colors.blue, width: 2) : BorderSide.none,
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: selected ? colorScheme.primary : Colors.transparent,
+          width: 2,
+        ),
       ),
+      color: selected ? colorScheme.primaryContainer : null,
       child: ListTile(
-        title: Text(label),
-        trailing: selected ? const Icon(Icons.check_circle, color: Colors.blue) : null,
+        title: Text(
+          label,
+          style: TextStyle(
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+            color: selected ? colorScheme.onPrimaryContainer : null,
+          ),
+        ),
+        trailing: selected ? Icon(Icons.check_circle, color: colorScheme.primary) : null,
         onTap: onTap,
       ),
     );
