@@ -750,11 +750,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                     final messenger = ScaffoldMessenger.of(context);
                                     messenger.showSnackBar(SnackBar(content: Text('Annulation de ${conflicts.length} journée(s)...')));
                                     
-                                    for (final dateStr in conflicts) {
-                                      final token = await _api.refreshMyToken();
-                                      if (token != null) {
-                                        await _api.cancelBookingByDate(token, dateStr);
-                                      }
+                                    final token = await _api.refreshMyToken();
+                                    if (token != null) {
+                                      await Future.wait(
+                                        conflicts.map((dateStr) => _api.cancelBookingByDate(token, dateStr))
+                                      );
                                     }
                                     
                                     if (toCleanLocally.isNotEmpty) {
