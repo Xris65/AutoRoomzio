@@ -94,58 +94,117 @@ class RoomzApiService {
     return [];
   }
 
-  /// Fetch workspaces on a given floor.
-  Future<List<Map<String, dynamic>>> getWorkspaces(String token, String floorId) async {
-    final response = await http.get(
-      Uri.parse("$_apiBase/floors/$floorId/workspaces/all?length=100&offset=0"),
-      headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
-    );
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      var list = data is List 
-          ? List<Map<String, dynamic>>.from(data)
-          : List<Map<String, dynamic>>.from(data['data'] ?? []);
-          
-      // Filtrer les vraies salles (non réservables ou de type Room)
-      return list.where((ws) {
-        if (ws['isReservable'] == false) return false;
-        if (ws['bookable'] == false) return false;
-        if (ws['isBookable'] == false) return false;
-        if (ws['type'] == 'Room') return false;
-        if (ws['type'] == 1) return false; // 1 = Room, 0 = Desk dans certains schémas
-        return true;
-      }).toList();
+  // Debug variable to store API keys
+  static String lastApiKeys = "";
+
+  /// Fetch ALL workspaces on a given floor (unfiltered).
+  Future<List<Map<String, dynamic>>> getAllWorkspaces(String token, String siteId, String floorId) async {
+    final List<Map<String, dynamic>> allWorkspaces = [];
+    final today = DateTime.now().toIso8601String().split('T').first;
+    
+    // The GET endpoints seem to be deprecated (return 404). MyRoomzWeb now uses the POST calendars endpoint.
+    // We make two requests to get both Desks and Rooms so the map has all names.
+    for (final type in ["Desk", "Room", ""]) {
+      try {
+        final postResponse = await http.post(
+          Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
+          headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+          body: jsonEncode({
+            "availableWorkspaceOnly": false,
+            "date": today,
+            "timeSlot": "FullDay",
+            "tagIds": [],
+            if (type.isNotEmpty) "workspaceType": type
+          }),
+        );
+        
+        if (postResponse.statusCode == 200) {
+          final data = jsonDecode(postResponse.body);
+          final list = data['data'] as List? ?? [];
+          for (var ws in list) {
+            // Map the calendars schema to standard workspace schema
+            final mapped = Map<String, dynamic>.from(ws);
+            mapped['id'] = ws['workspaceId'] ?? ws['id'];
+            mapped['isReservable'] = ws['isReservable'] ?? true;
+            mapped['bookable'] = ws['bookable'] ?? true;
+            mapped['isBookable'] = ws['isBookable'] ?? true;
+            mapped['type'] = type.isEmpty ? (ws['workspaceType'] ?? "Desk") : type;
+            allWorkspaces.add(mapped);
+          }
+          lastApiKeys = "POST 200 Calendars ($type)";
+        } else {
+           debugPrint("❌ POST $type failed: ${postResponse.statusCode}");
+        }
+      } catch (e) {
+         debugPrint("❌ Exception fetching $type: $e");
+      }
     }
-    debugPrint("❌ getWorkspaces ${response.statusCode}: ${response.body}");
+
+    if (allWorkspaces.isNotEmpty) {
+      // Remove duplicates
+      final uniqueMap = {for (var ws in allWorkspaces) ws['id']: ws};
+      
+      // The calendars endpoint doesn't include the 'name' field, it only gives workspaceId and status!
+      // We MUST fetch the GeoJSON to extract the names and merge them in.
+      try {
+        final features = await getFloorPlanData(token, siteId, floorId);
+        for (var f in features) {
+          final props = f['properties'] ?? {};
+          final wsId = props['workspaceId']?.toString();
+          if (wsId != null && uniqueMap.containsKey(wsId)) {
+            final name = props['name']?.toString() ?? props['title']?.toString() ?? props['label']?.toString() ?? props['workspaceName']?.toString() ?? props['text']?.toString() ?? props['description']?.toString();
+            if (name != null && name.isNotEmpty) {
+               uniqueMap[wsId]!['name'] = name;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("❌ Failed to merge names from GeoJSON: $e");
+      }
+      
+      return uniqueMap.values.toList();
+    }
+
+    lastApiKeys = "ERR: 404 everywhere";
+    return [];
+  }
+
+  /// Fetch only bookable (desk) workspaces — filters from getAllWorkspaces.
+  Future<List<Map<String, dynamic>>> getWorkspaces(String token, String siteId, String floorId) async {
+    final all = await getAllWorkspaces(token, siteId, floorId);
+    return all.where((ws) {
+      if (ws['isReservable'] == false) return false;
+      if (ws['bookable'] == false) return false;
+      if (ws['isBookable'] == false) return false;
+      if (ws['type'] == 'Room') return false;
+      if (ws['type'] == 1) return false;
+      return true;
+    }).toList();
+  }
+
+  /// Fetch floor plan GeoJSON data for 2D map.
+  Future<List<Map<String, dynamic>>> getFloorPlanData(String token, String siteId, String floorId) async {
+    try {
+      final response = await http.get(
+        Uri.parse("$_apiBase/buildings/$siteId/floors/$floorId/data"),
+        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['features'] != null) {
+          return List<Map<String, dynamic>>.from(data['features']);
+        }
+      }
+      debugPrint("❌ getFloorPlanData ${response.statusCode}: ${response.body}");
+    } catch (e) {
+      debugPrint("❌ Exception getFloorPlanData: $e");
+    }
     return [];
   }
 
   // ── Reservations ─────────────────────────────────────────────────────────
 
-  Future<bool> isAlreadyReserved(
-      String date, String token, String floorId, String workspaceId) async {
-    final response = await http.post(
-      Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
-      headers: _authHeaders(token),
-      body: jsonEncode({
-        "availableWorkspaceOnly": false,
-        "date": date,
-        "timeSlot": "FullDay",
-        "tagIds": [],
-      }),
-    );
-    if (response.statusCode == 200) {
-      final workspaces = List.from(jsonDecode(response.body)['data'] ?? []);
-      for (var ws in workspaces) {
-        if (ws['workspaceId'] == workspaceId) {
-          return ws['status'] != "Available";
-        }
-      }
-      return false;
-    }
-    debugPrint("❌ isAlreadyReserved ${response.statusCode}: ${response.body}");
-    return false;
-  }
+
 
   Future<bool> reserveWorkspace(
       String date, String token, String workspaceId) async {
@@ -166,19 +225,103 @@ class RoomzApiService {
       debugPrint("✅ Booked $date");
       return true;
     } else if (response.statusCode == 409) {
-      debugPrint("⚠️ Already booked $date");
-      return true; // Consider it successfully booked since it's reserved
+      debugPrint("⚠️ Conflict (Already booked by someone else) $date");
+      return false;
+    } else if (response.statusCode == 400) {
+      debugPrint("⚠️ Not available (already booked elsewhere or unavailable) $date");
+      return false;
     } else {
       debugPrint("❌ reserveWorkspace ${response.statusCode} $date: ${response.body}");
-      return false; // Out of range or error
+      return false;
     }
   }
 
-  /// TODO: Needs the exact MyRoomz API endpoint to fetch user's bookings.
-  Future<List<String>> getMyReservations(String token) async {
-    // We need the URL (e.g. GET /users/me/bookings)
-    // For now, return empty list.
-    return [];
+  /// Fetch the user's own bookings.
+  /// Returns a record with:
+  ///   - `here`: dates booked at the given workspaceId
+  ///   - `elsewhere`: dates booked at ANY other workspace (same user, different desk)
+  Future<({Set<String> here, Set<String> elsewhere})> getMyReservations(
+      String token, String workspaceId) async {
+    try {
+      final response = await http.get(
+        Uri.parse("$_apiBase/users/current/bookings"),
+        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final bookings = data['bookings'] as List? ?? [];
+        final Set<String> here = {};
+        final Set<String> elsewhere = {};
+        for (final b in bookings) {
+          if (b['type'] != 'Reserved') continue;
+          final dateStr = b['eventDate']?.toString().split('T').first;
+          if (dateStr == null) continue;
+          if (b['workspaceId'] == workspaceId) {
+            here.add(dateStr);
+          } else {
+            elsewhere.add(dateStr);
+          }
+        }
+        return (here: here, elsewhere: elsewhere);
+      }
+      debugPrint("❌ getMyReservations ${response.statusCode}: ${response.body}");
+    } catch (e) {
+      debugPrint("❌ Exception getMyReservations: $e");
+    }
+    return (here: <String>{}, elsewhere: <String>{});
+  }
+
+  /// Finds a booking on a specific date (any workspace) and cancels it.
+  Future<bool> cancelBookingByDate(String token, String dateStr) async {
+    try {
+      final response = await http.get(
+        Uri.parse("$_apiBase/users/current/bookings"),
+        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final bookings = data['bookings'] as List? ?? [];
+        for (final b in bookings) {
+          if (b['type'] != 'Reserved') continue;
+          final bDate = b['eventDate']?.toString().split('T').first;
+          if (bDate == dateStr) {
+            final wsId = b['workspaceId']?.toString();
+            if (wsId != null) {
+              return await cancelReservation(dateStr, token, wsId);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("❌ Exception cancelBookingByDate: $e");
+    }
+    return false;
+  }
+
+  /// Fetch dates where the same workspace is booked by someone ELSE.
+  /// Uses the same /users/current/bookings endpoint but looks for OTHER workspaceIds
+  /// sharing the same floor — we detect occupation via a separate endpoint.
+  /// Simpler: just try POSTing a reservation; a 409 means occupied. 
+  /// Best approach: GET /workspaces/{id}/bookings or check workspace events.
+  Future<Set<String>> getWorkspaceOccupancy(String token, String workspaceId, List<String> dates) async {
+    final Set<String> occupied = {};
+    for (final date in dates) {
+      try {
+        final response = await http.get(
+          Uri.parse("$_apiBase/workspaces/$workspaceId/events/$date"),
+          headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+        );
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          // If events exist and it's not our own booking, it's occupied
+          if (data != null && (data is List ? data.isNotEmpty : data['id'] != null)) {
+            occupied.add(date);
+          }
+        }
+        // 404 = no booking on that date, skip
+      } catch (_) {}
+    }
+    return occupied;
   }
 
   Future<bool> cancelReservation(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../api_service.dart';
 import '../storage_service.dart';
 import 'home_screen.dart';
+import '../widgets/workspace_map_viewer.dart';
 
 class SetupScreen extends StatefulWidget {
   final String accessToken;
@@ -17,6 +18,9 @@ class _SetupScreenState extends State<SetupScreen> {
 
   List<Map<String, dynamic>> _sites = [];
   List<Map<String, dynamic>> _floors = [];
+  List<Map<String, dynamic>> _floorFeatures = [];
+  List<Map<String, dynamic>> _allWorkspaces = [];
+  bool _showMap = true;
 
   Map<String, dynamic>? _selectedSite;
   Map<String, dynamic>? _selectedFloor;
@@ -57,7 +61,12 @@ class _SetupScreenState extends State<SetupScreen> {
           
           if (savedFloorId != null) {
             initialFloor = initialFloors.firstWhere((f) => f['id'].toString() == savedFloorId);
-            final workspaces = await _api.getWorkspaces(widget.accessToken, savedFloorId);
+            final workspaces = await _api.getWorkspaces(widget.accessToken, savedSiteId, savedFloorId);
+            final initialFeatures = await _api.getFloorPlanData(widget.accessToken, savedSiteId, savedFloorId);
+            
+            if (mounted) {
+               _floorFeatures = initialFeatures;
+            }
             
             for (final ws in workspaces) {
               final String name = ws['name']?.toString() ?? ws['id'].toString();
@@ -160,14 +169,28 @@ class _SetupScreenState extends State<SetupScreen> {
       _loadingWorkspaces = true;
       _currentStep = 2;
     });
-    final workspaces = await _api.getWorkspaces(widget.accessToken, floor['id'].toString());
     
+    final siteId = _selectedSite!['id'].toString();
+    final floorId = floor['id'].toString();
+    
+    // Un seul appel API, on filtre localement
+    final allWs = await _api.getAllWorkspaces(widget.accessToken, siteId, floorId);
+    final features = await _api.getFloorPlanData(widget.accessToken, siteId, floorId);
+
+    final bookable = allWs.where((ws) {
+      if (ws['isReservable'] == false) return false;
+      if (ws['bookable'] == false) return false;
+      if (ws['isBookable'] == false) return false;
+      if (ws['type'] == 'Room') return false;
+      if (ws['type'] == 1) return false;
+      return true;
+    }).toList();
+
     final Map<String, List<Map<String, dynamic>>> grouped = {};
-    for (final ws in workspaces) {
+    for (final ws in bookable) {
       final String name = ws['name']?.toString() ?? ws['id'].toString();
       final lastDash = name.lastIndexOf('-');
       String roomName = name;
-      
       if (lastDash > 0 && lastDash < name.length - 1) {
         final suffix = name.substring(lastDash + 1);
         if (suffix.length <= 4 && !suffix.contains(' ')) {
@@ -180,6 +203,8 @@ class _SetupScreenState extends State<SetupScreen> {
     if (mounted) {
       setState(() {
         _rooms = grouped;
+        _floorFeatures = features;
+        _allWorkspaces = allWs;
         _loadingWorkspaces = false;
       });
     }
@@ -239,7 +264,8 @@ class _SetupScreenState extends State<SetupScreen> {
                   ),
                 )
               : Stepper(
-                  currentStep: _currentStep,
+                  key: ValueKey(_showMap),
+                  currentStep: _showMap && _currentStep > 2 ? 2 : _currentStep,
                   onStepTapped: (step) {
                     if (step == 0) setState(() => _currentStep = 0);
                     if (step == 1 && _selectedSite != null) setState(() => _currentStep = 1);
@@ -295,61 +321,134 @@ class _SetupScreenState extends State<SetupScreen> {
                             ),
                     ),
                     Step(
-                      title: const Text('Zone / Salle'),
-                      subtitle: _selectedRoomPrefix != null && _currentStep != 2
-                          ? Text(_selectedRoomPrefix!)
+                      title: Text(_showMap ? 'Place (Plan 2D)' : 'Zone / Salle'),
+                      subtitle: _selectedWorkspace != null && _currentStep != 2
+                          ? Text(_showMap ? (_selectedWorkspace!['name']?.toString() ?? '') : (_selectedRoomPrefix ?? ''))
                           : null,
-                      state: _selectedRoomPrefix != null ? StepState.complete : StepState.editing,
+                      state: (_showMap ? _selectedWorkspace != null : _selectedRoomPrefix != null) ? StepState.complete : StepState.editing,
                       isActive: _currentStep >= 2,
                       content: _loadingWorkspaces
                           ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())
                           : Column(
                               children: [
-                                if (_rooms.length > 5)
-                                  _buildSearchBar('Rechercher une salle...', (v) => setState(() => _roomSearch = v)),
-                                ...filteredRooms.map((roomName) {
-                                  final count = _rooms[roomName]!.length;
-                                  return _SelectTile(
-                                    label: "$roomName ($count place${count > 1 ? 's' : ''})",
-                                    selected: _selectedRoomPrefix == roomName,
-                                    onTap: () {
-                                      setState(() {
-                                        _selectedRoomPrefix = roomName;
-                                        _selectedWorkspace = null;
-                                        _currentStep = 3;
-                                      });
+                                if (_floorFeatures.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 16),
+                                    child: SegmentedButton<bool>(
+                                      segments: const [
+                                        ButtonSegment(value: true, label: Text('Plan 2D'), icon: Icon(Icons.map)),
+                                        ButtonSegment(value: false, label: Text('Liste'), icon: Icon(Icons.list)),
+                                      ],
+                                      selected: {_showMap},
+                                      onSelectionChanged: (val) => setState(() {
+                                        _showMap = val.first;
+                                        if (_showMap && _currentStep > 2) {
+                                          _currentStep = 2; // Prevent Stepper index out of bounds
+                                        }
+                                      }),
+                                    ),
+                                  ),
+                                if (_showMap)
+                                  LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      // Use 55% of screen height, min 300, max 600
+                                      final screenH = MediaQuery.of(context).size.height;
+                                      final mapH = (screenH * 0.55).clamp(300.0, 600.0);
+                                      return SizedBox(
+                                        height: mapH,
+                                        child: WorkspaceMapViewer(
+                                          features: _floorFeatures,
+                                          workspaces: _rooms.values.expand((x) => x).toList(),
+                                          allWorkspaces: _allWorkspaces,
+                                          selectedWorkspaceId: _selectedWorkspace?['id'],
+                                          containerHeight: mapH,
+                                          onSelected: (ws) {
+                                            // Auto select room prefix and workspace
+                                            final String name = ws['name']?.toString() ?? ws['id'].toString();
+                                            final lastDash = name.lastIndexOf('-');
+                                            String roomName = name;
+                                            if (lastDash > 0 && lastDash < name.length - 1) {
+                                              final suffix = name.substring(lastDash + 1);
+                                              if (suffix.length <= 4 && !suffix.contains(' ')) {
+                                                roomName = name.substring(0, lastDash);
+                                              }
+                                            }
+                                            setState(() {
+                                              _selectedRoomPrefix = roomName;
+                                            });
+                                            _confirm(ws);
+                                          },
+                                        ),
+                                      );
                                     },
-                                  );
-                                }),
-                                if (filteredRooms.isEmpty)
-                                  const Padding(padding: EdgeInsets.all(16), child: Text('Aucun résultat')),
+                                  )
+                                else ...[
+                                  if (_rooms.length > 5)
+                                    _buildSearchBar('Rechercher une salle...', (v) => setState(() => _roomSearch = v)),
+                                  ...filteredRooms.map((roomName) {
+                                    final count = _rooms[roomName]!.length;
+                                    return _SelectTile(
+                                      label: "$roomName ($count place${count > 1 ? 's' : ''})",
+                                      selected: _selectedRoomPrefix == roomName,
+                                      onTap: () {
+                                        setState(() {
+                                          _selectedRoomPrefix = roomName;
+                                          _selectedWorkspace = null;
+                                          _currentStep = 3;
+                                        });
+                                      },
+                                    );
+                                  }),
+                                  if (filteredRooms.isEmpty)
+                                    const Padding(padding: EdgeInsets.all(16), child: Text('Aucun résultat')),
+                                ],
                               ],
                             ),
                     ),
-                    Step(
-                      title: const Text('Place exacte'),
-                      subtitle: _selectedWorkspace != null && _currentStep != 3
-                          ? Text(_selectedWorkspace!['name']?.toString() ?? '')
-                          : null,
-                      state: _selectedWorkspace != null ? StepState.complete : StepState.editing,
-                      isActive: _currentStep >= 3,
-                      content: Column(
-                        children: (_selectedRoomPrefix != null ? _rooms[_selectedRoomPrefix!] ?? [] : []).map((ws) {
-                          final name = ws['name']?.toString() ?? ws['id'].toString();
-                          final lastDash = name.lastIndexOf('-');
-                          String shortName = name;
-                          if (lastDash > 0 && lastDash < name.length - 1) {
-                            final suffix = name.substring(lastDash + 1);
-                            if (suffix.length <= 4) shortName = "Place $suffix";
-                          }
-                          return _SelectTile(
-                            label: shortName,
-                            selected: _selectedWorkspace?['id'] == ws['id'],
-                            onTap: () => _confirm(ws),
-                          );
-                        }).toList(),
+                    if (!_showMap)
+                      Step(
+                        title: const Text('Place exacte'),
+                        subtitle: _selectedWorkspace != null && _currentStep != 3
+                            ? Text(_selectedWorkspace!['name']?.toString() ?? '')
+                            : null,
+                        state: _selectedWorkspace != null ? StepState.complete : StepState.editing,
+                        isActive: _currentStep >= 3,
+                        content: Column(
+                          children: [
+                            if (_floorFeatures.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: SegmentedButton<bool>(
+                                  segments: const [
+                                    ButtonSegment(value: true, label: Text('Plan 2D'), icon: Icon(Icons.map)),
+                                    ButtonSegment(value: false, label: Text('Liste'), icon: Icon(Icons.list)),
+                                  ],
+                                  selected: {_showMap},
+                                  onSelectionChanged: (val) => setState(() {
+                                    _showMap = val.first;
+                                    if (_showMap && _currentStep > 2) {
+                                      _currentStep = 2; // Prevent Stepper index out of bounds
+                                    }
+                                  }),
+                                ),
+                              ),
+                            ...(_selectedRoomPrefix != null ? _rooms[_selectedRoomPrefix!] ?? [] : []).map((ws) {
+                                final name = ws['name']?.toString() ?? ws['id'].toString();
+                                final lastDash = name.lastIndexOf('-');
+                                String shortName = name;
+                                if (lastDash > 0 && lastDash < name.length - 1) {
+                                  final suffix = name.substring(lastDash + 1);
+                                  if (suffix.length <= 4) shortName = "Place $suffix";
+                                }
+                                return _SelectTile(
+                                  label: shortName,
+                                  selected: _selectedWorkspace?['id'] == ws['id'],
+                                  onTap: () => _confirm(ws),
+                                );
+                              }).toList(),
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
     );

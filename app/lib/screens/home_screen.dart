@@ -2,13 +2,12 @@ import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:android_intent_plus/android_intent.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
 import '../storage_service.dart';
 import 'login_screen.dart';
 import 'setup_screen.dart';
+import 'optimization_screen.dart';
 import '../widgets/fun_loading_widget.dart';
 import '../main.dart'; // for themeNotifier
 
@@ -34,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Set<String> _requestedDates = {};
   Set<String> _bookedDates = {};
   Set<String> _ignoredDates = {};
+  Set<String> _occupiedByOthersDates = {};
 
   final Map<int, String> _weekDays = {
     1: 'Lundi',
@@ -52,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime? _vacationStart;
   DateTime? _vacationEnd;
   bool _compactMode = false;
+  bool _showAllReservations = true;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
   late PageController _pageController;
@@ -135,6 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final requested = await _storage.getRequestedDates();
     final booked = await _storage.getBookedDates();
     final ignored = await _storage.getIgnoredDates();
+    final elsewhere = await _storage.getBookedElsewhereDates();
     final autoEnabled = await _storage.getAutomationEnabled();
     final autoTimeMap = await _storage.getAutomationTime();
     final notifSuccess = await _storage.getNotifySuccess();
@@ -152,6 +154,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _requestedDates = requested.toSet();
         _bookedDates = booked.toSet();
         _ignoredDates = ignored.toSet();
+        _occupiedByOthersDates = elsewhere.toSet();
         _automationEnabled = autoEnabled;
         _automationTime = TimeOfDay(hour: autoTimeMap['hour']!, minute: autoTimeMap['minute']!);
         _notifySuccess = notifSuccess;
@@ -169,17 +172,8 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    // ── Sync cache: skip if last sync was less than 15 minutes ago ──────────
-    final lastSync = await _storage.getLastSyncTime();
-    final shouldSync = lastSync == null ||
-        DateTime.now().difference(lastSync).inMinutes >= 15;
-
-    if (shouldSync) {
-      await _syncCalendar();
-    } else {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
+    // Fetch latest bookings from API every time
+    await _syncCalendar();
 
     if (mounted) {
       setState(() => _isLoading = false);
@@ -208,20 +202,12 @@ class _HomeScreenState extends State<HomeScreen> {
           constraints: Constraints(networkType: NetworkType.connected),
         );
 
-        // Demander d'ignorer les optimisations de batterie (important pour Workmanager)
-        final isIgnored = await Permission.ignoreBatteryOptimizations.isGranted;
-        if (!isIgnored && mounted) {
-          await Permission.ignoreBatteryOptimizations.request();
+        // Au lieu de demander brusquement, on ouvre l'écran d'optimisation
+        if (mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const OptimizationScreen()),
+          );
         }
-
-        // Demander l'autorisation d'envoyer des notifications (Android 13+)
-        final notifGranted = await Permission.notification.isGranted;
-        if (!notifGranted && mounted) {
-          await Permission.notification.request();
-        }
-
-        // Demander l'autostart manuellement via android_intent_plus (pour Xiaomi, Huawei, etc.)
-        await _requestAutoStart();
       }
       if (mounted) {
         _showTopToast('Automatisation activée', isSuccess: true);
@@ -236,47 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _requestAutoStart() async {
-    if (!Platform.isAndroid) return;
-    
-    // Intents connus pour le démarrage automatique (autostart)
-    final intents = [
-      // Xiaomi
-      {'package': 'com.miui.securitycenter', 'component': 'com.miui.permcenter.autostart.AutoStartManagementActivity'},
-      // Huawei
-      {'package': 'com.huawei.systemmanager', 'component': 'com.huawei.systemmanager.optimize.process.ProtectActivity'},
-      {'package': 'com.huawei.systemmanager', 'component': 'com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity'},
-      // Oppo
-      {'package': 'com.coloros.safecenter', 'component': 'com.coloros.safecenter.permission.startup.StartupAppListActivity'},
-      {'package': 'com.coloros.safecenter', 'component': 'com.coloros.safecenter.startupapp.StartupAppListActivity'},
-      {'package': 'com.oppo.safe', 'component': 'com.oppo.safe.permission.startup.StartupAppListActivity'},
-      // Vivo
-      {'package': 'com.iqoo.secure', 'component': 'com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity'},
-      {'package': 'com.vivo.permissionmanager', 'component': 'com.vivo.permissionmanager.activity.BgStartUpManagerActivity'},
-      // Asus
-      {'package': 'com.asus.mobilemanager', 'component': 'com.asus.mobilemanager.entry.FunctionActivity'},
-      // Samsung (sometimes needed for older devices, though usually normal battery opt is enough)
-      {'package': 'com.samsung.android.lool', 'component': 'com.samsung.android.sm.ui.battery.BatteryActivity'},
-    ];
 
-    for (final intentDict in intents) {
-      try {
-        final intent = AndroidIntent(
-          action: 'android.intent.action.MAIN',
-          package: intentDict['package'],
-          componentName: intentDict['component'],
-        );
-        final canResolve = await intent.canResolveActivity();
-        if (canResolve ?? false) {
-          await intent.launch();
-          break; // Stop at the first working intent
-        }
-      } catch (e) {
-        debugPrint("Failed to launch intent ${intentDict['package']}: $e");
-      }
-    }
-  }
-  
   void _onDayToggled(int day, bool selected) {
     setState(() {
       if (selected) {
@@ -301,7 +247,20 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (didChange == true) {
-      _loadData();
+      // Réinitialiser les dates liées à l'ancien bureau
+      setState(() {
+        _bookedDates = {};
+        _requestedDates = {};
+        _ignoredDates = {};
+        _occupiedByOthersDates = {};
+        _workspaceName = null;
+      });
+      await _storage.saveBookedDates([]);
+      await _storage.saveRequestedDates([]);
+      await _storage.saveIgnoredDates([]);
+      await _storage.saveBookedElsewhereDates([]);
+      await _storage.saveLastSyncTime(forceReset: true); // bypass cache
+      await _loadData();
     }
   }
 
@@ -543,9 +502,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   // ── Prochaines réservations ──────────────────────────────────
                   if (_workspaceName != null) ...[
-                    const Text(
-                      '🔮 Prochaines réservations',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          '🔮 Prochaines réservations',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        FilterChip(
+                          label: const Text("Toutes mes places", style: TextStyle(fontSize: 11)),
+                          visualDensity: VisualDensity.compact,
+                          selected: _showAllReservations,
+                          onSelected: (val) => setState(() => _showAllReservations = val),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     _buildUpcomingBookings(),
@@ -774,10 +744,13 @@ class _HomeScreenState extends State<HomeScreen> {
       
       bool isBooked = _bookedDates.contains(dateStr);
       bool isRequested = _requestedDates.contains(dateStr);
+      bool isOccupied = _occupiedByOthersDates.contains(dateStr) && _showAllReservations;
       bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday);
       if (_isVacation(date)) isRecurring = false;
 
-      if (isRequested) {
+      if (isOccupied) {
+        upcoming.add({"date": date, "source": "Ailleurs", "isBooked": true});
+      } else if (isRequested) {
         upcoming.add({"date": date, "source": "Calendrier", "isBooked": isBooked});
       } else if (isBooked) {
         // Réservation orpheline ou issue d'une récurrence
@@ -817,13 +790,13 @@ class _HomeScreenState extends State<HomeScreen> {
             visualDensity: _compactMode ? VisualDensity.compact : null,
             contentPadding: _compactMode ? const EdgeInsets.symmetric(horizontal: 8, vertical: 0) : null,
             leading: Icon(
-              isBooked ? Icons.check_circle : Icons.pending,
-              color: isBooked ? Colors.green : Colors.blue,
+              source == 'Ailleurs' ? Icons.person : (isBooked ? Icons.check_circle : Icons.pending),
+              color: source == 'Ailleurs' ? Colors.orange.shade900 : (isBooked ? Colors.green : Colors.blue),
             ),
             title: Text('$weekDayName ${date.day}/${date.month}'),
             subtitle: Text(
-              isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)',
-              style: TextStyle(color: isBooked ? Colors.green : Colors.blue, fontSize: _compactMode ? 10 : 12),
+              source == 'Ailleurs' ? 'Réservé sur un autre bureau' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)'),
+              style: TextStyle(color: source == 'Ailleurs' ? Colors.orange.shade900 : (isBooked ? Colors.green : Colors.blue), fontSize: _compactMode ? 10 : 12),
             ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
@@ -832,7 +805,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   label: Text(source, style: const TextStyle(fontSize: 10)),
                   backgroundColor: source == 'Calendrier' 
                     ? Colors.purple.withValues(alpha: 0.1) 
-                    : Colors.orange.withValues(alpha: 0.1),
+                    : (source == 'Ailleurs' ? Colors.orange.withValues(alpha: 0.3) : Colors.orange.withValues(alpha: 0.1)),
                   visualDensity: VisualDensity.compact,
                 ),
                 IconButton(
@@ -872,10 +845,19 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('Mon Calendrier', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                IconButton(
-                  icon: const Icon(Icons.sync),
-                  tooltip: 'Synchroniser avec MyRoomz',
-                  onPressed: _syncCalendar,
+                Row(
+                  children: [
+                    FilterChip(
+                      label: const Text("Toutes mes réservations"),
+                      selected: _showAllReservations,
+                      onSelected: (val) => setState(() => _showAllReservations = val),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.sync),
+                      tooltip: 'Synchroniser avec MyRoomz',
+                      onPressed: _syncCalendar,
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -938,6 +920,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildLegend(Colors.green, 'Réservé'),
                 _buildLegend(Colors.blue, 'En attente'),
                 _buildLegend(Colors.red.withValues(alpha: 0.8), 'Bloqué'),
+                _buildLegend(Colors.orange.shade300, 'Ailleurs 👤'),
               ],
             ),
           )
@@ -951,9 +934,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final isBooked = _bookedDates.contains(dateStr);
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
+    final isOccupiedByOthers = !isBooked && _occupiedByOthersDates.contains(dateStr) && _showAllReservations;
 
     Color? bgColor;
     Color textColor = isOutside ? Colors.grey : Theme.of(context).colorScheme.onSurface;
+    bool strikeThrough = false;
 
     if (isBooked) {
       bgColor = Colors.green;
@@ -964,21 +949,45 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (isIgnored) {
       bgColor = Colors.red.withValues(alpha: 0.8);
       textColor = Colors.white;
+    } else if (isOccupiedByOthers) {
+      bgColor = Colors.orange.shade200;
+      textColor = Colors.orange.shade900;
+      strikeThrough = false;
     } else if (isToday) {
       bgColor = Colors.lightBlue.withValues(alpha: 0.3);
     }
 
-    return Container(
-      margin: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: bgColor,
-        shape: BoxShape.circle,
-      ),
+    return Stack(
       alignment: Alignment.center,
-      child: Text(
-        '${day.day}',
-        style: TextStyle(color: textColor, fontWeight: (isBooked || isRequested || isIgnored) ? FontWeight.bold : FontWeight.normal),
-      ),
+      children: [
+        Container(
+          margin: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: bgColor,
+            shape: BoxShape.circle,
+            border: isOccupiedByOthers
+                ? Border.all(color: Colors.grey.shade400, width: 1)
+                : null,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '${day.day}',
+            style: TextStyle(
+              color: textColor,
+              fontWeight: (isBooked || isRequested || isIgnored) ? FontWeight.bold : FontWeight.normal,
+              decoration: strikeThrough ? TextDecoration.lineThrough : null,
+              decorationColor: Colors.grey.shade500,
+            ),
+          ),
+        ),
+        // Small "🔒" indicator for occupied by others
+        if (isOccupiedByOthers)
+          Positioned(
+            bottom: 4,
+            right: 4,
+            child: Icon(Icons.person, size: 8, color: Colors.orange.shade700),
+          ),
+      ],
     );
   }
 
@@ -1107,28 +1116,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
 
-      // 🚀 Fire all requests in parallel instead of sequentially
-      final futures = datesToCheck.map((dateStr) async {
-        final isReserved = await _api.isAlreadyReserved(dateStr, accessToken, floorId, workspaceId);
-        return MapEntry(dateStr, isReserved);
-      });
-
-      if (_isLoading) _loadingTextNotifier.value = "Analyse des disponibilités du calendrier...";
-
-      final results = await Future.wait(futures);
+      // Fetch the user's specific bookings — here (this desk) + elsewhere (other desks)
+      final myBookings = await _api.getMyReservations(accessToken, workspaceId);
+      final bookedHere = myBookings.here;
+      final bookedElsewhere = myBookings.elsewhere;
 
       Set<String> newBookedDates = {};
       Set<String> newRequestedDates = Set.from(_requestedDates);
       Set<String> newIgnoredDates = Set.from(_ignoredDates);
 
-      for (final entry in results) {
-        final dateStr = entry.key;
-        final isReserved = entry.value;
-
-        if (isReserved) {
+      for (final dateStr in datesToCheck) {
+        if (bookedHere.contains(dateStr)) {
           newBookedDates.add(dateStr);
           newRequestedDates.add(dateStr);
           newIgnoredDates.remove(dateStr);
+        } else if (bookedElsewhere.contains(dateStr)) {
+          // Already booked elsewhere this day — remove from requested (can't double-book)
+          newRequestedDates.remove(dateStr);
         } else {
           if (_bookedDates.contains(dateStr)) {
             newRequestedDates.remove(dateStr);
@@ -1138,7 +1142,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (_isLoading) {
         _loadingTextNotifier.value = "C'est presque prêt !";
-        // Let the user see the final message for just a brief moment
         await Future.delayed(const Duration(milliseconds: 1000));
       }
 
@@ -1147,10 +1150,12 @@ class _HomeScreenState extends State<HomeScreen> {
           _bookedDates = newBookedDates;
           _requestedDates = newRequestedDates;
           _ignoredDates = newIgnoredDates;
+          _occupiedByOthersDates = bookedElsewhere; // reuse field for "booked elsewhere by me"
         });
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
+        _storage.saveBookedElsewhereDates(_occupiedByOthersDates.toList());
         _storage.saveLastSyncTime(); // Cache TTL
       }
     } finally {
@@ -1238,7 +1243,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (isWeekendAndHidden)
                   const ListTile(
                     leading: Icon(Icons.weekend, color: Colors.grey),
-                    title: Text('Les nouvelles réservations le week-end sont désactivées dans vos paramètres.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    title: Text('Les nouvelles réservations le week-end sont désactivées.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  )
+                else if (_occupiedByOthersDates.contains(dateStr))
+                  ListTile(
+                    leading: Icon(Icons.person_off, color: Colors.orange.shade900),
+                    title: Text('Libérer mon autre bureau', style: TextStyle(color: Colors.orange.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
+                    subtitle: const Text("Annule la réservation que vous avez faite ailleurs ce jour-là.", style: TextStyle(fontSize: 11)),
+                    onTap: () => Navigator.pop(context, 'cancel_elsewhere'),
                   )
                 else
                   ListTile(
@@ -1298,6 +1310,9 @@ class _HomeScreenState extends State<HomeScreen> {
             if (success) {
               setState(() => _bookedDates.add(dateStr));
               _storage.saveBookedDates(_bookedDates.toList());
+              if (mounted) _showTopToast('Place réservée pour le $dateStr', isSuccess: true);
+            } else {
+              if (mounted) _showTopToast('Ce bureau n\'est plus disponible à cette date', isError: true);
             }
           }
         }
@@ -1319,6 +1334,20 @@ class _HomeScreenState extends State<HomeScreen> {
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
+      } else if (action == 'cancel_elsewhere') {
+        final token = await _api.refreshMyToken();
+        if (token != null) {
+          final success = await _api.cancelBookingByDate(token, dateStr);
+          if (success) {
+            setState(() {
+               _occupiedByOthersDates.remove(dateStr);
+            });
+            _storage.saveBookedElsewhereDates(_occupiedByOthersDates.toList());
+            if (mounted) _showTopToast('Votre réservation a été annulée.', isSuccess: true);
+          } else {
+            if (mounted) _showTopToast('Impossible d\'annuler la réservation.', isError: true);
+          }
+        }
       } else if (action == 'unblock') {
         setState(() => _ignoredDates.remove(dateStr));
         _storage.saveIgnoredDates(_ignoredDates.toList());

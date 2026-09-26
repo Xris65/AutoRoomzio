@@ -97,6 +97,16 @@ class StorageService {
     return prefs.getStringList('ignored_dates') ?? [];
   }
 
+  Future<void> saveBookedElsewhereDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('booked_elsewhere_dates', dates);
+  }
+
+  Future<List<String>> getBookedElsewhereDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('booked_elsewhere_dates') ?? [];
+  }
+
   // ── Days (recurring) ──────────────────────────────────────────────────────
 
   Future<void> saveDays(List<int> days) async {
@@ -233,9 +243,13 @@ class StorageService {
 
   // ── Last sync timestamp (cache TTL) ──────────────────────────────────────
 
-  Future<void> saveLastSyncTime() async {
+  Future<void> saveLastSyncTime({bool forceReset = false}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('last_sync_time', DateTime.now().millisecondsSinceEpoch);
+    if (forceReset) {
+      await prefs.remove('last_sync_time');
+    } else {
+      await prefs.setInt('last_sync_time', DateTime.now().millisecondsSinceEpoch);
+    }
   }
 
   Future<DateTime?> getLastSyncTime() async {

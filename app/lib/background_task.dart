@@ -48,6 +48,11 @@ void callbackDispatcher() {
     
     int newlyBookedCount = 0;
     
+    // Fetch user's existing bookings — at this desk AND at other desks
+    final myBookings = await api.getMyReservations(token, workspaceId);
+    final bookedHere = myBookings.here;
+    final bookedElsewhere = myBookings.elsewhere;
+    
     // Check next 13 days (max horizon for Roomz)
     for (int i = 1; i <= 13; i++) {
       final targetDate = now.add(Duration(days: i));
@@ -71,9 +76,14 @@ void callbackDispatcher() {
         continue;
       }
 
+      // Skip if already booked elsewhere that day (myRoomz = 1 booking/day max)
+      if (bookedElsewhere.contains(dateStr)) {
+        debugPrint("📍 Already booked elsewhere on $dateStr, skipping.");
+        continue;
+      }
+
       if (daysToBook.contains(targetDate.weekday) || requestedDates.contains(dateStr)) {
-        final isReserved = await api.isAlreadyReserved(dateStr, token, floorId, workspaceId);
-        if (isReserved) {
+        if (bookedHere.contains(dateStr)) {
           newBooked.add(dateStr);
         } else {
           final success = await api.reserveWorkspace(dateStr, token, workspaceId);
