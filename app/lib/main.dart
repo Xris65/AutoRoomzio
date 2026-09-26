@@ -17,11 +17,8 @@ void main() async {
     Workmanager().initialize(callbackDispatcher);
   }
 
-  // Load saved theme
-  final isDark = await StorageService().getDarkMode();
-  if (isDark != null) {
-    themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
-  }
+  final modeIndex = await StorageService().getThemeModeIndex();
+  themeNotifier.value = modeIndex == 1 ? ThemeMode.light : (modeIndex == 2 ? ThemeMode.dark : ThemeMode.system);
   
   final colorIndex = await StorageService().getThemeColorIndex();
   themeColorNotifier.value = colorIndex;

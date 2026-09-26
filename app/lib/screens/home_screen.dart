@@ -48,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _autoSync = true;
   int _projectionsCount = 4;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
+  int _currentIndex = 0;
 
   @override
   void initState() {
@@ -86,6 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final notifFailure = await _storage.getNotifyFailure();
     final autoSync = await _storage.getAutoSync();
     final projCount = await _storage.getProjectionsCount();
+    final initialTab = await _storage.getInitialTab();
     
     if (mounted) {
       setState(() {
@@ -100,6 +102,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _notifyFailure = notifFailure;
         _autoSync = autoSync;
         _projectionsCount = projCount;
+        if (_currentIndex == 0 && initialTab != 0) {
+          _currentIndex = initialTab;
+        }
       });
     }
 
@@ -201,7 +206,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  int _currentIndex = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -960,18 +964,54 @@ class _HomeScreenState extends State<HomeScreen> {
               ValueListenableBuilder<ThemeMode>(
                 valueListenable: themeNotifier,
                 builder: (context, currentMode, _) {
-                  final isDark = currentMode == ThemeMode.dark || 
-                      (currentMode == ThemeMode.system && MediaQuery.of(context).platformBrightness == Brightness.dark);
-                  return SwitchListTile(
-                    title: const Text('Mode sombre'),
-                    secondary: Icon(isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded),
-                    value: currentMode == ThemeMode.dark,
-                    onChanged: (val) {
-                      themeNotifier.value = val ? ThemeMode.dark : ThemeMode.light;
-                      _storage.saveDarkMode(val);
-                    },
+                  int modeIndex = 0;
+                  if (currentMode == ThemeMode.light) modeIndex = 1;
+                  if (currentMode == ThemeMode.dark) modeIndex = 2;
+                  
+                  return ListTile(
+                    title: const Text('Thème de l\'application'),
+                    leading: const Icon(Icons.brightness_6_rounded),
+                    trailing: DropdownButton<int>(
+                      value: modeIndex,
+                      onChanged: (val) {
+                        if (val != null) {
+                          themeNotifier.value = val == 1 ? ThemeMode.light : (val == 2 ? ThemeMode.dark : ThemeMode.system);
+                          _storage.saveThemeModeIndex(val);
+                        }
+                      },
+                      items: const [
+                        DropdownMenuItem(value: 0, child: Text('Système (par défaut)')),
+                        DropdownMenuItem(value: 1, child: Text('Clair')),
+                        DropdownMenuItem(value: 2, child: Text('Sombre')),
+                      ],
+                    ),
                   );
                 },
+              ),
+              const Divider(height: 1),
+              FutureBuilder<int>(
+                future: _storage.getInitialTab(),
+                builder: (context, snapshot) {
+                  return ListTile(
+                    title: const Text('Page de démarrage'),
+                    subtitle: const Text('Onglet affiché à l\'ouverture', style: TextStyle(fontSize: 12)),
+                    leading: const Icon(Icons.home_rounded),
+                    trailing: DropdownButton<int>(
+                      value: snapshot.data ?? 0,
+                      onChanged: (val) {
+                        if (val != null) {
+                          _storage.saveInitialTab(val);
+                          setState(() {}); // refresh FutureBuilder
+                        }
+                      },
+                      items: const [
+                        DropdownMenuItem(value: 0, child: Text('Accueil (par défaut)')),
+                        DropdownMenuItem(value: 1, child: Text('Calendrier')),
+                        DropdownMenuItem(value: 2, child: Text('Automate')),
+                      ],
+                    ),
+                  );
+                }
               ),
               const Divider(height: 1),
               ListTile(

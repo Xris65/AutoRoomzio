@@ -197,6 +197,26 @@ class StorageService {
     return prefs.getInt('projections_count') ?? 4;
   }
 
+  Future<void> saveInitialTab(int val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('initial_tab', val);
+  }
+
+  Future<int> getInitialTab() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('initial_tab') ?? 0;
+  }
+
+  Future<void> saveThemeModeIndex(int val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('theme_mode', val);
+  }
+
+  Future<int> getThemeModeIndex() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('theme_mode') ?? 0; // 0: system, 1: light, 2: dark
+  }
+
   // ── Clear all (logout) ────────────────────────────────────────────────────
 
   Future<void> clearAll() async {
