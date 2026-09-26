@@ -16,40 +16,37 @@ jobs:
       - name: Run Release Please
         id: release
         uses: googleapis/release-please-action@v4
-        with:
-          release-type: dart
-          path: app
 
       - name: Checkout code
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs['app--release_created'] }}
         uses: actions/checkout@v4
 
       - name: Setup Java
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs['app--release_created'] }}
         uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
 
       - name: Setup Flutter
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs['app--release_created'] }}
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
       - name: Install dependencies
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs['app--release_created'] }}
         working-directory: ./app
         run: flutter pub get
 
       - name: Build APK
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs['app--release_created'] }}
         working-directory: ./app
         run: flutter build apk --release
 
       - name: Upload APK to Release
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs['app--release_created'] }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ steps.release.outputs.tag_name }} ./app/build/app/outputs/flutter-apk/app-release.apk
+          gh release upload ${{ steps.release.outputs['app--tag_name'] }} ./app/build/app/outputs/flutter-apk/app-release.apk
