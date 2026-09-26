@@ -17,7 +17,6 @@ class _SetupScreenState extends State<SetupScreen> {
 
   List<Map<String, dynamic>> _sites = [];
   List<Map<String, dynamic>> _floors = [];
-  List<Map<String, dynamic>> _workspaces = [];
 
   Map<String, dynamic>? _selectedSite;
   Map<String, dynamic>? _selectedFloor;
@@ -49,16 +48,19 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   int _currentStep = 0;
+  String? _selectedRoomPrefix;
+  Map<String, List<Map<String, dynamic>>> _rooms = {};
 
   Future<void> _onSiteSelected(Map<String, dynamic> site) async {
     setState(() {
       _selectedSite = site;
       _selectedFloor = null;
+      _selectedRoomPrefix = null;
       _selectedWorkspace = null;
       _floors = [];
-      _workspaces = [];
+      _rooms = {};
       _loadingFloors = true;
-      _currentStep = 1; // Move to floor step
+      _currentStep = 1;
     });
     final floors = await _api.getFloors(widget.accessToken, site['id'].toString());
     if (mounted) {
@@ -72,15 +74,34 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _onFloorSelected(Map<String, dynamic> floor) async {
     setState(() {
       _selectedFloor = floor;
+      _selectedRoomPrefix = null;
       _selectedWorkspace = null;
-      _workspaces = [];
+      _rooms = {};
       _loadingWorkspaces = true;
-      _currentStep = 2; // Move to workspace step
+      _currentStep = 2;
     });
     final workspaces = await _api.getWorkspaces(widget.accessToken, floor['id'].toString());
+    
+    // Group workspaces by room prefix (e.g. "DS-BORD-1-17-A" -> room "DS-BORD-1-17", seat "A")
+    final Map<String, List<Map<String, dynamic>>> grouped = {};
+    for (final ws in workspaces) {
+      final String name = ws['name']?.toString() ?? ws['id'].toString();
+      final lastDash = name.lastIndexOf('-');
+      String roomName = name;
+      
+      // If there's a dash and the suffix is short (seat identifier)
+      if (lastDash > 0 && lastDash < name.length - 1) {
+        final suffix = name.substring(lastDash + 1);
+        if (suffix.length <= 4 && !suffix.contains(' ')) {
+          roomName = name.substring(0, lastDash);
+        }
+      }
+      grouped.putIfAbsent(roomName, () => []).add(ws);
+    }
+
     if (mounted) {
       setState(() {
-        _workspaces = workspaces;
+        _rooms = grouped;
         _loadingWorkspaces = false;
       });
     }
@@ -119,14 +140,13 @@ class _SetupScreenState extends State<SetupScreen> {
               : Stepper(
                   currentStep: _currentStep,
                   onStepTapped: (step) {
-                    // Only allow tapping previous completed steps
                     if (step == 0) setState(() => _currentStep = 0);
                     if (step == 1 && _selectedSite != null) setState(() => _currentStep = 1);
                     if (step == 2 && _selectedFloor != null) setState(() => _currentStep = 2);
+                    if (step == 3 && _selectedRoomPrefix != null) setState(() => _currentStep = 3);
                   },
                   controlsBuilder: (context, details) {
-                    // Hide default Continue/Cancel buttons, we use list selection
-                    if (_currentStep == 2 && _selectedWorkspace != null) {
+                    if (_currentStep == 3 && _selectedWorkspace != null) {
                       return Padding(
                         padding: const EdgeInsets.only(top: 24),
                         child: ElevatedButton(
@@ -136,7 +156,7 @@ class _SetupScreenState extends State<SetupScreen> {
                             foregroundColor: Colors.white,
                             minimumSize: const Size.fromHeight(50),
                           ),
-                          child: const Text('Confirmer ce bureau', style: TextStyle(fontSize: 16)),
+                          child: const Text('Confirmer cette place', style: TextStyle(fontSize: 16)),
                         ),
                       );
                     }
@@ -166,10 +186,7 @@ class _SetupScreenState extends State<SetupScreen> {
                       state: _selectedFloor != null ? StepState.complete : StepState.editing,
                       isActive: _currentStep >= 1,
                       content: _loadingFloors
-                          ? const Padding(
-                              padding: EdgeInsets.all(16),
-                              child: CircularProgressIndicator(),
-                            )
+                          ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())
                           : Column(
                               children: _floors.map((floor) => _SelectTile(
                                 label: floor['name']?.toString() ?? floor['id'].toString(),
@@ -179,24 +196,54 @@ class _SetupScreenState extends State<SetupScreen> {
                             ),
                     ),
                     Step(
-                      title: const Text('Bureau'),
-                      subtitle: _selectedWorkspace != null && _currentStep != 2
+                      title: const Text('Zone / Salle'),
+                      subtitle: _selectedRoomPrefix != null && _currentStep != 2
+                          ? Text(_selectedRoomPrefix!)
+                          : null,
+                      state: _selectedRoomPrefix != null ? StepState.complete : StepState.editing,
+                      isActive: _currentStep >= 2,
+                      content: _loadingWorkspaces
+                          ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())
+                          : Column(
+                              children: _rooms.keys.map((roomName) {
+                                final count = _rooms[roomName]!.length;
+                                return _SelectTile(
+                                  label: "$roomName ($count place${count > 1 ? 's' : ''})",
+                                  selected: _selectedRoomPrefix == roomName,
+                                  onTap: () {
+                                    setState(() {
+                                      _selectedRoomPrefix = roomName;
+                                      _selectedWorkspace = null;
+                                      _currentStep = 3;
+                                    });
+                                  },
+                                );
+                              }).toList(),
+                            ),
+                    ),
+                    Step(
+                      title: const Text('Place exacte'),
+                      subtitle: _selectedWorkspace != null && _currentStep != 3
                           ? Text(_selectedWorkspace!['name']?.toString() ?? '')
                           : null,
                       state: _selectedWorkspace != null ? StepState.complete : StepState.editing,
-                      isActive: _currentStep >= 2,
-                      content: _loadingWorkspaces
-                          ? const Padding(
-                              padding: EdgeInsets.all(16),
-                              child: CircularProgressIndicator(),
-                            )
-                          : Column(
-                              children: _workspaces.map((ws) => _SelectTile(
-                                label: ws['name']?.toString() ?? ws['id'].toString(),
-                                selected: _selectedWorkspace?['id'] == ws['id'],
-                                onTap: () => setState(() => _selectedWorkspace = ws),
-                              )).toList(),
-                            ),
+                      isActive: _currentStep >= 3,
+                      content: Column(
+                        children: (_selectedRoomPrefix != null ? _rooms[_selectedRoomPrefix!] ?? [] : []).map((ws) {
+                          final name = ws['name']?.toString() ?? ws['id'].toString();
+                          final lastDash = name.lastIndexOf('-');
+                          String shortName = name;
+                          if (lastDash > 0 && lastDash < name.length - 1) {
+                            final suffix = name.substring(lastDash + 1);
+                            if (suffix.length <= 4) shortName = "Place $suffix";
+                          }
+                          return _SelectTile(
+                            label: shortName,
+                            selected: _selectedWorkspace?['id'] == ws['id'],
+                            onTap: () => setState(() => _selectedWorkspace = ws),
+                          );
+                        }).toList(),
+                      ),
                     ),
                   ],
                 ),
