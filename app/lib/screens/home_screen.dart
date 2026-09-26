@@ -51,10 +51,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _hideWeekends = false;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
+  late PageController _pageController;
 
   @override
   void initState() {
     super.initState();
+    _pageController = PageController(initialPage: _currentIndex);
     _checkAuthAndLoad();
   }
 
@@ -108,6 +110,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _hideWeekends = hideWe;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
+          _pageController.dispose();
+          _pageController = PageController(initialPage: _currentIndex);
         }
       });
     }
@@ -256,8 +260,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _currentIndex,
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: (index) {
+          setState(() => _currentIndex = index);
+        },
         children: [
           _buildHomeTab(),
           _buildCalendarTab(),
@@ -295,7 +302,13 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => setState(() => _currentIndex = index),
+          onTap: () {
+            _pageController.animateToPage(
+              index,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          },
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -654,85 +667,87 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Mon Calendrier', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              IconButton(
-                icon: const Icon(Icons.sync),
-                tooltip: 'Synchroniser avec MyRoomz',
-                onPressed: _syncCalendar,
-              ),
-            ],
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Mon Calendrier', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                IconButton(
+                  icon: const Icon(Icons.sync),
+                  tooltip: 'Synchroniser avec MyRoomz',
+                  onPressed: _syncCalendar,
+                ),
+              ],
+            ),
           ),
-        ),
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            AbsorbPointer(
-              absorbing: _isCalendarBusy,
-              child: Opacity(
-                opacity: _isCalendarBusy ? 0.5 : 1.0,
-                child: TableCalendar(
-                  firstDay: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDay: DateTime.now().add(const Duration(days: 365)),
-                  focusedDay: _focusedDay,
-                  startingDayOfWeek: StartingDayOfWeek.monday,
-                  enabledDayPredicate: _hideWeekends 
-                      ? (day) => day.weekday != DateTime.saturday && day.weekday != DateTime.sunday 
-                      : (day) => true,
-                  headerStyle: const HeaderStyle(
-                    formatButtonVisible: false,
-                    titleCentered: true,
-                  ),
-                  calendarStyle: CalendarStyle(
-                    todayDecoration: BoxDecoration(
-                      color: Colors.lightBlue.withValues(alpha: 0.3),
-                      shape: BoxShape.circle,
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              AbsorbPointer(
+                absorbing: _isCalendarBusy,
+                child: Opacity(
+                  opacity: _isCalendarBusy ? 0.5 : 1.0,
+                  child: TableCalendar(
+                    firstDay: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDay: DateTime.now().add(const Duration(days: 365)),
+                    focusedDay: _focusedDay,
+                    startingDayOfWeek: StartingDayOfWeek.monday,
+                    enabledDayPredicate: _hideWeekends 
+                        ? (day) => day.weekday != DateTime.saturday && day.weekday != DateTime.sunday 
+                        : (day) => true,
+                    headerStyle: const HeaderStyle(
+                      formatButtonVisible: false,
+                      titleCentered: true,
                     ),
-                  ),
-                  onPageChanged: (focusedDay) {
-                    _focusedDay = focusedDay;
-                  },
-                  onDaySelected: (selectedDay, focusedDay) {
-                    _handleDateTap(selectedDay);
-                  },
-                  calendarBuilders: CalendarBuilders(
-                    defaultBuilder: (context, day, focusedDay) => _buildDayCell(day),
-                    todayBuilder: (context, day, focusedDay) => _buildDayCell(day, isToday: true),
-                    outsideBuilder: (context, day, focusedDay) => _buildDayCell(day, isOutside: true),
+                    calendarStyle: CalendarStyle(
+                      todayDecoration: BoxDecoration(
+                        color: Colors.lightBlue.withValues(alpha: 0.3),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    onPageChanged: (focusedDay) {
+                      _focusedDay = focusedDay;
+                    },
+                    onDaySelected: (selectedDay, focusedDay) {
+                      _handleDateTap(selectedDay);
+                    },
+                    calendarBuilders: CalendarBuilders(
+                      defaultBuilder: (context, day, focusedDay) => _buildDayCell(day),
+                      todayBuilder: (context, day, focusedDay) => _buildDayCell(day, isToday: true),
+                      outsideBuilder: (context, day, focusedDay) => _buildDayCell(day, isOutside: true),
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (_isCalendarBusy)
-              const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Synchronisation...', style: TextStyle(fontWeight: FontWeight.bold)),
-                ],
-              ),
-          ],
-        ),
-        const Spacer(),
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildLegend(Colors.green, 'Réservé'),
-              _buildLegend(Colors.blue, 'En attente'),
-              _buildLegend(Colors.red.withValues(alpha: 0.8), 'Bloqué'),
+              if (_isCalendarBusy)
+                const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Synchronisation...', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ],
+                ),
             ],
           ),
-        )
-      ],
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildLegend(Colors.green, 'Réservé'),
+                _buildLegend(Colors.blue, 'En attente'),
+                _buildLegend(Colors.red.withValues(alpha: 0.8), 'Bloqué'),
+              ],
+            ),
+          )
+        ],
+      ),
     );
   }
 

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:workmanager/workmanager.dart';
 import 'background_task.dart';
 import 'storage_service.dart';
@@ -66,6 +67,9 @@ class MyApp extends StatelessWidget {
             return MaterialApp(
               title: 'AutoRoomzio',
               themeMode: mode,
+              scrollBehavior: const MaterialScrollBehavior().copyWith(
+                dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.stylus, PointerDeviceKind.trackpad},
+              ),
               theme: ThemeData(
                 colorScheme: ColorScheme.fromSeed(seedColor: seedColor),
                 useMaterial3: true,
