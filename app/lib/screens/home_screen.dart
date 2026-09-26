@@ -5,6 +5,7 @@ import '../api_service.dart';
 import '../storage_service.dart';
 import 'login_screen.dart';
 import 'setup_screen.dart';
+import '../main.dart'; // for themeNotifier
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -93,6 +94,54 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showSettings() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Paramètres',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                ValueListenableBuilder<ThemeMode>(
+                  valueListenable: themeNotifier,
+                  builder: (context, currentMode, _) {
+                    final isDark = currentMode == ThemeMode.dark || 
+                        (currentMode == ThemeMode.system && MediaQuery.of(context).platformBrightness == Brightness.dark);
+                    return SwitchListTile(
+                      title: const Text('Mode sombre'),
+                      secondary: Icon(isDark ? Icons.dark_mode : Icons.light_mode),
+                      value: currentMode == ThemeMode.dark,
+                      onChanged: (val) {
+                        themeNotifier.value = val ? ThemeMode.dark : ThemeMode.light;
+                        _storage.saveDarkMode(val);
+                      },
+                    );
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: const Text('Version'),
+                  trailing: const Text('1.0.0'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -103,6 +152,11 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('AutoRoomzio'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Paramètres',
+            onPressed: _showSettings,
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Se déconnecter',
@@ -117,19 +171,35 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             // ── Current workspace card ───────────────────────────────────
             Card(
-              child: ListTile(
-                leading: const Icon(Icons.desk, color: Colors.blue),
-                title: const Text('Bureau sélectionné'),
-                subtitle: Text(
-                  _workspaceName ?? 'Aucun bureau configuré',
-                  style: TextStyle(
-                    color: _workspaceName != null ? Colors.black87 : Colors.grey,
-                    fontWeight: FontWeight.bold,
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: _changeWorkspace,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.desk, color: Colors.blue, size: 32),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Bureau sélectionné', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                            const SizedBox(height: 4),
+                            Text(
+                              _workspaceName ?? 'Aucun bureau configuré',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: _workspaceName != null ? Theme.of(context).colorScheme.onSurface : Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right, color: Colors.grey),
+                    ],
                   ),
-                ),
-                trailing: TextButton(
-                  onPressed: _changeWorkspace,
-                  child: const Text('Changer'),
                 ),
               ),
             ),

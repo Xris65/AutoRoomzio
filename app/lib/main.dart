@@ -6,12 +6,21 @@ import 'storage_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 
+// Global theme notifier
+final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Workmanager is Android-only
   if (Platform.isAndroid) {
     Workmanager().initialize(callbackDispatcher);
+  }
+
+  // Load saved theme
+  final isDark = await StorageService().getDarkMode();
+  if (isDark != null) {
+    themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
   }
 
   runApp(const MyApp());
@@ -22,13 +31,23 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'AutoRoomzio',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        useMaterial3: true,
-      ),
-      home: const _Splash(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeNotifier,
+      builder: (context, ThemeMode mode, _) {
+        return MaterialApp(
+          title: 'AutoRoomzio',
+          themeMode: mode,
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+            useMaterial3: true,
+          ),
+          darkTheme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.dark),
+            useMaterial3: true,
+          ),
+          home: const _Splash(),
+        );
+      },
     );
   }
 }

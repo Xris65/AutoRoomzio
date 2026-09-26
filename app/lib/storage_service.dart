@@ -72,6 +72,18 @@ class StorageService {
     return days?.map(int.parse).toList() ?? [2, 4];
   }
 
+  // ── Settings ─────────────────────────────────────────────────────────────
+  
+  Future<bool?> getDarkMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('dark_mode');
+  }
+
+  Future<void> saveDarkMode(bool isDark) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('dark_mode', isDark);
+  }
+
   // ── Clear all (logout) ────────────────────────────────────────────────────
 
   Future<void> clearAll() async {
