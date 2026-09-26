@@ -27,13 +27,7 @@ void callbackDispatcher() {
       return Future.value(true);
     }
 
-    final vacationData = await storage.getVacationDates();
-    DateTime? vStart;
-    DateTime? vEnd;
-    if (vacationData['start'] != null && vacationData['end'] != null) {
-      vStart = DateTime.parse(vacationData['start']!);
-      vEnd = DateTime.parse(vacationData['end']!);
-    }
+    final vacations = await storage.getVacations();
 
     final token = await api.refreshMyToken();
     if (token == null) {
@@ -60,14 +54,22 @@ void callbackDispatcher() {
       
       if (hideWeekends && isWeekend) continue;
       
-      if (vStart != null && vEnd != null) {
+            bool isVacation = false;
+      for (final v in vacations) {
         final d = DateTime(targetDate.year, targetDate.month, targetDate.day);
-        final start = DateTime(vStart.year, vStart.month, vStart.day);
-        final end = DateTime(vEnd.year, vEnd.month, vEnd.day);
-        if (d.compareTo(start) >= 0 && d.compareTo(end) <= 0) {
-          debugPrint("🌴 Vacation mode is ON for ${targetDate.toString().split(' ').first}, skipping automation.");
-          continue;
+        final start = DateTime.parse(v['start']!);
+        final end = DateTime.parse(v['end']!);
+        final startNorm = DateTime(start.year, start.month, start.day);
+        final endNorm = DateTime(end.year, end.month, end.day);
+        if (d.compareTo(startNorm) >= 0 && d.compareTo(endNorm) <= 0) {
+          isVacation = true;
+          break;
         }
+      }
+      
+      if (isVacation) {
+        debugPrint("🏖️ Vacation mode is ON for , skipping automation.");
+        continue;
       }
 
       final dateStr = formatter.format(targetDate);

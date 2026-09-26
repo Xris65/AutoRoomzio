@@ -51,8 +51,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _notifyFailure = true;
   int _projectionsCount = 4;
   bool _hideWeekends = true; // Actif par défaut
-  DateTime? _vacationStart;
-  DateTime? _vacationEnd;
+  List<DateTimeRange> _vacations = [];
+
   bool _compactMode = false;
   bool _showAllReservations = true;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
@@ -437,28 +437,28 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_vacationStart != null && _vacationEnd != null)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 16),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.orange),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.beach_access, color: Colors.orange),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Mode Congés activé du ${_vacationStart!.day}/${_vacationStart!.month} au ${_vacationEnd!.day}/${_vacationEnd!.month}. L\'automatisation est en pause sur ces dates.',
-                              style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                  if (_vacations.any((v) => DateTime.now().isAfter(v.start.subtract(const Duration(days: 1))) && DateTime.now().isBefore(v.end.add(const Duration(days: 1)))))
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.beach_access, color: Colors.orange),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Mode Congés activé. L\\'automatisation est en pause sur cette date.',
+                                style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
                   // ── Current workspace card ───────────────────────────────────
                   Card(
                     clipBehavior: Clip.antiAlias,
@@ -636,81 +636,81 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   // ── Mode Congés ──────────────────────────────────────────────
                   Card(
-                    color: (_vacationStart != null && _vacationEnd != null) ? Colors.orange.withValues(alpha: 0.1) : null,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: (_vacationStart != null && _vacationEnd != null) ? const BorderSide(color: Colors.orange) : BorderSide.none,
-                    ),
-                    child: ListTile(
-                      title: const Text('Mode Congés / Pause', style: TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text(
-                        (_vacationStart != null && _vacationEnd != null)
-                          ? 'Du ${_vacationStart!.day}/${_vacationStart!.month} au ${_vacationEnd!.day}/${_vacationEnd!.month}'
-                          : 'Suspendre temporairement l\'automatisation',
-                        style: TextStyle(fontSize: 12, color: (_vacationStart != null && _vacationEnd != null) ? Colors.orange : null),
-                      ),
-                      leading: Icon(Icons.beach_access, color: (_vacationStart != null && _vacationEnd != null) ? Colors.orange : Colors.grey),
-                      trailing: (_vacationStart != null && _vacationEnd != null)
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, color: Colors.orange),
-                            tooltip: 'Annuler les congés',
-                            onPressed: () {
-                              setState(() {
-                                _vacationStart = null;
-                                _vacationEnd = null;
-                              });
-                              _storage.saveVacationDates(null, null);
-                            },
-                          )
-                        : const Icon(Icons.calendar_today, color: Colors.grey, size: 20),
-                      onTap: () async {
-                        final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-                        
-                        DateTime? safeStart = _vacationStart;
-                        DateTime? safeEnd = _vacationEnd;
-                        
-                        if (safeStart != null && safeStart.isBefore(today)) {
-                          safeStart = today;
-                        }
-                        if (safeEnd != null && safeEnd.isBefore(today)) {
-                          safeStart = null;
-                          safeEnd = null;
-                        }
-
-                        final picked = await showDateRangePicker(
-                          context: context,
-                          firstDate: today,
-                          lastDate: today.add(const Duration(days: 365)),
-                          initialDateRange: (safeStart != null && safeEnd != null)
-                              ? DateTimeRange(start: safeStart, end: safeEnd)
-                              : null,
-                          saveText: 'VALIDER',
-                          builder: (context, child) {
-                            return Theme(
-                              data: Theme.of(context).copyWith(
-                                colorScheme: Theme.of(context).colorScheme.copyWith(
-                                  primary: Colors.orange,
-                                  onPrimary: Colors.white,
-                                ),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const ListTile(
+                            leading: Icon(Icons.beach_access, color: Colors.orange),
+                            title: Text('Mes Congés / Absences', style: TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text('L\'automatisation est désactivée sur ces dates', style: TextStyle(fontSize: 12)),
+                          ),
+                          if (_vacations.isNotEmpty) const Divider(height: 1),
+                          ..._vacations.map((v) {
+                            return ListTile(
+                              dense: true,
+                              title: Text('Du / au /'),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.redAccent, size: 20),
+                                onPressed: () {
+                                  setState(() => _vacations.remove(v));
+                                  _storage.saveVacations(_vacations.map((v) => {'start': v.start.toIso8601String(), 'end': v.end.toIso8601String()}).toList());
+                                },
                               ),
-                              child: child!,
                             );
-                          },
-                        );
-                        if (picked != null) {
-                          setState(() {
-                            _vacationStart = picked.start;
-                            _vacationEnd = picked.end;
-                          });
-                          _storage.saveVacationDates(
-                            picked.start.toIso8601String(),
-                            picked.end.toIso8601String(),
-                          );
-                        }
-                      },
+                          }),
+                          Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: TextButton.icon(
+                              icon: const Icon(Icons.add),
+                              label: const Text('Ajouter une période'),
+                              onPressed: () async {
+                                final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+                                final picked = await showDateRangePicker(
+                                  context: context,
+                                  firstDate: today,
+                                  lastDate: today.add(const Duration(days: 365)),
+                                  saveText: 'VALIDER',
+                                );
+                                if (picked != null) {
+                                  setState(() => _vacations.add(picked));
+                                  _storage.saveVacations(_vacations.map((v) => {'start': v.start.toIso8601String(), 'end': v.end.toIso8601String()}).toList());
+                                  
+                                  // AUTO-CANCEL bookings in this new vacation period
+                                  final toCancel = <String>[];
+                                  for (var i = 0; i <= picked.end.difference(picked.start).inDays; i++) {
+                                    final d = picked.start.add(Duration(days: i));
+                                    if (_hideWeekends && (d.weekday == DateTime.saturday || d.weekday == DateTime.sunday)) continue;
+                                    
+                                    final maxBookable = today.add(const Duration(days: 13));
+                                    if (!d.isAfter(maxBookable)) {
+                                      final dateStr = "--";
+                                      if (_bookedDates.contains(dateStr)) {
+                                        toCancel.add(dateStr);
+                                      }
+                                    }
+                                  }
+                                  
+                                  if (toCancel.isNotEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Annulation de  réservation(s) existante(s)...')));
+                                    for (final dateStr in toCancel) {
+                                      final token = await _api.refreshMyToken();
+                                      if (token != null) {
+                                        await _api.cancelBookingByDate(token, dateStr);
+                                        setState(() => _bookedDates.remove(dateStr));
+                                      }
+                                    }
+                                    _storage.saveBookedDates(_bookedDates.toList());
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Réservations annulées avec succès.')));
+                                  }
+                                }
+                              },
+                            ),
+                          )
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
+                    const SizedBox(height: 16),
                   
                   // ── Toggle Automatisation ────────────────────────────────────
                   Card(
@@ -936,6 +936,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Opacity(
                   opacity: _isCalendarBusy ? 0.5 : 1.0,
                   child: TableCalendar(
+                    enabledDayPredicate: (day) {
+                      final normDay = DateTime(day.year, day.month, day.day);
+                      if (_hideWeekends && (normDay.weekday == DateTime.saturday || normDay.weekday == DateTime.sunday)) {
+                        return false;
+                      }
+                      for (final v in _vacations) {
+                        final start = DateTime(v.start.year, v.start.month, v.start.day);
+                        final end = DateTime(v.end.year, v.end.month, v.end.day);
+                        if (!normDay.isBefore(start) && !normDay.isAfter(end)) {
+                          return false;
+                        }
+                      }
+                      return true;
+                    },
                     firstDay: DateTime.now().subtract(const Duration(days: 365)),
                     lastDay: DateTime.now().add(const Duration(days: 365)),
                     focusedDay: _focusedDay,
@@ -1667,6 +1681,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
 
 
 
