@@ -952,18 +952,19 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Chip(
-                  label: Text(source == 'Occupé' ? 'Bloqué' : source, style: const TextStyle(fontSize: 10)),
+                  label: Text(source, style: const TextStyle(fontSize: 10)),
                   backgroundColor: source == 'Calendrier' 
                     ? Colors.purple.withValues(alpha: 0.1) 
                     : (source == 'Ailleurs' ? Colors.orange.withValues(alpha: 0.3) : (source == 'Occupé' ? Colors.grey.withValues(alpha: 0.2) : Colors.orange.withValues(alpha: 0.1))),
                   visualDensity: VisualDensity.compact,
                 ),
-                IconButton(
-                  icon: Icon(isBooked ? Icons.delete_outline : Icons.block, size: 20),
-                  color: Colors.redAccent,
-                  tooltip: isBooked ? 'Supprimer' : 'Bloquer',
-                  onPressed: () => _quickAction(date, isBooked, source),
-                ),
+                if (source != 'Occupé')
+                  IconButton(
+                    icon: Icon(isBooked ? Icons.delete_outline : Icons.block, size: 20),
+                    color: Colors.redAccent,
+                    tooltip: isBooked ? 'Supprimer' : 'Bloquer',
+                    onPressed: () => _quickAction(date, isBooked, source),
+                  ),
               ],
             ),
           ),
