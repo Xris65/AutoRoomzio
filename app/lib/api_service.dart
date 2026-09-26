@@ -136,7 +136,7 @@ class RoomzApiService {
     return false;
   }
 
-  Future<void> reserveWorkspace(
+  Future<bool> reserveWorkspace(
       String date, String token, String workspaceId) async {
     final response = await http.post(
       Uri.parse("$_apiBase/bookings"),
@@ -151,12 +151,15 @@ class RoomzApiService {
         "timeSlot": "FullDay",
       }),
     );
-    if (response.statusCode == 200) {
+    if (response.statusCode == 200 || response.statusCode == 201) {
       debugPrint("✅ Booked $date");
+      return true;
     } else if (response.statusCode == 409) {
       debugPrint("⚠️ Already booked $date");
+      return true; // Consider it successfully booked since it's reserved
     } else {
       debugPrint("❌ reserveWorkspace ${response.statusCode} $date: ${response.body}");
+      return false; // Out of range or error
     }
   }
 

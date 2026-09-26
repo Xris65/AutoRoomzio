@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
+import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
 import '../storage_service.dart';
 import 'login_screen.dart';
@@ -23,6 +24,11 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
 
+  // Calendar State
+  DateTime _focusedDay = DateTime.now();
+  Set<String> _requestedDates = {};
+  Set<String> _bookedDates = {};
+
   final Map<int, String> _weekDays = {
     1: 'Lundi',
     2: 'Mardi',
@@ -40,10 +46,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadData() async {
     final days = await _storage.getDays();
     final name = await _storage.getWorkspaceName();
+    final requested = await _storage.getRequestedDates();
+    final booked = await _storage.getBookedDates();
     if (mounted) {
       setState(() {
         _selectedDays = days;
         _workspaceName = name;
+        _requestedDates = requested.toSet();
+        _bookedDates = booked.toSet();
         _isLoading = false;
       });
     }
@@ -245,24 +255,154 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCalendarTab() {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.construction_rounded, size: 64, color: Colors.grey),
-          SizedBox(height: 16),
-          Text(
-            'Calendrier',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'Cette fonctionnalité arrivera bientôt !',
+    if (_workspaceName == null) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Configurez d\'abord votre bureau dans l\'onglet Accueil pour utiliser le calendrier.',
+            textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey),
           ),
-        ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        TableCalendar(
+          firstDay: DateTime.now().subtract(const Duration(days: 365)), // View past
+          lastDay: DateTime.now().add(const Duration(days: 365)),
+          focusedDay: _focusedDay,
+          startingDayOfWeek: StartingDayOfWeek.monday,
+          headerStyle: const HeaderStyle(
+            formatButtonVisible: false,
+            titleCentered: true,
+          ),
+          calendarStyle: CalendarStyle(
+            todayDecoration: BoxDecoration(
+              color: Colors.lightBlue.withValues(alpha: 0.3),
+              shape: BoxShape.circle,
+            ),
+          ),
+          onPageChanged: (focusedDay) {
+            _focusedDay = focusedDay;
+          },
+          onDaySelected: (selectedDay, focusedDay) {
+            _handleDateTap(selectedDay);
+          },
+          calendarBuilders: CalendarBuilders(
+            defaultBuilder: (context, day, focusedDay) => _buildDayCell(day),
+            todayBuilder: (context, day, focusedDay) => _buildDayCell(day, isToday: true),
+            outsideBuilder: (context, day, focusedDay) => _buildDayCell(day, isOutside: true),
+          ),
+        ),
+        const Spacer(),
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildLegend(Colors.green, 'Réservé'),
+              _buildLegend(Colors.blue, 'En attente'),
+            ],
+          ),
+        )
+      ],
+    );
+  }
+
+  Widget _buildDayCell(DateTime day, {bool isToday = false, bool isOutside = false}) {
+    final dateStr = day.toIso8601String().split('T').first;
+    final isBooked = _bookedDates.contains(dateStr);
+    final isRequested = _requestedDates.contains(dateStr);
+
+    Color? bgColor;
+    Color textColor = isOutside ? Colors.grey : Theme.of(context).colorScheme.onSurface;
+
+    if (isBooked) {
+      bgColor = Colors.green;
+      textColor = Colors.white;
+    } else if (isRequested) {
+      bgColor = Colors.blue;
+      textColor = Colors.white;
+    } else if (isToday) {
+      bgColor = Colors.lightBlue.withValues(alpha: 0.3);
+    }
+
+    return Container(
+      margin: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: bgColor,
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '${day.day}',
+        style: TextStyle(color: textColor, fontWeight: (isBooked || isRequested) ? FontWeight.bold : FontWeight.normal),
       ),
     );
+  }
+
+  Widget _buildLegend(Color color, String text) {
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 8),
+        Text(text, style: const TextStyle(fontSize: 14)),
+      ],
+    );
+  }
+
+  Future<void> _handleDateTap(DateTime selectedDay) async {
+    // Prevent selecting past dates (ignoring time)
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
+    
+    if (day.isBefore(today)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Impossible de réserver dans le passé.')),
+      );
+      return;
+    }
+
+    final dateStr = day.toIso8601String().split('T').first;
+
+    setState(() {
+      _focusedDay = day;
+      if (_requestedDates.contains(dateStr)) {
+        // Toggle off
+        _requestedDates.remove(dateStr);
+        _bookedDates.remove(dateStr);
+      } else {
+        // Toggle on
+        _requestedDates.add(dateStr);
+      }
+    });
+
+    _storage.saveRequestedDates(_requestedDates.toList());
+    _storage.saveBookedDates(_bookedDates.toList());
+
+    if (_requestedDates.contains(dateStr)) {
+      // Attempt to book
+      final accessToken = await _api.refreshMyToken();
+      if (accessToken == null) return;
+      final workspaceId = await _storage.getWorkspaceId();
+      if (workspaceId == null) return;
+
+      final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
+      if (success) {
+        setState(() {
+          _bookedDates.add(dateStr);
+        });
+        _storage.saveBookedDates(_bookedDates.toList());
+      }
+    }
   }
 
   Widget _buildSettingsTab() {

@@ -58,7 +58,29 @@ class StorageService {
     return prefs.getString('workspace_name');
   }
 
-  // ── Days (1 = Monday … 5 = Friday in Dart weekday) ───────────────────────
+  // ── Calendar Dates ────────────────────────────────────────────────────────
+  
+  Future<void> saveRequestedDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('requested_dates', dates);
+  }
+
+  Future<List<String>> getRequestedDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('requested_dates') ?? [];
+  }
+
+  Future<void> saveBookedDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('booked_dates', dates);
+  }
+
+  Future<List<String>> getBookedDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('booked_dates') ?? [];
+  }
+
+  // ── Days (recurring) ──────────────────────────────────────────────────────
 
   Future<void> saveDays(List<int> days) async {
     final prefs = await SharedPreferences.getInstance();
