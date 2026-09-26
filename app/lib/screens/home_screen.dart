@@ -205,74 +205,89 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHomeTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // ── Current workspace card ───────────────────────────────────
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: _changeWorkspace,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    const Icon(Icons.desk, color: Colors.lightBlue, size: 32),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Bureau sélectionné', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                          const SizedBox(height: 4),
-                          Text(
-                            _workspaceName ?? 'Aucun bureau configuré',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: _workspaceName != null ? Theme.of(context).colorScheme.onSurface : Colors.grey,
+    return Stack(
+      children: [
+        AbsorbPointer(
+          absorbing: _isCalendarBusy,
+          child: Opacity(
+            opacity: _isCalendarBusy ? 0.5 : 1.0,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // ── Current workspace card ───────────────────────────────────
+                  Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: _changeWorkspace,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.desk, color: Colors.lightBlue, size: 32),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Bureau sélectionné', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _workspaceName ?? 'Aucun bureau configuré',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: _workspaceName != null ? Theme.of(context).colorScheme.onSurface : Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                            if (_workspaceName != null)
+                              IconButton(
+                                icon: const Icon(Icons.clear, color: Colors.red),
+                                tooltip: 'Réinitialiser',
+                                onPressed: _resetWorkspace,
+                              )
+                            else
+                              const Icon(Icons.chevron_right, color: Colors.grey),
+                          ],
+                        ),
                       ),
                     ),
-                    if (_workspaceName != null)
-                      IconButton(
-                        icon: const Icon(Icons.clear, color: Colors.red),
-                        tooltip: 'Réinitialiser',
-                        onPressed: _resetWorkspace,
-                      )
-                    else
-                      const Icon(Icons.chevron_right, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // ── Prochaines réservations ──────────────────────────────────
+                  if (_workspaceName != null) ...[
+                    const Text(
+                      '🔮 Prochaines réservations',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildUpcomingBookings(),
                   ],
-                ),
+                  if (_workspaceName == null)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 12),
+                      child: Text(
+                        'Configurez d\'abord votre bureau en cliquant sur la carte ci-dessus.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 24),
-
-          // ── Prochaines réservations ──────────────────────────────────
-          if (_workspaceName != null) ...[
-            const Text(
-              '🔮 Prochaines réservations',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            _buildUpcomingBookings(),
-          ],
-          if (_workspaceName == null)
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: Text(
-                'Configurez d\'abord votre bureau en cliquant sur la carte ci-dessus.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
-            ),
-        ],
-      ),
+        ),
+        if (_isCalendarBusy)
+          const Positioned(
+            top: 0, left: 0, right: 0,
+            child: LinearProgressIndicator(),
+          ),
+      ],
     );
   }
 
