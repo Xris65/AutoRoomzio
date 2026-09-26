@@ -38,12 +38,32 @@ class MyApp extends StatelessWidget {
           title: 'AutoRoomzio',
           themeMode: mode,
           theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.lightBlue),
             useMaterial3: true,
+            appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
+            cardTheme: CardThemeData(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              elevation: 2,
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: ElevatedButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
           ),
           darkTheme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.dark),
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.lightBlue, brightness: Brightness.dark),
             useMaterial3: true,
+            appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
+            cardTheme: CardThemeData(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              elevation: 2,
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: ElevatedButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
           ),
           home: const _Splash(),
         );
@@ -70,6 +90,9 @@ class _SplashState extends State<_Splash> {
   Future<void> _route() async {
     final storage = StorageService();
     final token = await storage.getRefreshToken();
+    
+    // Add a slight delay so the splash screen is actually visible
+    await Future.delayed(const Duration(milliseconds: 800));
 
     if (!mounted) return;
 
@@ -87,8 +110,27 @@ class _SplashState extends State<_Splash> {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.auto_awesome_mosaic_rounded, size: 72, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(height: 24),
+            const Text(
+              'AutoRoomzio',
+              style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Vos réservations, en pilote automatique',
+              style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 48),
+            const CircularProgressIndicator(),
+          ],
+        ),
+      ),
     );
   }
 }
