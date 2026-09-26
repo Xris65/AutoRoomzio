@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../api_service.dart';
 
 class _RoomBounds {
@@ -60,23 +60,24 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
       final coords = geom['coordinates'] as List?;
       if (coords == null) continue;
       
-      void processPoint(List p) {
-        if (p.length < 2) return;
-        final x = (p[0] as num).toDouble();
-        final y = (p[1] as num).toDouble();
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
-
-      if (type == 'Point') {
-        processPoint(coords);
-      } else {
-        for (var point in coords) {
-          if (point is List) processPoint(point);
+      void extractPoints(List list) {
+          if (list.isEmpty) return;
+          if (list[0] is num) {
+            if (list.length >= 2) {
+              final x = (list[0] as num).toDouble();
+              final y = (list[1] as num).toDouble();
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          } else {
+            for (var item in list) {
+              if (item is List) extractPoints(item);
+            }
+          }
         }
-      }
+        extractPoints(coords);
     }
 
     if (minX == double.infinity) return const Center(child: Text("Erreur de plan"));
@@ -100,7 +101,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
           double scale = (scaleX < scaleY ? scaleX : scaleY) * 0.90;
           
           if (scale < 0.001) scale = 0.001;
-          if (scale > 5.0) scale = 5.0;
+          if (scale > 50.0) scale = 50.0;
 
           final dx = (viewW - (mapWidth * scale)) / 2;
           final dy = (viewH - (mapHeight * scale)) / 2;
@@ -120,7 +121,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
       constrained: false,
       boundaryMargin: EdgeInsets.all(mapWidth > mapHeight ? mapWidth : mapHeight),
       minScale: 0.001,
-      maxScale: 5.0,
+      maxScale: 50.0,
       child: Container(
         width: mapWidth,
         height: mapHeight,
@@ -148,23 +149,24 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
               double fMinX = double.infinity, fMinY = double.infinity;
               double fMaxX = double.negativeInfinity, fMaxY = double.negativeInfinity;
               
-              void processFeaturePoint(List p) {
-                if (p.length < 2) return;
-                final x = (p[0] as num).toDouble();
-                final y = (p[1] as num).toDouble();
-                if (x < fMinX) fMinX = x;
-                if (y < fMinY) fMinY = y;
-                if (x > fMaxX) fMaxX = x;
-                if (y > fMaxY) fMaxY = y;
-              }
-
-              if (type == 'Point') {
-                processFeaturePoint(coords);
-              } else {
-                for (var point in coords) {
-                  if (point is List) processFeaturePoint(point);
+              void extractFeaturePoints(List list) {
+                  if (list.isEmpty) return;
+                  if (list[0] is num) {
+                    if (list.length >= 2) {
+                      final x = (list[0] as num).toDouble();
+                      final y = (list[1] as num).toDouble();
+                      if (x < fMinX) fMinX = x;
+                      if (y < fMinY) fMinY = y;
+                      if (x > fMaxX) fMaxX = x;
+                      if (y > fMaxY) fMaxY = y;
+                    }
+                  } else {
+                    for (var item in list) {
+                      if (item is List) extractFeaturePoints(item);
+                    }
+                  }
                 }
-              }
+                extractFeaturePoints(coords);
               if (fMinX == double.infinity) continue;
 
               final left = fMinX - minX + padding;
@@ -334,4 +336,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     );
   }
 }
+
+
 
