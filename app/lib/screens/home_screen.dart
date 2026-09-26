@@ -1,6 +1,7 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
@@ -1586,14 +1587,20 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
-          child: const ListTile(
-            leading: Icon(Icons.info_outline_rounded),
-            title: Text('Version'),
-            trailing: Text('1.0.0'),
+          child: FutureBuilder<PackageInfo>(
+            future: PackageInfo.fromPlatform(),
+            builder: (context, snapshot) {
+              return ListTile(
+                leading: const Icon(Icons.info_outline_rounded),
+                title: const Text('Version'),
+                trailing: Text(snapshot.hasData ? snapshot.data!.version : '...'),
+              );
+            },
           ),
         ),
       ],
     );
   }
 }
+
 
