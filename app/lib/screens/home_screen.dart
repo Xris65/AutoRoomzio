@@ -44,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   TimeOfDay _automationTime = const TimeOfDay(hour: 8, minute: 0);
   bool _notifySuccess = true;
   bool _notifyFailure = true;
+  bool _autoSync = true;
   int _projectionsCount = 4;
 
   @override
@@ -62,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final autoTimeMap = await _storage.getAutomationTime();
     final notifSuccess = await _storage.getNotifySuccess();
     final notifFailure = await _storage.getNotifyFailure();
+    final autoSync = await _storage.getAutoSync();
     final projCount = await _storage.getProjectionsCount();
     
     if (mounted) {
@@ -75,11 +77,14 @@ class _HomeScreenState extends State<HomeScreen> {
         _automationTime = TimeOfDay(hour: autoTimeMap['hour']!, minute: autoTimeMap['minute']!);
         _notifySuccess = notifSuccess;
         _notifyFailure = notifFailure;
+        _autoSync = autoSync;
         _projectionsCount = projCount;
       });
     }
 
-    await _syncCalendar();
+    if (_autoSync) {
+      await _syncCalendar();
+    }
 
     if (mounted) {
       setState(() => _isLoading = false);
@@ -940,6 +945,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     DropdownMenuItem(value: 4, child: Text('Rouge')),
                   ],
                 ),
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('Synchronisation au démarrage'),
+                subtitle: const Text('Mettre à jour le calendrier à l\'ouverture de l\'app. Cela permet d\'afficher des données fiables.', style: TextStyle(fontSize: 12)),
+                secondary: const Icon(Icons.sync),
+                value: _autoSync,
+                onChanged: (val) {
+                  setState(() => _autoSync = val);
+                  _storage.saveAutoSync(val);
+                },
               ),
               const Divider(height: 1),
               ListTile(
