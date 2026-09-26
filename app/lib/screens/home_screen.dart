@@ -105,6 +105,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (_autoSync) {
       await _syncCalendar();
+    } else {
+      // Préserver le charme du splash screen même si la synchro est désactivée
+      await Future.delayed(const Duration(milliseconds: 1000));
+      if (mounted && _isLoading) {
+        _loadingTextNotifier.value = "C'est presque prêt !";
+        await Future.delayed(const Duration(milliseconds: 1000));
+      }
     }
 
     if (mounted) {
