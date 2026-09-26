@@ -191,9 +191,16 @@ class _SetupScreenState extends State<SetupScreen> {
     );
 
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
-    );
+    
+    // If launched from HomeScreen (can pop), just return. 
+    // If launched from LoginScreen (replaced root), push new HomeScreen.
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop(true);
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+    }
   }
 
   @override
