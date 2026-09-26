@@ -932,7 +932,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   },
                   items: const [
-                    DropdownMenuItem(value: 0, child: Text('Bleu')),
+                    DropdownMenuItem(value: 0, child: Text('Bleu (par défaut)')),
                     DropdownMenuItem(value: 1, child: Text('Vert')),
                     DropdownMenuItem(value: 2, child: Text('Violet')),
                     DropdownMenuItem(value: 3, child: Text('Orange')),
@@ -955,7 +955,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                   items: const [
                     DropdownMenuItem(value: 2, child: Text('2 jours')),
-                    DropdownMenuItem(value: 4, child: Text('4 jours')),
+                    DropdownMenuItem(value: 4, child: Text('4 jours (par défaut)')),
                     DropdownMenuItem(value: 7, child: Text('7 jours')),
                     DropdownMenuItem(value: 13, child: Text('13 jours (Max)')),
                   ],
