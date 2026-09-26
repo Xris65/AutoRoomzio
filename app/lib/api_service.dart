@@ -72,7 +72,8 @@ class RoomzApiService {
     );
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      return List<Map<String, dynamic>>.from(data['data'] ?? data);
+      if (data is List) return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(data['data'] ?? []);
     }
     debugPrint("❌ getSites ${response.statusCode}: ${response.body}");
     return [];
@@ -81,14 +82,13 @@ class RoomzApiService {
   /// Fetch floors for a given building.
   Future<List<Map<String, dynamic>>> getFloors(String token, String siteId) async {
     final response = await http.get(
-      // Assuming MyRoomz uses either /buildings/ID/floors or /floors?buildingId=
-      // but let's try to query the building ID or floors directly. Wait, the buildings endpoint might return floors nested.
       Uri.parse("$_apiBase/buildings/$siteId/floors"),
       headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
     );
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      return List<Map<String, dynamic>>.from(data['data'] ?? data);
+      if (data is List) return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(data['data'] ?? []);
     }
     debugPrint("❌ getFloors ${response.statusCode}: ${response.body}");
     return [];
@@ -98,11 +98,12 @@ class RoomzApiService {
   Future<List<Map<String, dynamic>>> getWorkspaces(String token, String floorId) async {
     final response = await http.get(
       Uri.parse("$_apiBase/floors/$floorId/workspaces?length=100&offset=0"),
-      headers: _authHeaders(token),
+      headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
     );
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      return List<Map<String, dynamic>>.from(data['data'] ?? data);
+      if (data is List) return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(data['data'] ?? []);
     }
     debugPrint("❌ getWorkspaces ${response.statusCode}: ${response.body}");
     return [];
