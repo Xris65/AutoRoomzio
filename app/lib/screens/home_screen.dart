@@ -98,10 +98,6 @@ class _HomeScreenState extends State<HomeScreen> {
           constraints: Constraints(networkType: NetworkType.connected),
         );
       }
-      
-      // Lancer l'exécution immédiate dans l'application (synchrone pour l'UX)
-      await _runAutomationNow();
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✅ Automatisation activée'), backgroundColor: Colors.green),
@@ -340,6 +336,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         _toggleAutomation(true);
                       }
                     },
+                  ),
+                if (_automationEnabled) const Divider(height: 1),
+                if (_automationEnabled)
+                  ListTile(
+                    leading: const Icon(Icons.play_circle_fill, color: Colors.green),
+                    title: const Text("Lancer maintenant"),
+                    subtitle: const Text("Exécuter manuellement la routine tout de suite", style: TextStyle(fontSize: 11)),
+                    onTap: _runAutomationNow,
                   ),
               ],
             ),
@@ -635,8 +639,8 @@ class _HomeScreenState extends State<HomeScreen> {
       if (token == null || workspaceId == null) return;
 
       final now = DateTime.now();
-      bool madeChanges = false;
       
+      int addedCount = 0;
       for (int i = 1; i <= 13; i++) {
         final targetDate = now.add(Duration(days: i));
         final dateStr = targetDate.toIso8601String().split('T').first;
@@ -647,14 +651,25 @@ class _HomeScreenState extends State<HomeScreen> {
           final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
           if (success) {
             _bookedDates.add(dateStr);
-            madeChanges = true;
+            addedCount++;
           }
         }
       }
       
-      if (madeChanges) {
+      if (addedCount > 0) {
         setState(() {}); // refresh UI
         _storage.saveBookedDates(_bookedDates.toList());
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(addedCount > 0 
+              ? '✅ $addedCount réservation(s) ajoutée(s) !' 
+              : '✅ Le planning est déjà à jour (aucune nouvelle place réservable)'),
+            backgroundColor: addedCount > 0 ? Colors.green : Colors.blue,
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
