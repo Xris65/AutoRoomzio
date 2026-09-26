@@ -960,27 +960,16 @@ class _HomeScreenState extends State<HomeScreen> {
               ValueListenableBuilder<ThemeMode>(
                 valueListenable: themeNotifier,
                 builder: (context, currentMode, _) {
-                  int modeIndex = 0;
-                  if (currentMode == ThemeMode.light) modeIndex = 1;
-                  if (currentMode == ThemeMode.dark) modeIndex = 2;
-                  
-                  return ListTile(
-                    title: const Text('Thème de l\'application'),
-                    leading: const Icon(Icons.brightness_6_rounded),
-                    trailing: DropdownButton<int>(
-                      value: modeIndex,
-                      onChanged: (val) {
-                        if (val != null) {
-                          themeNotifier.value = val == 1 ? ThemeMode.light : (val == 2 ? ThemeMode.dark : ThemeMode.system);
-                          _storage.saveThemeModeIndex(val);
-                        }
-                      },
-                      items: const [
-                        DropdownMenuItem(value: 0, child: Text('Système (par défaut)')),
-                        DropdownMenuItem(value: 1, child: Text('Clair')),
-                        DropdownMenuItem(value: 2, child: Text('Sombre')),
-                      ],
-                    ),
+                  final isDark = currentMode == ThemeMode.dark || 
+                      (currentMode == ThemeMode.system && MediaQuery.of(context).platformBrightness == Brightness.dark);
+                  return SwitchListTile(
+                    title: const Text('Mode sombre'),
+                    secondary: Icon(isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded),
+                    value: isDark,
+                    onChanged: (val) {
+                      themeNotifier.value = val ? ThemeMode.dark : ThemeMode.light;
+                      _storage.saveThemeModeIndex(val ? 2 : 1);
+                    },
                   );
                 },
               ),
