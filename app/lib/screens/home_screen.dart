@@ -601,12 +601,25 @@ class _HomeScreenState extends State<HomeScreen> {
                           )
                         : const Icon(Icons.calendar_today, color: Colors.grey, size: 20),
                       onTap: () async {
+                        final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+                        
+                        DateTime? safeStart = _vacationStart;
+                        DateTime? safeEnd = _vacationEnd;
+                        
+                        if (safeStart != null && safeStart.isBefore(today)) {
+                          safeStart = today;
+                        }
+                        if (safeEnd != null && safeEnd.isBefore(today)) {
+                          safeStart = null;
+                          safeEnd = null;
+                        }
+
                         final picked = await showDateRangePicker(
                           context: context,
-                          firstDate: DateTime.now().subtract(const Duration(days: 30)),
-                          lastDate: DateTime.now().add(const Duration(days: 365)),
-                          initialDateRange: (_vacationStart != null && _vacationEnd != null)
-                              ? DateTimeRange(start: _vacationStart!, end: _vacationEnd!)
+                          firstDate: today,
+                          lastDate: today.add(const Duration(days: 365)),
+                          initialDateRange: (safeStart != null && safeEnd != null)
+                              ? DateTimeRange(start: safeStart, end: safeEnd)
                               : null,
                           saveText: 'VALIDER',
                           builder: (context, child) {
@@ -622,12 +635,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                         );
                         if (picked != null) {
-                          final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-                          if (picked.end.isBefore(today)) {
-                            _showTopToast('La date de fin ne peut pas être dans le passé', isError: true);
-                            return;
-                          }
-                          
                           setState(() {
                             _vacationStart = picked.start;
                             _vacationEnd = picked.end;
