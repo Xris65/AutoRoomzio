@@ -15,6 +15,29 @@ void main() async {
   // Workmanager is Android-only
   if (Platform.isAndroid) {
     Workmanager().initialize(callbackDispatcher);
+
+    // Re-register the periodic task on every app launch to survive reboots
+    // and ensure the correct schedule time is always applied.
+    final storage = StorageService();
+    final automationEnabled = await storage.getAutomationEnabled();
+    if (automationEnabled) {
+      final autoTimeMap = await storage.getAutomationTime();
+      final now = DateTime.now();
+      var targetDate = DateTime(now.year, now.month, now.day,
+          autoTimeMap['hour']!, autoTimeMap['minute']!);
+      if (targetDate.isBefore(now)) {
+        targetDate = targetDate.add(const Duration(days: 1));
+      }
+      final delay = targetDate.difference(now);
+      Workmanager().registerPeriodicTask(
+        "1",
+        "autoReservationTask",
+        frequency: const Duration(hours: 24),
+        initialDelay: delay,
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
+        constraints: Constraints(networkType: NetworkType.connected),
+      );
+    }
   }
 
   final modeIndex = await StorageService().getThemeModeIndex();
