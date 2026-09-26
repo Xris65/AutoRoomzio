@@ -1,15 +1,31 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Uses shared_preferences for all platforms.
+/// On Android, SharedPreferences data is stored in the app's private sandbox,
+/// which is sufficient security for a personal automation tool.
 class StorageService {
-  final _secureStorage = const FlutterSecureStorage();
+  // ── Token ─────────────────────────────────────────────────────────────────
 
   Future<void> saveRefreshToken(String token) async {
-    await _secureStorage.write(key: 'refresh_token', value: token);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('refresh_token', token);
   }
 
   Future<String?> getRefreshToken() async {
-    return await _secureStorage.read(key: 'refresh_token');
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('refresh_token');
+  }
+
+  // ── Workspace settings ────────────────────────────────────────────────────
+
+  Future<void> saveSiteId(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('site_id', id);
+  }
+
+  Future<String?> getSiteId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('site_id');
   }
 
   Future<void> saveFloorId(String id) async {
@@ -32,7 +48,18 @@ class StorageService {
     return prefs.getString('workspace_id');
   }
 
-  // 1 = Monday, 7 = Sunday (Dart standard)
+  Future<void> saveWorkspaceName(String name) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('workspace_name', name);
+  }
+
+  Future<String?> getWorkspaceName() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('workspace_name');
+  }
+
+  // ── Days (1 = Monday … 5 = Friday in Dart weekday) ───────────────────────
+
   Future<void> saveDays(List<int> days) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('selected_days', days.map((e) => e.toString()).toList());
@@ -41,8 +68,14 @@ class StorageService {
   Future<List<int>> getDays() async {
     final prefs = await SharedPreferences.getInstance();
     final days = prefs.getStringList('selected_days');
-    // Default to Tue (2) and Thu (4) matching old logic
-    if (days == null) return [2, 4];
-    return days.map(int.parse).toList();
+    // Default to Tue (2) and Thu (4) — matching the original Python script
+    return days?.map(int.parse).toList() ?? [2, 4];
+  }
+
+  // ── Clear all (logout) ────────────────────────────────────────────────────
+
+  Future<void> clearAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
   }
 }

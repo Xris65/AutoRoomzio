@@ -1,6 +1,6 @@
 @echo off
 echo Running AutoRoomzio Flutter App...
 cd app
-call flutter run
+call flutter run -d windows
 cd ..
 pause

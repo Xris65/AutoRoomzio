@@ -6,106 +6,164 @@ import 'storage_service.dart';
 class RoomzApiService {
   final StorageService _storage = StorageService();
 
-  // 1. Refresh Token
-  Future<String?> refreshMyToken() async {
-    final oldRefreshToken = await _storage.getRefreshToken();
-    if (oldRefreshToken == null || oldRefreshToken.isEmpty) return null;
+  static const String _loginUrl = "https://login.roomz.io/connect/token";
+  static const String _apiBase = "https://api.my.roomz.io";
+  static const String _clientId = "my-roomz";
+  static const String _scope =
+      "openid profile email identityServer-api my-roomz-api offline_access";
 
-    final url = Uri.parse("https://login.roomz.io/connect/token");
-    final response = await http.post(url, body: {
-      "grant_type": "refresh_token",
-      "refresh_token": oldRefreshToken,
-      "client_id": "my-roomz",
-      "scope": "openid profile email identityServer-api my-roomz-api offline_access"
-    });
+  // ── Authentication ──────────────────────────────────────────────────────
+
+  /// Initial login with email + password. Returns access token or null.
+  Future<String?> login(String email, String password) async {
+    final response = await http.post(
+      Uri.parse(_loginUrl),
+      body: {
+        "grant_type": "password",
+        "username": email,
+        "password": password,
+        "client_id": _clientId,
+        "scope": _scope,
+      },
+    );
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      final newRefreshToken = data['refresh_token'];
-      final accessToken = data['access_token'];
-      
-      // Save the new refresh token securely
-      await _storage.saveRefreshToken(newRefreshToken);
-      return accessToken;
+      await _storage.saveRefreshToken(data['refresh_token']);
+      return data['access_token'];
     } else {
-      debugPrint("❌ Error refreshing token: ${response.statusCode}");
+      debugPrint("❌ Login failed ${response.statusCode}: ${response.body}");
       return null;
     }
   }
 
-  // 2. Check if Already Reserved
-  Future<bool> isAlreadyReserved(String date, String token, String floorId, String workspaceId) async {
-    final url = Uri.parse("https://api.my.roomz.io/floors/$floorId/workspaces/calendars?length=100&offset=0");
-    
-    final payload = {
-      "availableWorkspaceOnly": false,
-      "date": date,
-      "timeSlot": "FullDay",
-      "tagIds": []
-    };
+  /// Refresh access token using stored refresh token.
+  Future<String?> refreshMyToken() async {
+    final oldRefreshToken = await _storage.getRefreshToken();
+    if (oldRefreshToken == null || oldRefreshToken.isEmpty) return null;
 
-    final headers = {
-      "Authorization": "Bearer $token",
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "Origin": "https://my.roomz.io",
-      "Referer": "https://my.roomz.io/"
-    };
+    final response = await http.post(
+      Uri.parse(_loginUrl),
+      body: {
+        "grant_type": "refresh_token",
+        "refresh_token": oldRefreshToken,
+        "client_id": _clientId,
+        "scope": _scope,
+      },
+    );
 
-    try {
-      final response = await http.post(url, headers: headers, body: jsonEncode(payload));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final workspaces = data['data'] as List;
-        
-        for (var ws in workspaces) {
-          if (ws['workspaceId'] == workspaceId) {
-            final status = ws['status'];
-            return status != "Available";
-          }
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      await _storage.saveRefreshToken(data['refresh_token']);
+      return data['access_token'];
+    } else {
+      debugPrint("❌ Token refresh failed ${response.statusCode}");
+      return null;
+    }
+  }
+
+  // ── Discovery ────────────────────────────────────────────────────────────
+
+  /// Fetch the list of sites (buildings).
+  Future<List<Map<String, dynamic>>> getSites(String token) async {
+    final response = await http.get(
+      Uri.parse("$_apiBase/sites"),
+      headers: _authHeaders(token),
+    );
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return List<Map<String, dynamic>>.from(data['data'] ?? data);
+    }
+    debugPrint("❌ getSites ${response.statusCode}: ${response.body}");
+    return [];
+  }
+
+  /// Fetch floors for a given site.
+  Future<List<Map<String, dynamic>>> getFloors(String token, String siteId) async {
+    final response = await http.get(
+      Uri.parse("$_apiBase/floors?siteId=$siteId"),
+      headers: _authHeaders(token),
+    );
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return List<Map<String, dynamic>>.from(data['data'] ?? data);
+    }
+    debugPrint("❌ getFloors ${response.statusCode}: ${response.body}");
+    return [];
+  }
+
+  /// Fetch workspaces on a given floor.
+  Future<List<Map<String, dynamic>>> getWorkspaces(String token, String floorId) async {
+    final response = await http.get(
+      Uri.parse("$_apiBase/floors/$floorId/workspaces?length=100&offset=0"),
+      headers: _authHeaders(token),
+    );
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return List<Map<String, dynamic>>.from(data['data'] ?? data);
+    }
+    debugPrint("❌ getWorkspaces ${response.statusCode}: ${response.body}");
+    return [];
+  }
+
+  // ── Reservations ─────────────────────────────────────────────────────────
+
+  Future<bool> isAlreadyReserved(
+      String date, String token, String floorId, String workspaceId) async {
+    final response = await http.post(
+      Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
+      headers: _authHeaders(token),
+      body: jsonEncode({
+        "availableWorkspaceOnly": false,
+        "date": date,
+        "timeSlot": "FullDay",
+        "tagIds": [],
+      }),
+    );
+    if (response.statusCode == 200) {
+      final workspaces = List.from(jsonDecode(response.body)['data'] ?? []);
+      for (var ws in workspaces) {
+        if (ws['workspaceId'] == workspaceId) {
+          return ws['status'] != "Available";
         }
-        return false;
-      } else {
-        debugPrint("❌ Error ${response.statusCode}: ${response.body}");
-        return false;
       }
-    } catch (e) {
-      debugPrint("🔥 Crash: $e");
       return false;
     }
+    debugPrint("❌ isAlreadyReserved ${response.statusCode}: ${response.body}");
+    return false;
   }
 
-  // 3. Make Reservation
-  Future<void> reserveWorkspace(String date, String token, String workspaceId) async {
-    final url = Uri.parse("https://api.my.roomz.io/bookings");
-    
-    final headers = {
-      "Authorization": "Bearer $token",
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "roomz-source-type": "1", 
-      "x-roomz-source-type": "1",
-      "Origin": "https://my.roomz.io",
-      "Referer": "https://my.roomz.io/"
-    };
-
-    final payload = {
-      "workspaceId": workspaceId,
-      "localDate": date,
-      "timeSlot": "FullDay",
-    };
-
-    try {
-      final response = await http.post(url, headers: headers, body: jsonEncode(payload));
-      if (response.statusCode == 200) {
-        debugPrint("✅ Success for $date!");
-      } else if (response.statusCode == 409) {
-        debugPrint("⚠️ Already reserved or conflict for $date.");
-      } else {
-        debugPrint("❌ Error ${response.statusCode} for $date: ${response.body}");
-      }
-    } catch (e) {
-      debugPrint("🔥 Script error: $e");
+  Future<void> reserveWorkspace(
+      String date, String token, String workspaceId) async {
+    final response = await http.post(
+      Uri.parse("$_apiBase/bookings"),
+      headers: {
+        ..._authHeaders(token),
+        "roomz-source-type": "1",
+        "x-roomz-source-type": "1",
+      },
+      body: jsonEncode({
+        "workspaceId": workspaceId,
+        "localDate": date,
+        "timeSlot": "FullDay",
+      }),
+    );
+    if (response.statusCode == 200) {
+      debugPrint("✅ Booked $date");
+    } else if (response.statusCode == 409) {
+      debugPrint("⚠️ Already booked $date");
+    } else {
+      debugPrint("❌ reserveWorkspace ${response.statusCode} $date: ${response.body}");
     }
   }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  Map<String, String> _authHeaders(String token) => {
+        "Authorization": "Bearer $token",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Origin": "https://my.roomz.io",
+        "Referer": "https://my.roomz.io/",
+      };
 }
