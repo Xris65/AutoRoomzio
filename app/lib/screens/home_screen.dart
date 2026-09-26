@@ -1404,7 +1404,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final isBooked = _bookedDates.contains(dateStr);
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
-    final isElsewhere = _bookedElsewhereMap.containsKey(dateStr);
+    final isElsewhere = _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
     final isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.containsKey(dateStr);
 
     final differenceInDays = day.difference(today).inDays;
