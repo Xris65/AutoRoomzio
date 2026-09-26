@@ -1,7 +1,13 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import '../api_service.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import '../storage_service.dart';
 import 'setup_screen.dart';
 
+/// Shows the real MyRoomz login page in a WebView.
+/// Once the user is authenticated, we extract the OIDC tokens from
+/// the browser's localStorage (where the web app stores them) and
+/// navigate to the workspace setup screen.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -10,118 +16,92 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _api = RoomzApiService();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  bool _isLoading = false;
-  String? _errorMessage;
+  late final WebViewController _controller;
+  final _storage = StorageService();
+  bool _extracting = false;
 
-  Future<void> _login() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  // Key used by the OIDC client library in the web app's localStorage
+  static const String _oidcKey = 'oidc.user:https://login.roomz.io:my-roomz';
 
-    final token = await _api.login(
-      _emailController.text.trim(),
-      _passwordController.text,
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (url) => _tryExtractToken(url),
+        ),
+      )
+      ..loadRequest(Uri.parse('https://my.roomz.io'));
+  }
+
+  Future<void> _tryExtractToken(String url) async {
+    // Only attempt extraction once we're back on the main app (post-login)
+    if (!url.startsWith('https://my.roomz.io') || _extracting) return;
+
+    setState(() => _extracting = true);
+
+    // Inject JS to read the OIDC user object from localStorage
+    final result = await _controller.runJavaScriptReturningResult(
+      "window.localStorage.getItem('$_oidcKey')",
     );
 
-    if (!mounted) return;
+    final raw = result.toString();
 
-    if (token != null) {
+    // result is a JSON string wrapped in JS string quotes — strip them
+    if (raw == 'null' || raw.isEmpty || raw == 'undefined') {
+      setState(() => _extracting = false);
+      return;
+    }
+
+    try {
+      final cleaned = raw.startsWith('"') ? jsonDecode(raw) as String : raw;
+      final oidcUser = jsonDecode(cleaned) as Map<String, dynamic>;
+
+      final refreshToken = oidcUser['refresh_token'] as String?;
+      final accessToken = oidcUser['access_token'] as String?;
+
+      if (refreshToken == null || accessToken == null) {
+        setState(() => _extracting = false);
+        return;
+      }
+
+      await _storage.saveRefreshToken(refreshToken);
+
+      if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => SetupScreen(accessToken: token),
+          builder: (_) => SetupScreen(accessToken: accessToken),
         ),
       );
-    } else {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'Email ou mot de passe incorrect.';
-      });
+    } catch (e) {
+      // Not yet logged in or unexpected format — silently wait
+      setState(() => _extracting = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Icon(Icons.meeting_room_outlined, size: 64, color: Colors.blue),
-              const SizedBox(height: 16),
-              const Text(
-                'AutoRoomzio',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Connectez-vous à votre compte MyRoomz',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 40),
-              TextField(
-                controller: _emailController,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  prefixIcon: Icon(Icons.email_outlined),
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                decoration: const InputDecoration(
-                  labelText: 'Mot de passe',
-                  prefixIcon: Icon(Icons.lock_outlined),
-                  border: OutlineInputBorder(),
-                ),
-                obscureText: true,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _login(),
-              ),
-              if (_errorMessage != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _errorMessage!,
-                  style: const TextStyle(color: Colors.red),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-              const SizedBox(height: 24),
-              SizedBox(
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _login,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text('Se connecter', style: TextStyle(fontSize: 16)),
+      appBar: AppBar(
+        title: const Text('Connexion MyRoomz'),
+        actions: [
+          if (_extracting)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 ),
               ),
-            ],
-          ),
-        ),
+            ),
+        ],
       ),
+      body: WebViewWidget(controller: _controller),
     );
   }
 }
