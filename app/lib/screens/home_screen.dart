@@ -622,6 +622,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                         );
                         if (picked != null) {
+                          final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+                          if (picked.end.isBefore(today)) {
+                            _showTopToast('La date de fin ne peut pas être dans le passé', isError: true);
+                            return;
+                          }
+                          
                           setState(() {
                             _vacationStart = picked.start;
                             _vacationEnd = picked.end;
