@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
-import 'package:disable_battery_optimization/disable_battery_optimization.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
 import '../storage_service.dart';
@@ -210,31 +210,10 @@ class _HomeScreenState extends State<HomeScreen> {
           constraints: Constraints(networkType: NetworkType.connected),
         );
 
-        // Ask to disable battery optimization (Doze mode bypass)
-        final isBatteryOptimizationDisabled =
-            await DisableBatteryOptimization.isBatteryOptimizationDisabled ?? false;
-        if (!isBatteryOptimizationDisabled && mounted) {
-          await DisableBatteryOptimization.showDisableBatteryOptimizationSettings();
-        }
-
-        // Ask for OEM autostart + manufacturer battery optimization (Xiaomi, Huawei, Samsung, etc.)
-        final isManBatteryDisabled =
-            await DisableBatteryOptimization.isManufacturerBatteryOptimizationDisabled ?? true;
-        if (!isManBatteryDisabled && mounted) {
-          await DisableBatteryOptimization.showDisableManufacturerBatteryOptimizationSettings(
-            'Autoriser AutoRoomzio en arrière-plan',
-            'Pour que vos réservations se fassent automatiquement même quand l\'app est fermée, désactivez les restrictions batterie de votre fabricant.',
-          );
-        }
-
-        // Ask for autostart specifically (Xiaomi MIUI, Huawei, OPPO, Vivo)
-        final isAutoStartEnabled =
-            await DisableBatteryOptimization.isAutoStartEnabled ?? true;
-        if (!isAutoStartEnabled && mounted) {
-          await DisableBatteryOptimization.showEnableAutoStartSettings(
-            'Activer le démarrage automatique',
-            'AutoRoomzio a besoin d\'être autorisé à démarrer en arrière-plan pour réserver vos bureaux automatiquement.',
-          );
+        // Demander d'ignorer les optimisations de batterie (important pour Workmanager)
+        final isIgnored = await Permission.ignoreBatteryOptimizations.isGranted;
+        if (!isIgnored && mounted) {
+          await Permission.ignoreBatteryOptimizations.request();
         }
       }
       if (mounted) {
