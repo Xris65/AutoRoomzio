@@ -761,9 +761,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     startingDayOfWeek: StartingDayOfWeek.monday,
                     rowHeight: _compactMode ? 42.0 : 52.0,
                     daysOfWeekHeight: _compactMode ? 20.0 : 24.0,
-                    enabledDayPredicate: _hideWeekends 
-                        ? (day) => day.weekday != DateTime.saturday && day.weekday != DateTime.sunday 
-                        : (day) => true,
                     headerStyle: const HeaderStyle(
                       formatButtonVisible: false,
                       titleCentered: true,
@@ -974,21 +971,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (_isLoading) _loadingTextNotifier.value = "Vérification de la configuration du bureau...";
       
-      // We check requested dates (conditionally excluding weekends) + the next horizon days
-      Set<String> datesToCheck = Set.from(
-        _requestedDates.where((d) {
-          final day = DateTime.parse(d).weekday;
-          final isWeekend = day == DateTime.saturday || day == DateTime.sunday;
-          return !(_hideWeekends && isWeekend);
-        }),
-      );
+      // We check requested dates + the next horizon days (including weekends, so they can be displayed if booked externally)
+      Set<String> datesToCheck = Set.from(_requestedDates);
       final now = DateTime.now();
       for (int i = 0; i <= _bookingHorizon; i++) {
         final d = now.add(Duration(days: i));
-        final isWeekend = d.weekday == DateTime.saturday || d.weekday == DateTime.sunday;
-        if (!(_hideWeekends && isWeekend)) {
-          datesToCheck.add(d.toIso8601String().split('T').first);
-        }
+        datesToCheck.add(d.toIso8601String().split('T').first);
       }
 
       if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
@@ -1121,14 +1109,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Text('Gestion du $dateStr', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               ),
               if (!isBooked && !isRequested)
-                ListTile(
-                  leading: Icon(
-                    isBookableNow ? Icons.check_circle_outline : Icons.pending_actions,
-                    color: isBookableNow ? Colors.green : Colors.blue
+                if (_hideWeekends && (day.weekday == DateTime.saturday || day.weekday == DateTime.sunday))
+                  const ListTile(
+                    leading: Icon(Icons.weekend, color: Colors.grey),
+                    title: Text('Les nouvelles réservations le week-end sont désactivées dans vos paramètres.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  )
+                else
+                  ListTile(
+                    leading: Icon(
+                      isBookableNow ? Icons.check_circle_outline : Icons.pending_actions,
+                      color: isBookableNow ? Colors.green : Colors.blue
+                    ),
+                    title: Text(isBookableNow ? 'Réserver ce jour' : 'Programmer (En attente)'),
+                    onTap: () => Navigator.pop(context, 'reserve'),
                   ),
-                  title: Text(isBookableNow ? 'Réserver ce jour' : 'Programmer (En attente)'),
-                  onTap: () => Navigator.pop(context, 'reserve'),
-                ),
               if (isBooked || isRequested)
                 ListTile(
                   leading: const Icon(Icons.cancel_outlined, color: Colors.red),
