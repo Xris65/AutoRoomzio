@@ -1404,6 +1404,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final isBooked = _bookedDates.contains(dateStr);
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
+    final isElsewhere = _bookedElsewhereMap.containsKey(dateStr);
+    final isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.contains(dateStr);
 
     final differenceInDays = day.difference(today).inDays;
     final isBookableNow = differenceInDays <= 13;
@@ -1428,12 +1430,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     leading: Icon(Icons.weekend, color: Colors.grey),
                     title: Text('Les nouvelles réservations le week-end sont désactivées.', style: TextStyle(color: Colors.grey, fontSize: 12)),
                   )
-                else if (_bookedElsewhereMap.containsKey(dateStr))
+                else if (isElsewhere)
                   ListTile(
                     leading: Icon(Icons.person_off, color: Colors.orange.shade900),
                     title: Text('Libérer mon autre bureau (${_bookedElsewhereMap[dateStr] ?? "Ailleurs"})', style: TextStyle(color: Colors.orange.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
                     subtitle: const Text("Annule la réservation que vous avez faite sur cet autre bureau ce jour-là.", style: TextStyle(fontSize: 11)),
                     onTap: () => Navigator.pop(context, 'cancel_elsewhere'),
+                  )
+                else if (isOccupiedByOthers)
+                  const ListTile(
+                    leading: Icon(Icons.person_off, color: Colors.grey),
+                    title: Text('Place indisponible', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
+                    subtitle: Text("Quelqu'un d'autre a déjà réservé cette place ce jour-là.", style: TextStyle(color: Colors.grey, fontSize: 11)),
                   )
                 else
                   ListTile(
@@ -1450,7 +1458,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: Text(isBooked ? 'Libérer la place' : 'Annuler la demande'),
                   onTap: () => Navigator.pop(context, 'cancel'),
                 ),
-              if (!isIgnored && !isWeekendAndHidden && !_bookedElsewhereMap.containsKey(dateStr))
+              if (!isIgnored && !isWeekendAndHidden && !isElsewhere)
                 ListTile(
                   leading: const Icon(Icons.block, color: Colors.redAccent),
                   title: const Text('Bloquer (Ignorer l\'automatisation)'),
