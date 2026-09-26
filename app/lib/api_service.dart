@@ -101,7 +101,7 @@ class RoomzApiService {
   Future<List<Map<String, dynamic>>> getAllWorkspaces(String token, String siteId, String floorId) async {
     final List<Map<String, dynamic>> allWorkspaces = [];
     int offset = 0;
-    final int limit = 100;
+    final int limit = 500; // Increase page size to reduce requests
     
     try {
       while (true) {

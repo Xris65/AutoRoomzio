@@ -61,7 +61,13 @@ class _SetupScreenState extends State<SetupScreen> {
           
           if (savedFloorId != null) {
             initialFloor = initialFloors.firstWhere((f) => f['id'].toString() == savedFloorId);
-            final allWs = await _api.getAllWorkspaces(widget.accessToken, savedSiteId, savedFloorId);
+            final results = await Future.wait([
+              _api.getAllWorkspaces(widget.accessToken, savedSiteId, savedFloorId),
+              _api.getFloorPlanData(widget.accessToken, savedSiteId, savedFloorId),
+            ]);
+            final allWs = results[0];
+            final initialFeatures = results[1];
+            
             final workspaces = allWs.where((ws) {
               if (ws['isReservable'] == false) return false;
               if (ws['bookable'] == false) return false;
@@ -70,7 +76,6 @@ class _SetupScreenState extends State<SetupScreen> {
               if (ws['type'] == 1) return false;
               return true;
             }).toList();
-            final initialFeatures = await _api.getFloorPlanData(widget.accessToken, savedSiteId, savedFloorId);
             
             if (mounted) {
                _floorFeatures = initialFeatures;
@@ -183,8 +188,12 @@ class _SetupScreenState extends State<SetupScreen> {
     final floorId = floor['id'].toString();
     
     // Un seul appel API, on filtre localement
-    final allWs = await _api.getAllWorkspaces(widget.accessToken, siteId, floorId);
-    final features = await _api.getFloorPlanData(widget.accessToken, siteId, floorId);
+    final results = await Future.wait([
+      _api.getAllWorkspaces(widget.accessToken, siteId, floorId),
+      _api.getFloorPlanData(widget.accessToken, siteId, floorId),
+    ]);
+    final allWs = results[0];
+    final features = results[1];
 
     final bookable = allWs.where((ws) {
       if (ws['isReservable'] == false) return false;
