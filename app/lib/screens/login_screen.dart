@@ -185,6 +185,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _buildBody() {
     if (Platform.isAndroid) {
+      if (_androidController == null) {
+        return const Center(child: CircularProgressIndicator());
+      }
       return WebViewWidget(controller: _androidController!);
     }
 
