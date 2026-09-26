@@ -64,11 +64,11 @@ class RoomzApiService {
 
   // ── Discovery ────────────────────────────────────────────────────────────
 
-  /// Fetch the list of sites (buildings).
+  /// Fetch the list of buildings (sites).
   Future<List<Map<String, dynamic>>> getSites(String token) async {
     final response = await http.get(
-      Uri.parse("$_apiBase/sites"),
-      headers: _authHeaders(token),
+      Uri.parse("$_apiBase/buildings"),
+      headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
     );
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -78,11 +78,13 @@ class RoomzApiService {
     return [];
   }
 
-  /// Fetch floors for a given site.
+  /// Fetch floors for a given building.
   Future<List<Map<String, dynamic>>> getFloors(String token, String siteId) async {
     final response = await http.get(
-      Uri.parse("$_apiBase/floors?siteId=$siteId"),
-      headers: _authHeaders(token),
+      // Assuming MyRoomz uses either /buildings/ID/floors or /floors?buildingId=
+      // but let's try to query the building ID or floors directly. Wait, the buildings endpoint might return floors nested.
+      Uri.parse("$_apiBase/buildings/$siteId/floors"),
+      headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
     );
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
