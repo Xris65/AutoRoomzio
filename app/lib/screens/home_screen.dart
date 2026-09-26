@@ -170,9 +170,13 @@ class _HomeScreenState extends State<HomeScreen> {
       _logout();
       return;
     }
-    Navigator.of(context).push(
+    final didChange = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => SetupScreen(accessToken: token)),
-    ).then((_) => _loadData());
+    );
+
+    if (didChange == true) {
+      _loadData();
+    }
   }
 
   Future<void> _logout() async {
