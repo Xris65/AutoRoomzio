@@ -51,6 +51,11 @@ class _SetupScreenState extends State<SetupScreen> {
   String? _selectedRoomPrefix;
   Map<String, List<Map<String, dynamic>>> _rooms = {};
 
+  // Search queries
+  String _siteSearch = '';
+  String _floorSearch = '';
+  String _roomSearch = '';
+
   Future<void> _onSiteSelected(Map<String, dynamic> site) async {
     setState(() {
       _selectedSite = site;
@@ -59,6 +64,7 @@ class _SetupScreenState extends State<SetupScreen> {
       _selectedWorkspace = null;
       _floors = [];
       _rooms = {};
+      _floorSearch = ''; // Reset next step search
       _loadingFloors = true;
       _currentStep = 1;
     });
@@ -77,19 +83,18 @@ class _SetupScreenState extends State<SetupScreen> {
       _selectedRoomPrefix = null;
       _selectedWorkspace = null;
       _rooms = {};
+      _roomSearch = ''; // Reset next step search
       _loadingWorkspaces = true;
       _currentStep = 2;
     });
     final workspaces = await _api.getWorkspaces(widget.accessToken, floor['id'].toString());
     
-    // Group workspaces by room prefix (e.g. "DS-BORD-1-17-A" -> room "DS-BORD-1-17", seat "A")
     final Map<String, List<Map<String, dynamic>>> grouped = {};
     for (final ws in workspaces) {
       final String name = ws['name']?.toString() ?? ws['id'].toString();
       final lastDash = name.lastIndexOf('-');
       String roomName = name;
       
-      // If there's a dash and the suffix is short (seat identifier)
       if (lastDash > 0 && lastDash < name.length - 1) {
         final suffix = name.substring(lastDash + 1);
         if (suffix.length <= 4 && !suffix.contains(' ')) {
@@ -126,6 +131,21 @@ class _SetupScreenState extends State<SetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Apply filters
+    final filteredSites = _sites.where((s) {
+      final name = s['name']?.toString() ?? s['id'].toString();
+      return name.toLowerCase().contains(_siteSearch.toLowerCase());
+    }).toList();
+
+    final filteredFloors = _floors.where((f) {
+      final name = f['name']?.toString() ?? f['id'].toString();
+      return name.toLowerCase().contains(_floorSearch.toLowerCase());
+    }).toList();
+
+    final filteredRooms = _rooms.keys.where((r) {
+      return r.toLowerCase().contains(_roomSearch.toLowerCase());
+    }).toList();
+
     return Scaffold(
       appBar: AppBar(title: const Text('Configuration')),
       body: _loadingSites
@@ -171,11 +191,17 @@ class _SetupScreenState extends State<SetupScreen> {
                       state: _selectedSite != null ? StepState.complete : StepState.editing,
                       isActive: _currentStep >= 0,
                       content: Column(
-                        children: _sites.map((site) => _SelectTile(
-                          label: site['name']?.toString() ?? site['id'].toString(),
-                          selected: _selectedSite?['id'] == site['id'],
-                          onTap: () => _onSiteSelected(site),
-                        )).toList(),
+                        children: [
+                          if (_sites.length > 5)
+                            _buildSearchBar('Rechercher un bâtiment...', (v) => setState(() => _siteSearch = v)),
+                          ...filteredSites.map((site) => _SelectTile(
+                            label: site['name']?.toString() ?? site['id'].toString(),
+                            selected: _selectedSite?['id'] == site['id'],
+                            onTap: () => _onSiteSelected(site),
+                          )),
+                          if (filteredSites.isEmpty)
+                            const Padding(padding: EdgeInsets.all(16), child: Text('Aucun résultat')),
+                        ],
                       ),
                     ),
                     Step(
@@ -188,11 +214,17 @@ class _SetupScreenState extends State<SetupScreen> {
                       content: _loadingFloors
                           ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())
                           : Column(
-                              children: _floors.map((floor) => _SelectTile(
-                                label: floor['name']?.toString() ?? floor['id'].toString(),
-                                selected: _selectedFloor?['id'] == floor['id'],
-                                onTap: () => _onFloorSelected(floor),
-                              )).toList(),
+                              children: [
+                                if (_floors.length > 5)
+                                  _buildSearchBar('Rechercher un étage...', (v) => setState(() => _floorSearch = v)),
+                                ...filteredFloors.map((floor) => _SelectTile(
+                                  label: floor['name']?.toString() ?? floor['id'].toString(),
+                                  selected: _selectedFloor?['id'] == floor['id'],
+                                  onTap: () => _onFloorSelected(floor),
+                                )),
+                                if (filteredFloors.isEmpty)
+                                  const Padding(padding: EdgeInsets.all(16), child: Text('Aucun résultat')),
+                              ],
                             ),
                     ),
                     Step(
@@ -205,20 +237,26 @@ class _SetupScreenState extends State<SetupScreen> {
                       content: _loadingWorkspaces
                           ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())
                           : Column(
-                              children: _rooms.keys.map((roomName) {
-                                final count = _rooms[roomName]!.length;
-                                return _SelectTile(
-                                  label: "$roomName ($count place${count > 1 ? 's' : ''})",
-                                  selected: _selectedRoomPrefix == roomName,
-                                  onTap: () {
-                                    setState(() {
-                                      _selectedRoomPrefix = roomName;
-                                      _selectedWorkspace = null;
-                                      _currentStep = 3;
-                                    });
-                                  },
-                                );
-                              }).toList(),
+                              children: [
+                                if (_rooms.length > 5)
+                                  _buildSearchBar('Rechercher une salle...', (v) => setState(() => _roomSearch = v)),
+                                ...filteredRooms.map((roomName) {
+                                  final count = _rooms[roomName]!.length;
+                                  return _SelectTile(
+                                    label: "$roomName ($count place${count > 1 ? 's' : ''})",
+                                    selected: _selectedRoomPrefix == roomName,
+                                    onTap: () {
+                                      setState(() {
+                                        _selectedRoomPrefix = roomName;
+                                        _selectedWorkspace = null;
+                                        _currentStep = 3;
+                                      });
+                                    },
+                                  );
+                                }),
+                                if (filteredRooms.isEmpty)
+                                  const Padding(padding: EdgeInsets.all(16), child: Text('Aucun résultat')),
+                              ],
                             ),
                     ),
                     Step(
@@ -247,6 +285,29 @@ class _SetupScreenState extends State<SetupScreen> {
                     ),
                   ],
                 ),
+    );
+  }
+
+  Widget _buildSearchBar(String hint, Function(String) onChanged) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        decoration: InputDecoration(
+          hintText: hint,
+          prefixIcon: const Icon(Icons.search, size: 20),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+        ),
+        onChanged: onChanged,
+      ),
     );
   }
 }
