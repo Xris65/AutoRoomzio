@@ -71,14 +71,17 @@ class _HomeScreenState extends State<HomeScreen> {
     
     // On affiche l'alerte en bas, juste au-dessus de la barre de navigation
 
-    Color bgColor = Theme.of(context).colorScheme.primary;
+    Color bgColor = Theme.of(context).colorScheme.inverseSurface;
+    Color textColor = Theme.of(context).colorScheme.onInverseSurface;
     IconData icon = Icons.info_outline;
     
     if (isError) {
       bgColor = Colors.red.shade600;
+      textColor = Colors.white;
       icon = Icons.error_outline;
     } else if (isSuccess) {
       bgColor = Colors.green.shade600;
+      textColor = Colors.white;
       icon = Icons.check_circle_outline;
     }
 
@@ -86,9 +89,9 @@ class _HomeScreenState extends State<HomeScreen> {
       SnackBar(
         content: Row(
           children: [
-            Icon(icon, color: Colors.white, size: 20),
+            Icon(icon, color: textColor, size: 20),
             const SizedBox(width: 12),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+            Expanded(child: Text(message, style: TextStyle(color: textColor, fontWeight: FontWeight.bold))),
           ],
         ),
         backgroundColor: bgColor,
