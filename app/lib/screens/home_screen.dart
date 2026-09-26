@@ -1179,28 +1179,37 @@ class _HomeScreenState extends State<HomeScreen> {
     
     setState(() => _isCalendarBusy = true);
     try {
+      final token = await _api.refreshMyToken();
+      final workspaceId = await _storage.getWorkspaceId();
+      if (token == null || workspaceId == null) return;
+
       if (isBooked) {
-        final token = await _api.refreshMyToken();
-        final workspaceId = await _storage.getWorkspaceId();
-        if (token != null && workspaceId != null) {
+        if (source == 'Ailleurs') {
+          await _api.cancelBookingByDate(token, dateStr);
+        } else {
           await _api.cancelReservation(dateStr, token, workspaceId);
         }
       }
+
       setState(() {
-        _requestedDates.remove(dateStr);
-        _bookedDates.remove(dateStr);
-        if (source == 'Récurrent') {
-          _ignoredDates.add(dateStr); // Only block automation
+        if (isBooked) {
+          if (source == 'Ailleurs') {
+            _bookedElsewhereMap.remove(dateStr);
+          } else {
+            _bookedDates.remove(dateStr);
+            _requestedDates.remove(dateStr);
+          }
+        } else {
+          _ignoredDates.add(dateStr);
         }
       });
+
       _storage.saveRequestedDates(_requestedDates.toList());
       _storage.saveBookedDates(_bookedDates.toList());
-      if (source == 'Récurrent') {
-        _storage.saveIgnoredDates(_ignoredDates.toList());
-      }
+      _storage.saveIgnoredDates(_ignoredDates.toList());
       
       if (mounted) {
-        _showTopToast(source == 'Calendrier' ? 'Réservation supprimée' : 'Jour bloqué ($dateStr)');
+        _showTopToast(isBooked ? 'Réservation supprimée' : 'Jour bloqué ($dateStr)');
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
