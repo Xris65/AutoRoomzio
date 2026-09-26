@@ -31,12 +31,15 @@ jobs:
           channel: 'stable'
 
       - name: Install dependencies
+        working-directory: ./app
         run: flutter pub get
 
       - name: Analyze code
+        working-directory: ./app
         run: flutter analyze
 
       - name: Build APK
+        working-directory: ./app
         run: flutter build apk --release
 
       - name: Generate Version Tag
@@ -53,4 +56,4 @@ jobs:
           tag_name: ${{ steps.generate_tag.outputs.tag }}
           name: Release ${{ steps.generate_tag.outputs.tag }}
           generate_release_notes: true
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: app/build/app/outputs/flutter-apk/app-release.apk
