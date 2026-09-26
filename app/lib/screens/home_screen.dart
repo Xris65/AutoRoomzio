@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -748,7 +748,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   if (conflicts.isNotEmpty) {
                                     if (!mounted) return;
                                     final messenger = ScaffoldMessenger.of(context);
-                                    messenger.showSnackBar(SnackBar(content: Text('Annulation de \${toCancel.length} journée(s)...')));
+                                    messenger.showSnackBar(SnackBar(content: Text('Annulation de ${conflicts.length} journée(s)...')));
                                     
                                     for (final dateStr in conflicts) {
                                       final token = await _api.refreshMyToken();
@@ -1293,7 +1293,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (_isLoading) {
-        _loadingTextNotifier.value = "C'est presque prêt !";
+        _loadingTextNotifier.value = "On y est presque !";
         await Future.delayed(const Duration(milliseconds: 1000));
       }
 
@@ -1753,6 +1753,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
 
 
 
