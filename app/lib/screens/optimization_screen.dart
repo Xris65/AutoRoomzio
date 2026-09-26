@@ -45,10 +45,11 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
     
     final storage = StorageService();
     final autostart = await storage.getAutostartVerified();
+    final batteryVerified = await storage.getBatteryVerified();
 
     if (mounted) {
       setState(() {
-        _isBatteryOptimized = !batteryOpt; // true if it is currently optimized (which is bad for us)
+        _isBatteryOptimized = !(batteryOpt || batteryVerified); // false if batteryOpt is true OR batteryVerified is true
         _isNotifGranted = notif;
         _isAutostartVerified = autostart;
       });
@@ -57,7 +58,26 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
 
   Future<void> _requestBattery() async {
     await Permission.ignoreBatteryOptimizations.request();
-    _checkPermissions();
+    await _checkPermissions();
+    if (_isBatteryOptimized) {
+      if (!mounted) return;
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text("Vérification manuelle"),
+          content: const Text("Sur certains téléphones (Xiaomi, Huawei, etc.), la détection automatique échoue. Avez-vous bien sélectionné 'Pas de restriction' ou désactivé l'optimisation pour AutoRoomzio ?"),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Non")),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Oui, c'est fait")),
+          ],
+        )
+      );
+      if (result == true) {
+        final storage = StorageService();
+        await storage.saveBatteryVerified(true);
+        setState(() => _isBatteryOptimized = false);
+      }
+    }
   }
 
   Future<void> _requestNotif() async {
@@ -89,14 +109,12 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
           package: intentDict['package'],
           componentName: intentDict['component'],
         );
-        final canResolve = await intent.canResolveActivity();
-        if (canResolve ?? false) {
-          await intent.launch();
-          launched = true;
-          break;
-        }
+        // Do not use canResolveActivity() due to Android 11+ package visibility rules
+        await intent.launch();
+        launched = true;
+        break;
       } catch (e) {
-        debugPrint("Failed to launch intent \${intentDict['package']}: \$e");
+        debugPrint("Failed to launch intent ${intentDict['package']}: $e");
       }
     }
 

@@ -333,6 +333,16 @@ class StorageService {
     await prefs.setBool('autostart_verified', val);
   }
 
+  Future<void> saveBatteryVerified(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('battery_verified', val);
+  }
+
+  Future<bool> getBatteryVerified() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('battery_verified') ?? false;
+  }
+
   Future<bool> getAutostartVerified() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('autostart_verified') ?? false;
