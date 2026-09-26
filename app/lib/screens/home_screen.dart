@@ -577,10 +577,10 @@ class _HomeScreenState extends State<HomeScreen> {
       final accessToken = await _api.refreshMyToken();
       if (accessToken == null) return;
 
-      // Check requested dates + the next 14 days
+      // Check requested dates + the next 13 days
       Set<String> datesToCheck = Set.from(_requestedDates);
       final now = DateTime.now();
-      for (int i = 0; i < 14; i++) {
+      for (int i = 0; i <= 13; i++) {
         final d = now.add(Duration(days: i));
         datesToCheck.add(d.toIso8601String().split('T').first);
       }
@@ -638,7 +638,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final isIgnored = _ignoredDates.contains(dateStr);
 
     final differenceInDays = day.difference(today).inDays;
-    final isBookableNow = differenceInDays <= 14;
+    final isBookableNow = differenceInDays <= 13;
 
     final action = await showModalBottomSheet<String>(
       context: context,

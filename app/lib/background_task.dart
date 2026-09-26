@@ -35,8 +35,8 @@ void callbackDispatcher() {
     final now = DateTime.now();
     final formatter = DateFormat('yyyy-MM-dd');
 
-    // Check next 14 days
-    for (int i = 1; i <= 14; i++) {
+    // Check next 13 days
+    for (int i = 1; i <= 13; i++) {
       final targetDate = now.add(Duration(days: i));
       final dateStr = formatter.format(targetDate);
 
