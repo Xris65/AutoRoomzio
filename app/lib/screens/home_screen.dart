@@ -475,7 +475,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final dateStr = day.toIso8601String().split('T').first;
 
-    if (_bookedDates.contains(dateStr) || _requestedDates.contains(dateStr)) {
+    if (_bookedDates.contains(dateStr)) {
       // Prompt to cancel
       final confirm = await showDialog<bool>(
         context: context,
@@ -498,12 +498,10 @@ class _HomeScreenState extends State<HomeScreen> {
       if (confirm == true) {
         setState(() => _isCalendarBusy = true);
         try {
-          if (_bookedDates.contains(dateStr)) {
-            final token = await _api.refreshMyToken();
-            final workspaceId = await _storage.getWorkspaceId();
-            if (token != null && workspaceId != null) {
-              await _api.cancelReservation(dateStr, token, workspaceId);
-            }
+          final token = await _api.refreshMyToken();
+          final workspaceId = await _storage.getWorkspaceId();
+          if (token != null && workspaceId != null) {
+            await _api.cancelReservation(dateStr, token, workspaceId);
           }
           setState(() {
             _requestedDates.remove(dateStr);
@@ -516,6 +514,14 @@ class _HomeScreenState extends State<HomeScreen> {
           if (mounted) setState(() => _isCalendarBusy = false);
         }
       }
+      return;
+    } else if (_requestedDates.contains(dateStr)) {
+      // It's only pending (blue), remove immediately without API call or popup
+      setState(() {
+        _requestedDates.remove(dateStr);
+        _focusedDay = day;
+      });
+      _storage.saveRequestedDates(_requestedDates.toList());
       return;
     }
 
