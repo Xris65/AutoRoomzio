@@ -73,9 +73,8 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     double dx, dy;
     
     if (targetRect != null) {
-      // Focus on the selected workspace: zoom in relative to the fitScale, but not too much.
-      // E.g., 2.5x the normal view
-      scale = fitScale * 2.5;
+      // Focus on the selected workspace: zoom in more so it's clearly visible
+      scale = fitScale * 4.5;
       
       // But don't zoom in so much that the desk fills the entire screen
       final maxTargetScale = viewW / (targetRect.width * 2); 
@@ -94,8 +93,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
       scale = fitScale;
       
       // Enforce a minimum scale just in case the map is ridiculously wide
-      // but only up to 2x the fitScale
-      final minReadableScale = fitScale * 2.0; 
+      final minReadableScale = fitScale * 2.5; 
       if (scale < minReadableScale) scale = minReadableScale;
       scale = scale.clamp(0.001, 100.0);
       

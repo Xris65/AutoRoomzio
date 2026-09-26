@@ -703,7 +703,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       context: context,
                                       builder: (context) => AlertDialog(
                                         title: const Text('Réservations existantes'),
-                                        content: Text('Pour vos congés du \${picked!.start.day}/\${picked!.start.month} au \${picked!.end.day}/\${picked!.end.month}, vous avez des réservations ou demandes :\n\n\${toCancel.map((d) => '• \$d').join('\n')}\n\nVoulez-vous ajouter ce congé et annuler automatiquement ces journées ?'),
+                                        content: Text("Pour vos congés du \${picked!.start.day}/\${picked!.start.month} au \${picked!.end.day}/\${picked!.end.month}, vous avez des réservations ou demandes :\n\n\${toCancel.map((d) => '• \$d').join('\n')}\n\nVoulez-vous ajouter ce congé et annuler automatiquement ces journées ?"),
                                         actions: [
                                           TextButton(
                                             onPressed: () => Navigator.pop(context, false),
