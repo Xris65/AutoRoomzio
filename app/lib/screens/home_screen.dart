@@ -396,18 +396,28 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildUpcomingBookings() {
     List<Map<String, dynamic>> upcoming = [];
     final now = DateTime.now();
-    for (int i = 0; upcoming.length < 4 && i < 60; i++) {
+    int recurringProjectionsCount = 0;
+    
+    for (int i = 0; i < 60; i++) {
       final date = now.add(Duration(days: i));
       final dateStr = date.toIso8601String().split('T').first;
       
-      if (_ignoredDates.contains(dateStr)) {
-        continue;
-      }
+      if (_ignoredDates.contains(dateStr)) continue;
       
-      if (_requestedDates.contains(dateStr)) {
-        upcoming.add({"date": date, "source": "Calendrier", "isBooked": _bookedDates.contains(dateStr)});
-      } else if (_automationEnabled && _selectedDays.contains(date.weekday)) {
-        upcoming.add({"date": date, "source": "Récurrent", "isBooked": _bookedDates.contains(dateStr)});
+      bool isBooked = _bookedDates.contains(dateStr);
+      bool isRequested = _requestedDates.contains(dateStr);
+      bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday);
+
+      if (isRequested) {
+        upcoming.add({"date": date, "source": "Calendrier", "isBooked": isBooked});
+      } else if (isBooked) {
+        // Réservation orpheline ou issue d'une récurrence
+        String source = isRecurring ? "Récurrent" : "Calendrier";
+        upcoming.add({"date": date, "source": source, "isBooked": true});
+      } else if (isRecurring && recurringProjectionsCount < 4) {
+        // Projection future de l'automatisation
+        upcoming.add({"date": date, "source": "Récurrent", "isBooked": false});
+        recurringProjectionsCount++;
       }
     }
 
