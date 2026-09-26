@@ -22,8 +22,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<int> _selectedDays = [];
   String? _workspaceName;
   bool _isLoading = true;
-  bool _isSaving = false;
   bool _isCalendarBusy = false;
+  bool _automationEnabled = false;
 
   // Calendar State
   DateTime _focusedDay = DateTime.now();
@@ -31,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Set<String> _bookedDates = {};
 
   final Map<int, String> _weekDays = {
+    1: 'Lundi',
     2: 'Mardi',
     3: 'Mercredi',
     4: 'Jeudi',
@@ -48,40 +49,60 @@ class _HomeScreenState extends State<HomeScreen> {
     final name = await _storage.getWorkspaceName();
     final requested = await _storage.getRequestedDates();
     final booked = await _storage.getBookedDates();
+    final autoEnabled = await _storage.getAutomationEnabled();
     if (mounted) {
       setState(() {
         _selectedDays = days;
         _workspaceName = name;
         _requestedDates = requested.toSet();
         _bookedDates = booked.toSet();
+        _automationEnabled = autoEnabled;
         _isLoading = false;
       });
     }
   }
 
-  Future<void> _saveAndActivate() async {
-    setState(() => _isSaving = true);
-    await _storage.saveDays(_selectedDays);
+  Future<void> _toggleAutomation(bool val) async {
+    setState(() => _automationEnabled = val);
+    await _storage.saveAutomationEnabled(val);
 
-    if (Platform.isAndroid) {
-      Workmanager().registerPeriodicTask(
-        "1",
-        "autoReservationTask",
-        frequency: const Duration(hours: 24),
-        existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
-        constraints: Constraints(networkType: NetworkType.connected),
-      );
+    if (val) {
+      if (Platform.isAndroid) {
+        Workmanager().registerPeriodicTask(
+          "1",
+          "autoReservationTask",
+          frequency: const Duration(hours: 24),
+          existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
+          constraints: Constraints(networkType: NetworkType.connected),
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ Automatisation activée'), backgroundColor: Colors.green),
+        );
+      }
+    } else {
+      if (Platform.isAndroid) {
+        Workmanager().cancelAll();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('❌ Automatisation désactivée')),
+        );
+      }
     }
-
-    if (mounted) {
-      setState(() => _isSaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Automatisation activée !'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
+  }
+  
+  void _onDayToggled(int day, bool selected) {
+    setState(() {
+      if (selected) {
+        _selectedDays.add(day);
+        _selectedDays.sort();
+      } else {
+        _selectedDays.remove(day);
+      }
+    });
+    _storage.saveDays(_selectedDays);
   }
 
   Future<void> _changeWorkspace() async {
@@ -199,7 +220,23 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 24),
 
-          // ── Day selection ────────────────────────────────────────────
+          // ── Toggle Automatisation ────────────────────────────────────
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: SwitchListTile(
+              title: const Text('Automatisation', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Réserver automatiquement mes places', style: TextStyle(fontSize: 12)),
+              value: _automationEnabled,
+              onChanged: _workspaceName == null ? null : _toggleAutomation,
+              secondary: Icon(
+                _automationEnabled ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+                color: _automationEnabled ? Colors.green : Colors.grey,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // ── Jours récurrents ─────────────────────────────────────────
           const Text(
             '📅 Jours de présence au bureau',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -217,43 +254,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: Text(entry.value),
                   value: _selectedDays.contains(entry.key),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  onChanged: (bool? value) {
-                    setState(() {
-                      if (value == true) {
-                        _selectedDays.add(entry.key);
-                        _selectedDays.sort();
-                      } else {
-                        _selectedDays.remove(entry.key);
-                      }
-                    });
-                  },
+                  onChanged: (bool? value) => _onDayToggled(entry.key, value ?? false),
                 );
               }).toList(),
             ),
           ),
+          const SizedBox(height: 24),
 
-          const SizedBox(height: 32),
-          SizedBox(
-            height: 52,
-            child: ElevatedButton.icon(
-              onPressed: (_isSaving || _workspaceName == null || _selectedDays.isEmpty)
-                  ? null
-                  : _saveAndActivate,
-              icon: _isSaving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.play_arrow_rounded),
-              label: const Text('Activer l\'automatisation', style: TextStyle(fontSize: 16)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.lightBlue,
-                foregroundColor: Colors.white,
-              ),
+          // ── Prochaines réservations ──────────────────────────────────
+          if (_workspaceName != null) ...[
+            const Text(
+              '🔮 Prochaines réservations',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
-          ),
-
+            const SizedBox(height: 8),
+            _buildUpcomingBookings(),
+          ],
           if (_workspaceName == null)
             const Padding(
               padding: EdgeInsets.only(top: 12),
@@ -265,6 +281,65 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildUpcomingBookings() {
+    List<Map<String, dynamic>> upcoming = [];
+    final now = DateTime.now();
+    for (int i = 0; upcoming.length < 4 && i < 60; i++) {
+      final date = now.add(Duration(days: i));
+      final dateStr = date.toIso8601String().split('T').first;
+      
+      if (_requestedDates.contains(dateStr)) {
+        upcoming.add({"date": date, "source": "Calendrier", "isBooked": _bookedDates.contains(dateStr)});
+      } else if (_automationEnabled && _selectedDays.contains(date.weekday)) {
+        upcoming.add({"date": date, "source": "Récurrent", "isBooked": _bookedDates.contains(dateStr)});
+      }
+    }
+
+    if (upcoming.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Text('Aucune réservation prévue.', style: TextStyle(color: Colors.grey)),
+      );
+    }
+
+    final weekdays = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+
+    return Column(
+      children: upcoming.map((item) {
+        final date = item['date'] as DateTime;
+        final source = item['source'] as String;
+        final isBooked = item['isBooked'] as bool;
+        final weekDayName = weekdays[date.weekday - 1];
+
+        return Card(
+          elevation: 0,
+          margin: const EdgeInsets.only(bottom: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: ListTile(
+            leading: Icon(
+              isBooked ? Icons.check_circle : Icons.pending,
+              color: isBooked ? Colors.green : Colors.blue,
+            ),
+            title: Text('$weekDayName ${date.day}/${date.month}'),
+            subtitle: Text(
+              isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)',
+              style: TextStyle(color: isBooked ? Colors.green : Colors.blue, fontSize: 12),
+            ),
+            trailing: Chip(
+              label: Text(source, style: const TextStyle(fontSize: 10)),
+              backgroundColor: source == 'Calendrier' 
+                ? Colors.purple.withValues(alpha: 0.1) 
+                : Colors.orange.withValues(alpha: 0.1),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 

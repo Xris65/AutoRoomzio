@@ -101,6 +101,16 @@ class StorageService {
     return days?.map(int.parse).toList() ?? [2, 4];
   }
 
+  Future<void> saveAutomationEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('automation_enabled', enabled);
+  }
+
+  Future<bool> getAutomationEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('automation_enabled') ?? false;
+  }
+
   // ── Settings ─────────────────────────────────────────────────────────────
   
   Future<bool?> getDarkMode() async {
