@@ -167,6 +167,36 @@ class StorageService {
     return prefs.getBool('notify_failure') ?? true;
   }
 
+  Future<void> saveThemeColorIndex(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('theme_color_index', index);
+  }
+
+  Future<int> getThemeColorIndex() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('theme_color_index') ?? 0;
+  }
+
+  Future<void> saveAutoSync(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_sync', val);
+  }
+
+  Future<bool> getAutoSync() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('auto_sync') ?? true;
+  }
+
+  Future<void> saveProjectionsCount(int val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('projections_count', val);
+  }
+
+  Future<int> getProjectionsCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('projections_count') ?? 4;
+  }
+
   // ── Clear all (logout) ────────────────────────────────────────────────────
 
   Future<void> clearAll() async {

@@ -43,6 +43,8 @@ class _HomeScreenState extends State<HomeScreen> {
   TimeOfDay _automationTime = const TimeOfDay(hour: 8, minute: 0);
   bool _notifySuccess = true;
   bool _notifyFailure = true;
+  bool _autoSync = true;
+  int _projectionsCount = 4;
 
   @override
   void initState() {
@@ -60,6 +62,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final autoTimeMap = await _storage.getAutomationTime();
     final notifSuccess = await _storage.getNotifySuccess();
     final notifFailure = await _storage.getNotifyFailure();
+    final autoSync = await _storage.getAutoSync();
+    final projCount = await _storage.getProjectionsCount();
+    
     if (mounted) {
       setState(() {
         _selectedDays = days;
@@ -71,8 +76,14 @@ class _HomeScreenState extends State<HomeScreen> {
         _automationTime = TimeOfDay(hour: autoTimeMap['hour']!, minute: autoTimeMap['minute']!);
         _notifySuccess = notifSuccess;
         _notifyFailure = notifFailure;
+        _autoSync = autoSync;
+        _projectionsCount = projCount;
         _isLoading = false;
       });
+      
+      if (_autoSync) {
+        _syncCalendar();
+      }
     }
   }
 
@@ -414,7 +425,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // Réservation orpheline ou issue d'une récurrence
         String source = isRecurring ? "Récurrent" : "Calendrier";
         upcoming.add({"date": date, "source": source, "isBooked": true});
-      } else if (isRecurring && recurringProjectionsCount < 4) {
+      } else if (isRecurring && recurringProjectionsCount < _projectionsCount) {
         // Projection future de l'automatisation
         upcoming.add({"date": date, "source": "Récurrent", "isBooked": false});
         recurringProjectionsCount++;
@@ -892,21 +903,77 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
-          child: ValueListenableBuilder<ThemeMode>(
-            valueListenable: themeNotifier,
-            builder: (context, currentMode, _) {
-              final isDark = currentMode == ThemeMode.dark || 
-                  (currentMode == ThemeMode.system && MediaQuery.of(context).platformBrightness == Brightness.dark);
-              return SwitchListTile(
-                title: const Text('Mode sombre'),
-                secondary: Icon(isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded),
-                value: currentMode == ThemeMode.dark,
-                onChanged: (val) {
-                  themeNotifier.value = val ? ThemeMode.dark : ThemeMode.light;
-                  _storage.saveDarkMode(val);
+          child: Column(
+            children: [
+              ValueListenableBuilder<ThemeMode>(
+                valueListenable: themeNotifier,
+                builder: (context, currentMode, _) {
+                  final isDark = currentMode == ThemeMode.dark || 
+                      (currentMode == ThemeMode.system && MediaQuery.of(context).platformBrightness == Brightness.dark);
+                  return SwitchListTile(
+                    title: const Text('Mode sombre'),
+                    secondary: Icon(isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded),
+                    value: currentMode == ThemeMode.dark,
+                    onChanged: (val) {
+                      themeNotifier.value = val ? ThemeMode.dark : ThemeMode.light;
+                      _storage.saveDarkMode(val);
+                    },
+                  );
                 },
-              );
-            },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                title: const Text('Couleur du thème'),
+                leading: const Icon(Icons.color_lens_rounded),
+                trailing: DropdownButton<int>(
+                  value: themeColorNotifier.value,
+                  onChanged: (val) {
+                    if (val != null) {
+                      themeColorNotifier.value = val;
+                      _storage.saveThemeColorIndex(val);
+                    }
+                  },
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text('Bleu')),
+                    DropdownMenuItem(value: 1, child: Text('Vert')),
+                    DropdownMenuItem(value: 2, child: Text('Violet')),
+                    DropdownMenuItem(value: 3, child: Text('Orange')),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('Synchronisation au démarrage'),
+                subtitle: const Text('Mettre à jour le calendrier à l\'ouverture de l\'app', style: TextStyle(fontSize: 12)),
+                secondary: const Icon(Icons.sync),
+                value: _autoSync,
+                onChanged: (val) {
+                  setState(() => _autoSync = val);
+                  _storage.saveAutoSync(val);
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                title: const Text('Prévisions à afficher'),
+                subtitle: const Text('Nombre de réservations futures dans l\'accueil', style: TextStyle(fontSize: 12)),
+                leading: const Icon(Icons.format_list_numbered),
+                trailing: DropdownButton<int>(
+                  value: _projectionsCount,
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _projectionsCount = val);
+                      _storage.saveProjectionsCount(val);
+                    }
+                  },
+                  items: const [
+                    DropdownMenuItem(value: 2, child: Text('2 jours')),
+                    DropdownMenuItem(value: 4, child: Text('4 jours')),
+                    DropdownMenuItem(value: 7, child: Text('7 jours')),
+                    DropdownMenuItem(value: 13, child: Text('13 jours (Max)')),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 24),
