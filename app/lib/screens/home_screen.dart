@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -177,19 +177,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Fetch latest bookings from API every time
     await _syncCalendar();
     
-    if (Platform.isAndroid) {
-      final hasSeen = await _storage.getHasSeenOptimization();
-      if (!hasSeen && mounted) {
-        await _storage.saveHasSeenOptimization(true);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const OptimizationScreen()),
-            ).then((_) => _checkPermissionsStatus());
-          }
-        });
-      }
-    }
+
     await _checkPermissionsStatus();
 
     if (mounted) {
@@ -248,6 +236,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (val) {
       if (Platform.isAndroid) {
+        final hasSeen = await _storage.getHasSeenOptimization();
+        if (!hasSeen && mounted) {
+          await _storage.saveHasSeenOptimization(true);
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const OptimizationScreen()),
+          ).then((_) => _checkPermissionsStatus());
+        }
+
         final now = DateTime.now();
         var targetDate = DateTime(now.year, now.month, now.day, _automationTime.hour, _automationTime.minute);
         if (targetDate.isBefore(now)) {
@@ -347,7 +343,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
           title: const Text('AutoRoomzio'),
           actions: [
-            if (Platform.isAndroid && _permissionStatus != 0)
+            if (Platform.isAndroid && _automationEnabled)
               IconButton(
                 icon: Icon(
                   Icons.shield_rounded, 
@@ -1671,6 +1667,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
 
 
 

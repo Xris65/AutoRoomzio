@@ -119,7 +119,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     return InteractiveViewer(
       transformationController: _controller,
       constrained: false,
-      boundaryMargin: EdgeInsets.all(mapWidth > mapHeight ? mapWidth : mapHeight),
+      boundaryMargin: const EdgeInsets.all(double.infinity),
       minScale: 0.001,
       maxScale: 50.0,
       child: Container(
@@ -336,6 +336,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     );
   }
 }
+
 
 
 
