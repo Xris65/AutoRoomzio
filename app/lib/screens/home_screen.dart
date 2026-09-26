@@ -334,7 +334,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
-            if (_isCalendarBusy) const CircularProgressIndicator(),
+            if (_isCalendarBusy)
+              const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Synchronisation...', style: TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
           ],
         ),
         const Spacer(),
@@ -409,11 +417,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     setState(() => _isCalendarBusy = true);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Synchronisation en cours (cela peut prendre quelques secondes)...')),
-      );
-    }
 
     try {
       final accessToken = await _api.refreshMyToken();
@@ -451,11 +454,6 @@ class _HomeScreenState extends State<HomeScreen> {
         });
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
-
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Synchronisation terminée !'), backgroundColor: Colors.green),
-        );
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
