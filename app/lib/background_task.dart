@@ -35,9 +35,10 @@ void callbackDispatcher() {
     final now = DateTime.now();
     final formatter = DateFormat('yyyy-MM-dd');
 
-    // Check next 13 days
+    // Check next 13 weekdays only (no point booking Saturday/Sunday)
     for (int i = 1; i <= 13; i++) {
       final targetDate = now.add(Duration(days: i));
+      if (targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday) continue;
       final dateStr = formatter.format(targetDate);
 
       if (ignoredDates.contains(dateStr)) {

@@ -817,12 +817,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (_isLoading) _loadingTextNotifier.value = "Vérification de la configuration du bureau...";
       
-      // We check requested dates + the next 13 days
-      Set<String> datesToCheck = Set.from(_requestedDates);
+      // We check requested dates (excluding weekends) + the next 13 weekdays
+      Set<String> datesToCheck = Set.from(
+        _requestedDates.where((d) {
+          final day = DateTime.parse(d).weekday;
+          return day != DateTime.saturday && day != DateTime.sunday;
+        }),
+      );
       final now = DateTime.now();
       for (int i = 0; i <= 13; i++) {
         final d = now.add(Duration(days: i));
-        datesToCheck.add(d.toIso8601String().split('T').first);
+        if (d.weekday != DateTime.saturday && d.weekday != DateTime.sunday) {
+          datesToCheck.add(d.toIso8601String().split('T').first);
+        }
       }
 
       if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
