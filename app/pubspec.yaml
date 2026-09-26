@@ -43,6 +43,7 @@ dependencies:
   table_calendar: ^3.2.1
   google_fonts: ^6.2.1
   permission_handler: ^13.0.2
+  auto_start_flutter: ^1.4.0
 
 dev_dependencies:
   flutter_test:

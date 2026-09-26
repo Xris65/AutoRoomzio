@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:auto_start_flutter/auto_start_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
 import '../storage_service.dart';
@@ -214,6 +215,16 @@ class _HomeScreenState extends State<HomeScreen> {
         final isIgnored = await Permission.ignoreBatteryOptimizations.isGranted;
         if (!isIgnored && mounted) {
           await Permission.ignoreBatteryOptimizations.request();
+        }
+
+        // Demander l'autostart spécifique aux fabricants (Xiaomi, etc.) si disponible
+        try {
+          final hasAutoStart = await isAutoStartAvailable;
+          if (hasAutoStart == true && mounted) {
+            await getAutoStartPermission();
+          }
+        } catch (e) {
+          debugPrint("Autostart check failed: $e");
         }
       }
       if (mounted) {

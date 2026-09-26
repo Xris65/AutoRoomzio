@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  auto_start_flutter
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
