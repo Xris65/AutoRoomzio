@@ -1241,6 +1241,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     subtitle: const Text('Onglet affiché à l\'ouverture', style: TextStyle(fontSize: 12)),
                     leading: const Icon(Icons.home_rounded),
                     trailing: DropdownButton<int>(
+                      underline: const SizedBox(),
+                      focusColor: Colors.transparent,
                       value: snapshot.data ?? 0,
                       onChanged: (val) {
                         if (val != null) {
@@ -1262,6 +1264,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 title: const Text('Couleur du thème'),
                 leading: const Icon(Icons.color_lens_rounded),
                 trailing: DropdownButton<int>(
+                  underline: const SizedBox(),
+                  focusColor: Colors.transparent,
                   value: themeColorNotifier.value,
                   onChanged: (val) {
                     if (val != null) {
@@ -1286,6 +1290,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: const Text('Police d\'écriture'),
                     leading: const Icon(Icons.font_download_rounded),
                     trailing: DropdownButton<int>(
+                      underline: const SizedBox(),
+                      focusColor: Colors.transparent,
                       value: currentFont,
                       onChanged: (val) {
                         if (val != null) {
@@ -1308,6 +1314,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 subtitle: const Text('Nombre de réservations futures dans l\'accueil', style: TextStyle(fontSize: 12)),
                 leading: const Icon(Icons.format_list_numbered),
                 trailing: DropdownButton<int>(
+                  underline: const SizedBox(),
+                  focusColor: Colors.transparent,
                   value: _projectionsCount,
                   onChanged: (val) {
                     if (val != null) {
@@ -1329,6 +1337,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 subtitle: const Text('Jours vérifiés par la synchronisation', style: TextStyle(fontSize: 12)),
                 leading: const Icon(Icons.sync_rounded),
                 trailing: DropdownButton<int>(
+                  underline: const SizedBox(),
+                  focusColor: Colors.transparent,
                   value: _bookingHorizon,
                   onChanged: (val) {
                     if (val != null) {
