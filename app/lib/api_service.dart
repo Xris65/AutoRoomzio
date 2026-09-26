@@ -281,43 +281,48 @@ class RoomzApiService {
   /// Uses the POST /floors/{floorId}/workspaces/calendars endpoint for each date.
   Future<Set<String>> getWorkspaceOccupancy(String token, String workspaceId, String floorId, List<String> dates) async {
     final Set<String> occupied = {};
-    // Execute in parallel chunks of 10 to avoid overwhelming the server
-    for (int i = 0; i < dates.length; i += 15) {
-      final chunk = dates.skip(i).take(15);
-      await Future.wait(chunk.map((date) async {
-        try {
-          final payload = {
-            "availableWorkspaceOnly": false,
-            "date": date,
-            "timeSlot": "FullDay",
-            "tagIds": [],
-            "workspaceType": "Desk"
-          };
-          final response = await http.post(
-            Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
-            headers: _authHeaders(token)..addAll({
-              "roomz-source-type": "MyRoomzWeb",
-              "Content-Type": "application/json"
-            }),
-            body: jsonEncode(payload)
-          );
-          if (response.statusCode == 200) {
-            final data = jsonDecode(response.body);
-            final items = data['data'] ?? data['items'] ?? data['workspaces'] ?? data;
-            if (items is List) {
-              for (final item in items) {
-                if (item['workspaceId'] == workspaceId || item['id'] == workspaceId) {
-                  // If the workspace is Reserved and the creator email doesn't match ours (or just count any reservation since we filter out 'bookedHere' later)
-                  if (item['status'] == 'Reserved') {
-                    occupied.add(date);
+    final client = http.Client(); // Use a persistent client to reuse TCP/TLS connections
+    try {
+      // Execute in parallel chunks of 15 to avoid overwhelming the server
+      for (int i = 0; i < dates.length; i += 15) {
+        final chunk = dates.skip(i).take(15);
+        await Future.wait(chunk.map((date) async {
+          try {
+            final payload = {
+              "availableWorkspaceOnly": false,
+              "date": date,
+              "timeSlot": "FullDay",
+              "tagIds": [],
+              "workspaceType": "Desk"
+            };
+            final response = await client.post(
+              Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
+              headers: _authHeaders(token)..addAll({
+                "roomz-source-type": "MyRoomzWeb",
+                "Content-Type": "application/json"
+              }),
+              body: jsonEncode(payload)
+            );
+            if (response.statusCode == 200) {
+              final data = jsonDecode(response.body);
+              final items = data['data'] ?? data['items'] ?? data['workspaces'] ?? data;
+              if (items is List) {
+                for (final item in items) {
+                  if (item['workspaceId'] == workspaceId || item['id'] == workspaceId) {
+                    // If the workspace is Reserved and the creator email doesn't match ours (or just count any reservation since we filter out 'bookedHere' later)
+                    if (item['status'] == 'Reserved') {
+                      occupied.add(date);
+                    }
+                    break;
                   }
-                  break;
                 }
               }
             }
-          }
-        } catch (_) {}
-      }));
+          } catch (_) {}
+        }));
+      }
+    } finally {
+      client.close();
     }
     return occupied;
   }
