@@ -238,7 +238,7 @@ class StorageService {
 
   Future<bool> getHideWeekends() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('hide_weekends') ?? false;
+    return prefs.getBool('hide_weekends') ?? true; // Actif par défaut
   }
 
   // ── Last sync timestamp (cache TTL) ──────────────────────────────────────

@@ -48,7 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _notifyFailure = true;
   int _projectionsCount = 4;
   int _bookingHorizon = 13;
-  bool _hideWeekends = false;
+  bool _hideWeekends = true; // Actif par défaut
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
   late PageController _pageController;
