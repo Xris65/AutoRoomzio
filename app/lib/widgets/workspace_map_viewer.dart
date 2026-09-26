@@ -121,8 +121,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     double minX = double.infinity, minY = double.infinity;
     double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
     
-    double totalDeskWidth = 0.0;
-    int deskCount = 0;
     Rect? selectedRect;
 
     for (final feature in widget.features) {
@@ -146,13 +144,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
       });
       
       if (fMinX == double.infinity) continue;
-      
-      final isDesk = props['workspaceType'] == 'Desk';
-      final width = fMaxX - fMinX;
-      if (isDesk && width > 0) {
-        totalDeskWidth += width;
-        deskCount++;
-      }
       
       final wsId = (props['workspaceId']?.toString() ?? props['roomId']?.toString() ?? props['id']?.toString())?.toLowerCase();
       if (widget.selectedWorkspaceId != null && wsId == widget.selectedWorkspaceId?.toLowerCase()) {

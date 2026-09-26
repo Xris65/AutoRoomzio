@@ -677,20 +677,17 @@ class _HomeScreenState extends State<HomeScreen> {
                                   saveText: 'VALIDER',
                                 );
                                 if (picked != null) {
-                                  // AUTO-CANCEL bookings in this new vacation period
+                                  // AUTO-CANCEL bookings and requests in this new vacation period
                                   final toCancel = <String>[];
-                                  final maxBookable = today.add(const Duration(days: 13));
                                   
-                                  if (picked.start.isBefore(maxBookable.add(const Duration(days: 1)))) {
-                                    for (var i = 0; i <= picked.end.difference(picked.start).inDays; i++) {
-                                      final d = picked.start.add(Duration(days: i));
-                                      if (d.isAfter(maxBookable)) break;
-                                      if (_hideWeekends && (d.weekday == DateTime.saturday || d.weekday == DateTime.sunday)) continue;
-                                      
-                                      final dateStr = "\${d.year}-\${d.month.toString().padLeft(2, '0')}-\${d.day.toString().padLeft(2, '0')}";
-                                      if (_bookedDates.contains(dateStr)) {
-                                        toCancel.add(dateStr);
-                                      }
+                                  for (var i = 0; i <= picked.end.difference(picked.start).inDays; i++) {
+                                    final d = picked.start.add(Duration(days: i));
+                                    final dateStr = d.toIso8601String().split('T').first;
+                                    
+                                    if (_bookedDates.contains(dateStr) || 
+                                        _requestedDates.contains(dateStr) || 
+                                        _bookedElsewhereMap.containsKey(dateStr)) {
+                                      toCancel.add(dateStr);
                                     }
                                   }
                                   
@@ -699,9 +696,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                       context: context,
                                       builder: (context) => AlertDialog(
                                         title: const Text('Réservations existantes'),
-                                        content: Text('Vous avez déjà des réservations sur ces dates de congés :\n\n' + 
+                                        content: Text('Vous avez des réservations ou demandes sur ces dates :\n\n' + 
                                           toCancel.map((d) => '• \$d').join('\n') + 
-                                          '\n\nVoulez-vous ajouter ce congé et annuler automatiquement ces réservations ?'),
+                                          '\n\nVoulez-vous ajouter ce congé et annuler automatiquement ces journées ?'),
                                         actions: [
                                           TextButton(
                                             onPressed: () => Navigator.pop(context, false),
@@ -719,16 +716,28 @@ class _HomeScreenState extends State<HomeScreen> {
                                     
                                     if (!mounted) return;
                                     final messenger = ScaffoldMessenger.of(context);
-                                    messenger.showSnackBar(SnackBar(content: Text('Annulation de \${toCancel.length} réservation(s) existante(s)...')));
+                                    messenger.showSnackBar(SnackBar(content: Text('Annulation de \${toCancel.length} journée(s)...')));
+                                    
                                     for (final dateStr in toCancel) {
-                                      final token = await _api.refreshMyToken();
-                                      if (token != null) {
-                                        await _api.cancelBookingByDate(token, dateStr);
-                                        setState(() => _bookedDates.remove(dateStr));
+                                      // Call API only if it's actually booked on the server
+                                      if (_bookedDates.contains(dateStr) || _bookedElsewhereMap.containsKey(dateStr)) {
+                                        final token = await _api.refreshMyToken();
+                                        if (token != null) {
+                                          await _api.cancelBookingByDate(token, dateStr);
+                                        }
                                       }
+                                      setState(() {
+                                        _bookedDates.remove(dateStr);
+                                        _requestedDates.remove(dateStr);
+                                        _bookedElsewhereMap.remove(dateStr);
+                                      });
                                     }
+                                    
                                     _storage.saveBookedDates(_bookedDates.toList());
-                                    messenger.showSnackBar(const SnackBar(content: Text('Réservations annulées avec succès.')));
+                                    _storage.saveRequestedDates(_requestedDates.toList());
+                                    _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
+                                    
+                                    messenger.showSnackBar(const SnackBar(content: Text('Journées libérées avec succès.')));
                                   }
                                   
                                   setState(() => _vacations.add(picked));
