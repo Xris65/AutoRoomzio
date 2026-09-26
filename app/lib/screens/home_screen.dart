@@ -214,6 +214,12 @@ class _HomeScreenState extends State<HomeScreen> {
           await Permission.ignoreBatteryOptimizations.request();
         }
 
+        // Demander l'autorisation d'envoyer des notifications (Android 13+)
+        final notifGranted = await Permission.notification.isGranted;
+        if (!notifGranted && mounted) {
+          await Permission.notification.request();
+        }
+
         // Demander l'autostart manuellement via android_intent_plus (pour Xiaomi, Huawei, etc.)
         await _requestAutoStart();
       }

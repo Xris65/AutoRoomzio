@@ -31,12 +31,6 @@ class NotificationService {
         debugPrint("Notification clicked: ${details.payload}");
       },
     );
-    
-    // Request permissions for Android 13+
-    await _flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
-
     _initialized = true;
   }
 
