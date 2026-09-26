@@ -503,20 +503,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   // ── Prochaines réservations ──────────────────────────────────
                   if (_workspaceName != null) ...[
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          '🔮 Prochaines réservations',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        FilterChip(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            '?? Prochaines r�servations',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          Row(
+                            children: [
+                              FilterChip(
                           label: const Text("Toutes mes places", style: TextStyle(fontSize: 11)),
                           visualDensity: VisualDensity.compact,
                           selected: _showAllReservations,
                           onSelected: (val) => setState(() => _showAllReservations = val),
-                        ),
-                      ],
-                    ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.sync, size: 20),
+                                tooltip: 'Synchroniser',
+                                onPressed: _syncCalendar,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     const SizedBox(height: 8),
                     _buildUpcomingBookings(),
                   ],
@@ -1598,5 +1607,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+
 
 
