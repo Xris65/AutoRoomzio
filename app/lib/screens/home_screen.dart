@@ -420,7 +420,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   icon: Icon(source == 'Calendrier' ? Icons.delete_outline : Icons.block, size: 20),
                   color: Colors.redAccent,
                   tooltip: source == 'Calendrier' ? 'Supprimer' : 'Bloquer',
-                  onPressed: () => _quickAction(date, isBooked),
+                  onPressed: () => _quickAction(date, isBooked, source),
                 ),
               ],
             ),
@@ -573,7 +573,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _quickAction(DateTime day, bool isBooked) async {
+  Future<void> _quickAction(DateTime day, bool isBooked, String source) async {
     final dateStr = day.toIso8601String().split('T').first;
     
     setState(() => _isCalendarBusy = true);
@@ -588,15 +588,19 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _requestedDates.remove(dateStr);
         _bookedDates.remove(dateStr);
-        _ignoredDates.add(dateStr);
+        if (source == 'Récurrent') {
+          _ignoredDates.add(dateStr); // Only block automation
+        }
       });
       _storage.saveRequestedDates(_requestedDates.toList());
       _storage.saveBookedDates(_bookedDates.toList());
-      _storage.saveIgnoredDates(_ignoredDates.toList());
+      if (source == 'Récurrent') {
+        _storage.saveIgnoredDates(_ignoredDates.toList());
+      }
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Réservation annulée/bloquée pour le $dateStr')),
+          SnackBar(content: Text(source == 'Calendrier' ? 'Réservation supprimée' : 'Jour bloqué ($dateStr)')),
         );
       }
     } finally {
@@ -767,7 +771,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _requestedDates.remove(dateStr);
           _bookedDates.remove(dateStr);
-          if (action == 'block' || isBooked) {
+          if (action == 'block') {
             _ignoredDates.add(dateStr);
           }
         });
