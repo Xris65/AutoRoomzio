@@ -102,8 +102,19 @@ class RoomzApiService {
     );
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      if (data is List) return List<Map<String, dynamic>>.from(data);
-      return List<Map<String, dynamic>>.from(data['data'] ?? []);
+      var list = data is List 
+          ? List<Map<String, dynamic>>.from(data)
+          : List<Map<String, dynamic>>.from(data['data'] ?? []);
+          
+      // Filtrer les vraies salles (non réservables ou de type Room)
+      return list.where((ws) {
+        if (ws['isReservable'] == false) return false;
+        if (ws['bookable'] == false) return false;
+        if (ws['isBookable'] == false) return false;
+        if (ws['type'] == 'Room') return false;
+        if (ws['type'] == 1) return false; // 1 = Room, 0 = Desk dans certains schémas
+        return true;
+      }).toList();
     }
     debugPrint("❌ getWorkspaces ${response.statusCode}: ${response.body}");
     return [];
