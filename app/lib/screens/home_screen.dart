@@ -1052,7 +1052,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     onPageChanged: (focusedDay) {
                         _focusedDay = focusedDay;
-                        _syncCalendar();
                       },
                     onDaySelected: (selectedDay, focusedDay) {
                       _handleDateTap(selectedDay);
@@ -1287,11 +1286,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
       // Fetch the user's specific bookings — here (this desk) + elsewhere (other desks)
             if (_isLoading) _loadingTextNotifier.value = "Récupération de l'occupation du bureau...";
-      final DateTime firstDay = DateTime(_focusedDay.year, _focusedDay.month, 1).subtract(const Duration(days: 7));
-      final DateTime lastDay = DateTime(_focusedDay.year, _focusedDay.month + 1, 0).add(const Duration(days: 7));
       
+      // La réservation manuelle par d'autres est limitée à J+13. On ne vérifie que cette période !
       List<String> visibleDates = [];
-      for (var d = firstDay; d.isBefore(lastDay) || d.isAtSameMomentAs(lastDay); d = d.add(const Duration(days: 1))) {
+      final today = DateTime.now();
+      for (int i = 0; i <= 13; i++) {
+        final d = today.add(Duration(days: i));
         if (_hideWeekends && (d.weekday == DateTime.saturday || d.weekday == DateTime.sunday)) continue;
         visibleDates.add(d.toIso8601String().split('T').first);
       }
