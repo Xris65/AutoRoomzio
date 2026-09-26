@@ -36,7 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Set<String> _bookedDates = {};
   Set<String> _ignoredDates = {};
   Map<String, String> _bookedElsewhereMap = {};
-  Set<String> _occupiedByOthers = {};
+  Map<String, String> _occupiedByOthers = {};
 
   final Map<int, String> _weekDays = {
     1: 'Lundi',
@@ -884,7 +884,7 @@ class _HomeScreenState extends State<HomeScreen> {
       bool isBooked = _bookedDates.contains(dateStr);
       bool isRequested = _requestedDates.contains(dateStr);
       bool isElsewhere = _bookedElsewhereMap.containsKey(dateStr);
-      bool isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.contains(dateStr);
+      bool isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.containsKey(dateStr);
       bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday);
       if (_isVacation(date)) isRecurring = false;
 
@@ -897,7 +897,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       } else if (isOccupiedByOthers) {
         if (isRecurring && recurringProjectionsCount < _projectionsCount) {
-          upcoming.add({"date": date, "source": "Occupé", "isBooked": false});
+          upcoming.add({"date": date, "source": "Occupé", "isBooked": false, "name": _occupiedByOthers[dateStr]});
           recurringProjectionsCount++;
         }
       } else if (isRequested) {
@@ -1099,7 +1099,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
     final isElsewhere = !isBooked && _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
-    final isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.contains(dateStr);
+    final isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.containsKey(dateStr);
 
     Color? bgColor;
     Color textColor = isOutside ? Colors.grey : Theme.of(context).colorScheme.onSurface;
@@ -1297,7 +1297,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       
       final floorId = await _storage.getFloorId();
-      final occupiedDates = floorId != null ? await _api.getWorkspaceOccupancy(accessToken, workspaceId, floorId, visibleDates) : <String>{};
+      final occupiedDates = floorId != null ? await _api.getWorkspaceOccupancy(accessToken, workspaceId, floorId, visibleDates) : <String, String>{};
 
       final myBookings = await _api.getMyReservations(accessToken, workspaceId);
       final bookedHere = myBookings.here;
@@ -1405,7 +1405,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
     final isElsewhere = _bookedElsewhereMap.containsKey(dateStr);
-    final isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.contains(dateStr);
+    final isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.containsKey(dateStr);
 
     final differenceInDays = day.difference(today).inDays;
     final isBookableNow = differenceInDays <= 13;
@@ -1438,10 +1438,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     onTap: () => Navigator.pop(context, 'cancel_elsewhere'),
                   )
                 else if (isOccupiedByOthers)
-                  const ListTile(
-                    leading: Icon(Icons.person_off, color: Colors.grey),
-                    title: Text('Place indisponible', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
-                    subtitle: Text("Quelqu'un d'autre a déjà réservé cette place ce jour-là.", style: TextStyle(color: Colors.grey, fontSize: 11)),
+                  ListTile(
+                    leading: const Icon(Icons.person_off, color: Colors.grey),
+                    title: const Text('Place indisponible', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
+                    subtitle: Text("Réservé par ${_occupiedByOthers[dateStr]}.", style: const TextStyle(color: Colors.grey, fontSize: 11)),
                   )
                 else
                   ListTile(

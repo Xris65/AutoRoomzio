@@ -279,8 +279,8 @@ class RoomzApiService {
 
   /// Fetch dates where the workspace is booked by someone ELSE.
   /// Uses the POST /floors/{floorId}/workspaces/calendars endpoint for each date.
-  Future<Set<String>> getWorkspaceOccupancy(String token, String workspaceId, String floorId, List<String> dates) async {
-    final Set<String> occupied = {};
+  Future<Map<String, String>> getWorkspaceOccupancy(String token, String workspaceId, String floorId, List<String> dates) async {
+    final Map<String, String> occupied = {};
     final client = http.Client(); // Use a persistent client to reuse TCP/TLS connections
     try {
       // Execute in parallel chunks of 15 to avoid overwhelming the server
@@ -309,9 +309,14 @@ class RoomzApiService {
               if (items is List) {
                 for (final item in items) {
                   if (item['workspaceId'] == workspaceId || item['id'] == workspaceId) {
-                    // If the workspace is Reserved and the creator email doesn't match ours (or just count any reservation since we filter out 'bookedHere' later)
+                    // If the workspace is Reserved
                     if (item['status'] == 'Reserved') {
-                      occupied.add(date);
+                      String name = "Quelqu'un d'autre";
+                      final bookedTimeSlot = item['bookedTimeSlot'];
+                      if (bookedTimeSlot != null && bookedTimeSlot['creator'] != null) {
+                        name = bookedTimeSlot['creator']['name'] ?? name;
+                      }
+                      occupied[date] = name;
                     }
                     break;
                   }
