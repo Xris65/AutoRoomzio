@@ -498,21 +498,25 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       if (confirm == true) {
-        if (_bookedDates.contains(dateStr)) {
-          final token = await _api.refreshMyToken();
-          if (token != null) {
-            // final success = await _api.cancelReservation(dateStr, token);
-            // if (success) { ... }
-            // For now, just remove it locally
+        setState(() => _isCalendarBusy = true);
+        try {
+          if (_bookedDates.contains(dateStr)) {
+            final token = await _api.refreshMyToken();
+            final workspaceId = await _storage.getWorkspaceId();
+            if (token != null && workspaceId != null) {
+              await _api.cancelReservation(dateStr, token, workspaceId);
+            }
           }
+          setState(() {
+            _requestedDates.remove(dateStr);
+            _bookedDates.remove(dateStr);
+            _focusedDay = day;
+          });
+          _storage.saveRequestedDates(_requestedDates.toList());
+          _storage.saveBookedDates(_bookedDates.toList());
+        } finally {
+          if (mounted) setState(() => _isCalendarBusy = false);
         }
-        setState(() {
-          _requestedDates.remove(dateStr);
-          _bookedDates.remove(dateStr);
-          _focusedDay = day;
-        });
-        _storage.saveRequestedDates(_requestedDates.toList());
-        _storage.saveBookedDates(_bookedDates.toList());
       }
       return;
     }

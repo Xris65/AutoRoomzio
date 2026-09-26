@@ -170,11 +170,27 @@ class RoomzApiService {
     return [];
   }
 
-  /// TODO: Needs the exact MyRoomz API endpoint to cancel a booking.
-  Future<bool> cancelReservation(String date, String token) async {
-    // We need the URL (e.g. DELETE /bookings/{id}) and possibly the booking ID.
-    // For now, return false.
-    return false;
+  Future<bool> cancelReservation(
+      String date, String token, String workspaceId) async {
+    final response = await http.delete(
+      Uri.parse("$_apiBase/bookings"),
+      headers: {
+        ..._authHeaders(token),
+        "roomz-source-type": "MyRoomzWeb",
+      },
+      body: jsonEncode({
+        "workspaceId": workspaceId,
+        "localDate": date,
+        "timeSlot": "FullDay",
+      }),
+    );
+    if (response.statusCode == 200 || response.statusCode == 204) {
+      debugPrint("✅ Cancelled $date");
+      return true;
+    } else {
+      debugPrint("❌ cancelReservation ${response.statusCode} $date: ${response.body}");
+      return false;
+    }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
