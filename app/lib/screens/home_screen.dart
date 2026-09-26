@@ -1186,6 +1186,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final differenceInDays = day.difference(today).inDays;
     final isBookableNow = differenceInDays <= 13;
 
+    final isWeekendAndHidden = _hideWeekends && (day.weekday == DateTime.saturday || day.weekday == DateTime.sunday);
+
     final action = await showModalBottomSheet<String>(
       context: context,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
@@ -1199,7 +1201,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Text('Gestion du $dateStr', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               ),
               if (!isBooked && !isRequested)
-                if (_hideWeekends && (day.weekday == DateTime.saturday || day.weekday == DateTime.sunday))
+                if (isWeekendAndHidden)
                   const ListTile(
                     leading: Icon(Icons.weekend, color: Colors.grey),
                     title: Text('Les nouvelles réservations le week-end sont désactivées dans vos paramètres.', style: TextStyle(color: Colors.grey, fontSize: 12)),
@@ -1219,13 +1221,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: Text(isBooked ? 'Libérer la place' : 'Annuler la demande'),
                   onTap: () => Navigator.pop(context, 'cancel'),
                 ),
-              if (!isIgnored)
+              if (!isIgnored && !isWeekendAndHidden)
                 ListTile(
                   leading: const Icon(Icons.block, color: Colors.redAccent),
                   title: const Text('Bloquer (Ignorer l\'automatisation)'),
                   onTap: () => Navigator.pop(context, 'block'),
                 ),
-              if (isIgnored)
+              if (isIgnored && !isWeekendAndHidden)
                 ListTile(
                   leading: const Icon(Icons.lock_open, color: Colors.green),
                   title: const Text('Débloquer ce jour'),
