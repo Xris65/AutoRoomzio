@@ -284,6 +284,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Mon Calendrier', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              IconButton(
+                icon: const Icon(Icons.sync),
+                tooltip: 'Synchroniser avec MyRoomz',
+                onPressed: _syncCalendar,
+              ),
+            ],
+          ),
+        ),
         TableCalendar(
           firstDay: DateTime.now().subtract(const Duration(days: 365)), // View past
           lastDay: DateTime.now().add(const Duration(days: 365)),
@@ -372,50 +386,90 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _syncCalendar() async {
+    // ScaffoldMessenger.of(context).showSnackBar(
+    //   const SnackBar(content: Text('Synchronisation en cours...')),
+    // );
+    // final token = await _api.refreshMyToken();
+    // if (token != null) {
+    //   final serverReservations = await _api.getMyReservations(token);
+    //   // TODO: Merge serverReservations into _bookedDates
+    // }
+  }
+
   Future<void> _handleDateTap(DateTime selectedDay) async {
-    // Prevent selecting past dates (ignoring time)
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final day = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
     
     if (day.isBefore(today)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Impossible de réserver dans le passé.')),
+        const SnackBar(content: Text('Impossible de modifier le passé.')),
       );
       return;
     }
 
     final dateStr = day.toIso8601String().split('T').first;
 
+    if (_bookedDates.contains(dateStr) || _requestedDates.contains(dateStr)) {
+      // Prompt to cancel
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Annuler la réservation ?'),
+          content: Text('Voulez-vous libérer votre place pour le $dateStr ?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Non'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Oui, libérer', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm == true) {
+        if (_bookedDates.contains(dateStr)) {
+          final token = await _api.refreshMyToken();
+          if (token != null) {
+            // final success = await _api.cancelReservation(dateStr, token);
+            // if (success) { ... }
+            // For now, just remove it locally
+          }
+        }
+        setState(() {
+          _requestedDates.remove(dateStr);
+          _bookedDates.remove(dateStr);
+          _focusedDay = day;
+        });
+        _storage.saveRequestedDates(_requestedDates.toList());
+        _storage.saveBookedDates(_bookedDates.toList());
+      }
+      return;
+    }
+
+    // Otherwise, toggle on and attempt to book
     setState(() {
       _focusedDay = day;
-      if (_requestedDates.contains(dateStr)) {
-        // Toggle off
-        _requestedDates.remove(dateStr);
-        _bookedDates.remove(dateStr);
-      } else {
-        // Toggle on
-        _requestedDates.add(dateStr);
-      }
+      _requestedDates.add(dateStr);
     });
 
     _storage.saveRequestedDates(_requestedDates.toList());
-    _storage.saveBookedDates(_bookedDates.toList());
 
-    if (_requestedDates.contains(dateStr)) {
-      // Attempt to book
-      final accessToken = await _api.refreshMyToken();
-      if (accessToken == null) return;
-      final workspaceId = await _storage.getWorkspaceId();
-      if (workspaceId == null) return;
+    final accessToken = await _api.refreshMyToken();
+    if (accessToken == null) return;
+    final workspaceId = await _storage.getWorkspaceId();
+    if (workspaceId == null) return;
 
-      final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
-      if (success) {
-        setState(() {
-          _bookedDates.add(dateStr);
-        });
-        _storage.saveBookedDates(_bookedDates.toList());
-      }
+    final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
+    if (success) {
+      setState(() {
+        _bookedDates.add(dateStr);
+      });
+      _storage.saveBookedDates(_bookedDates.toList());
     }
   }
 

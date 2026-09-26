@@ -163,6 +163,20 @@ class RoomzApiService {
     }
   }
 
+  /// TODO: Needs the exact MyRoomz API endpoint to fetch user's bookings.
+  Future<List<String>> getMyReservations(String token) async {
+    // We need the URL (e.g. GET /users/me/bookings)
+    // For now, return empty list.
+    return [];
+  }
+
+  /// TODO: Needs the exact MyRoomz API endpoint to cancel a booking.
+  Future<bool> cancelReservation(String date, String token) async {
+    // We need the URL (e.g. DELETE /bookings/{id}) and possibly the booking ID.
+    // For now, return false.
+    return false;
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   Map<String, String> _authHeaders(String token) => {
