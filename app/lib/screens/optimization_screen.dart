@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:android_intent_plus/android_intent.dart';
+import '../storage_service.dart';
 
 class OptimizationScreen extends StatefulWidget {
   const OptimizationScreen({super.key});
@@ -96,8 +97,16 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
     }
 
     if (!launched && mounted) {
+      // No OEM autostart menu found → standard Android, no config needed
+      setState(() => _isAutostartVerified = true);
+      final storage = StorageService();
+      await storage.saveAutostartVerified(true);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Votre téléphone ne semble pas nécessiter de configuration d'autostart spécifique, ou le menu est introuvable.")),
+        const SnackBar(
+          content: Text("Votre téléphone ne nécessite pas de configuration d'autostart supplémentaire. ✓"),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 4),
+        ),
       );
     }
   }
