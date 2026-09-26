@@ -23,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _workspaceName;
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isCalendarBusy = false;
 
   // Calendar State
   DateTime _focusedDay = DateTime.now();
@@ -30,7 +31,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Set<String> _bookedDates = {};
 
   final Map<int, String> _weekDays = {
-    1: 'Lundi',
     2: 'Mardi',
     3: 'Mercredi',
     4: 'Jeudi',
@@ -298,32 +298,44 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-        TableCalendar(
-          firstDay: DateTime.now().subtract(const Duration(days: 365)), // View past
-          lastDay: DateTime.now().add(const Duration(days: 365)),
-          focusedDay: _focusedDay,
-          startingDayOfWeek: StartingDayOfWeek.monday,
-          headerStyle: const HeaderStyle(
-            formatButtonVisible: false,
-            titleCentered: true,
-          ),
-          calendarStyle: CalendarStyle(
-            todayDecoration: BoxDecoration(
-              color: Colors.lightBlue.withValues(alpha: 0.3),
-              shape: BoxShape.circle,
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            AbsorbPointer(
+              absorbing: _isCalendarBusy,
+              child: Opacity(
+                opacity: _isCalendarBusy ? 0.5 : 1.0,
+                child: TableCalendar(
+                  firstDay: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDay: DateTime.now().add(const Duration(days: 365)),
+                  focusedDay: _focusedDay,
+                  startingDayOfWeek: StartingDayOfWeek.monday,
+                  headerStyle: const HeaderStyle(
+                    formatButtonVisible: false,
+                    titleCentered: true,
+                  ),
+                  calendarStyle: CalendarStyle(
+                    todayDecoration: BoxDecoration(
+                      color: Colors.lightBlue.withValues(alpha: 0.3),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  onPageChanged: (focusedDay) {
+                    _focusedDay = focusedDay;
+                  },
+                  onDaySelected: (selectedDay, focusedDay) {
+                    _handleDateTap(selectedDay);
+                  },
+                  calendarBuilders: CalendarBuilders(
+                    defaultBuilder: (context, day, focusedDay) => _buildDayCell(day),
+                    todayBuilder: (context, day, focusedDay) => _buildDayCell(day, isToday: true),
+                    outsideBuilder: (context, day, focusedDay) => _buildDayCell(day, isOutside: true),
+                  ),
+                ),
+              ),
             ),
-          ),
-          onPageChanged: (focusedDay) {
-            _focusedDay = focusedDay;
-          },
-          onDaySelected: (selectedDay, focusedDay) {
-            _handleDateTap(selectedDay);
-          },
-          calendarBuilders: CalendarBuilders(
-            defaultBuilder: (context, day, focusedDay) => _buildDayCell(day),
-            todayBuilder: (context, day, focusedDay) => _buildDayCell(day, isToday: true),
-            outsideBuilder: (context, day, focusedDay) => _buildDayCell(day, isOutside: true),
-          ),
+            if (_isCalendarBusy) const CircularProgressIndicator(),
+          ],
         ),
         const Spacer(),
         Padding(
@@ -387,6 +399,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _syncCalendar() async {
+    if (_isCalendarBusy) return;
+
     final workspaceId = await _storage.getWorkspaceId();
     final floorId = await _storage.getFloorId();
 
@@ -394,54 +408,62 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Synchronisation en cours (cela peut prendre quelques secondes)...')),
-    );
-
-    final accessToken = await _api.refreshMyToken();
-    if (accessToken == null) return;
-
-    // Check requested dates + the next 14 days
-    Set<String> datesToCheck = Set.from(_requestedDates);
-    final now = DateTime.now();
-    for (int i = 0; i < 14; i++) {
-      final d = now.add(Duration(days: i));
-      datesToCheck.add(d.toIso8601String().split('T').first);
+    setState(() => _isCalendarBusy = true);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Synchronisation en cours (cela peut prendre quelques secondes)...')),
+      );
     }
 
-    Set<String> newBookedDates = {};
-    Set<String> newRequestedDates = Set.from(_requestedDates);
+    try {
+      final accessToken = await _api.refreshMyToken();
+      if (accessToken == null) return;
 
-    for (final dateStr in datesToCheck) {
-      final isReserved = await _api.isAlreadyReserved(dateStr, accessToken, floorId, workspaceId);
-      
-      if (isReserved) {
-        newBookedDates.add(dateStr);
-        newRequestedDates.add(dateStr);
-      } else {
-        if (_bookedDates.contains(dateStr)) {
-          // It was booked locally but not on server -> user cancelled it externally
-          newRequestedDates.remove(dateStr);
+      // Check requested dates + the next 14 days
+      Set<String> datesToCheck = Set.from(_requestedDates);
+      final now = DateTime.now();
+      for (int i = 0; i < 14; i++) {
+        final d = now.add(Duration(days: i));
+        datesToCheck.add(d.toIso8601String().split('T').first);
+      }
+
+      Set<String> newBookedDates = {};
+      Set<String> newRequestedDates = Set.from(_requestedDates);
+
+      for (final dateStr in datesToCheck) {
+        final isReserved = await _api.isAlreadyReserved(dateStr, accessToken, floorId, workspaceId);
+        
+        if (isReserved) {
+          newBookedDates.add(dateStr);
+          newRequestedDates.add(dateStr);
+        } else {
+          if (_bookedDates.contains(dateStr)) {
+            // It was booked locally but not on server -> user cancelled it externally
+            newRequestedDates.remove(dateStr);
+          }
         }
       }
-    }
 
-    if (mounted) {
-      setState(() {
-        _bookedDates = newBookedDates;
-        _requestedDates = newRequestedDates;
-      });
-      _storage.saveBookedDates(_bookedDates.toList());
-      _storage.saveRequestedDates(_requestedDates.toList());
+      if (mounted) {
+        setState(() {
+          _bookedDates = newBookedDates;
+          _requestedDates = newRequestedDates;
+        });
+        _storage.saveBookedDates(_bookedDates.toList());
+        _storage.saveRequestedDates(_requestedDates.toList());
 
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ Synchronisation terminée !'), backgroundColor: Colors.green),
-      );
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ Synchronisation terminée !'), backgroundColor: Colors.green),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isCalendarBusy = false);
     }
   }
 
   Future<void> _handleDateTap(DateTime selectedDay) async {
+    if (_isCalendarBusy) return;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final day = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
@@ -499,21 +521,26 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _focusedDay = day;
       _requestedDates.add(dateStr);
+      _isCalendarBusy = true;
     });
 
-    _storage.saveRequestedDates(_requestedDates.toList());
+    try {
+      _storage.saveRequestedDates(_requestedDates.toList());
 
-    final accessToken = await _api.refreshMyToken();
-    if (accessToken == null) return;
-    final workspaceId = await _storage.getWorkspaceId();
-    if (workspaceId == null) return;
+      final accessToken = await _api.refreshMyToken();
+      if (accessToken == null) return;
+      final workspaceId = await _storage.getWorkspaceId();
+      if (workspaceId == null) return;
 
-    final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
-    if (success) {
-      setState(() {
-        _bookedDates.add(dateStr);
-      });
-      _storage.saveBookedDates(_bookedDates.toList());
+      final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
+      if (success) {
+        setState(() {
+          _bookedDates.add(dateStr);
+        });
+        _storage.saveBookedDates(_bookedDates.toList());
+      }
+    } finally {
+      if (mounted) setState(() => _isCalendarBusy = false);
     }
   }
 
