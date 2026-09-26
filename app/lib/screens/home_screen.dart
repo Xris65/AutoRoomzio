@@ -297,84 +297,99 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // ── Toggle Automatisation ────────────────────────────────────
-          Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Column(
-              children: [
-                SwitchListTile(
-                  title: const Text('Automatisation', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: const Text('Réserver automatiquement mes places', style: TextStyle(fontSize: 12)),
-                  value: _automationEnabled,
-                  onChanged: _toggleAutomation,
-                  secondary: Icon(
-                    _automationEnabled ? Icons.auto_awesome : Icons.auto_awesome_outlined,
-                    color: _automationEnabled ? Colors.green : Colors.grey,
+    return Stack(
+      children: [
+        AbsorbPointer(
+          absorbing: _isCalendarBusy,
+          child: Opacity(
+            opacity: _isCalendarBusy ? 0.5 : 1.0,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // ── Toggle Automatisation ────────────────────────────────────
+                  Card(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    child: Column(
+                      children: [
+                        SwitchListTile(
+                          title: const Text('Automatisation', style: TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: const Text('Réserver automatiquement mes places', style: TextStyle(fontSize: 12)),
+                          value: _automationEnabled,
+                          onChanged: _toggleAutomation,
+                          secondary: Icon(
+                            _automationEnabled ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+                            color: _automationEnabled ? Colors.green : Colors.grey,
+                          ),
+                        ),
+                        if (_automationEnabled) const Divider(height: 1),
+                        if (_automationEnabled)
+                          ListTile(
+                            leading: const Icon(Icons.schedule, color: Colors.blue),
+                            title: const Text("Heure d'exécution"),
+                            subtitle: const Text("Heure approximative à laquelle l'automatisation s'exécutera chaque jour", style: TextStyle(fontSize: 11)),
+                            trailing: Text(_automationTime.format(context), style: const TextStyle(fontWeight: FontWeight.bold)),
+                            onTap: () async {
+                              final time = await showTimePicker(
+                                context: context,
+                                initialTime: _automationTime,
+                              );
+                              if (time != null) {
+                                setState(() => _automationTime = time);
+                                await _storage.saveAutomationTime(time.hour, time.minute);
+                                // Refresh the task with the new delay
+                                _toggleAutomation(true);
+                              }
+                            },
+                          ),
+                        if (_automationEnabled) const Divider(height: 1),
+                        if (_automationEnabled)
+                          ListTile(
+                            leading: const Icon(Icons.play_circle_fill, color: Colors.green),
+                            title: const Text("Lancer maintenant"),
+                            subtitle: const Text("Exécuter manuellement la routine tout de suite", style: TextStyle(fontSize: 11)),
+                            onTap: _runAutomationNow,
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-                if (_automationEnabled) const Divider(height: 1),
-                if (_automationEnabled)
-                  ListTile(
-                    leading: const Icon(Icons.schedule, color: Colors.blue),
-                    title: const Text("Heure d'exécution"),
-                    subtitle: const Text("Heure approximative à laquelle l'automatisation s'exécutera chaque jour", style: TextStyle(fontSize: 11)),
-                    trailing: Text(_automationTime.format(context), style: const TextStyle(fontWeight: FontWeight.bold)),
-                    onTap: () async {
-                      final time = await showTimePicker(
-                        context: context,
-                        initialTime: _automationTime,
-                      );
-                      if (time != null) {
-                        setState(() => _automationTime = time);
-                        await _storage.saveAutomationTime(time.hour, time.minute);
-                        // Refresh the task with the new delay
-                        _toggleAutomation(true);
-                      }
-                    },
-                  ),
-                if (_automationEnabled) const Divider(height: 1),
-                if (_automationEnabled)
-                  ListTile(
-                    leading: const Icon(Icons.play_circle_fill, color: Colors.green),
-                    title: const Text("Lancer maintenant"),
-                    subtitle: const Text("Exécuter manuellement la routine tout de suite", style: TextStyle(fontSize: 11)),
-                    onTap: _runAutomationNow,
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
+                  const SizedBox(height: 24),
 
-          // ── Jours récurrents ─────────────────────────────────────────
-          const Text(
-            '📅 Jours de présence récurrents',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+                  // ── Jours récurrents ─────────────────────────────────────────
+                  const Text(
+                    '📅 Jours de présence récurrents',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+                    ),
+                    child: Column(
+                      children: _weekDays.entries.map((entry) {
+                        return CheckboxListTile(
+                          title: Text(entry.value),
+                          value: _selectedDays.contains(entry.key),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          onChanged: (bool? value) => _onDayToggled(entry.key, value ?? false),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            child: Column(
-              children: _weekDays.entries.map((entry) {
-                return CheckboxListTile(
-                  title: Text(entry.value),
-                  value: _selectedDays.contains(entry.key),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  onChanged: (bool? value) => _onDayToggled(entry.key, value ?? false),
-                );
-              }).toList(),
-            ),
           ),
-        ],
-      ),
+        ),
+        if (_isCalendarBusy)
+          const Positioned(
+            top: 0, left: 0, right: 0,
+            child: LinearProgressIndicator(),
+          ),
+      ],
     );
   }
 
