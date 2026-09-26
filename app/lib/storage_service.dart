@@ -58,6 +58,13 @@ class StorageService {
     return prefs.getString('workspace_name');
   }
 
+  Future<void> resetWorkspace() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('floor_id');
+    await prefs.remove('workspace_id');
+    await prefs.remove('workspace_name');
+  }
+
   // ── Calendar Dates ────────────────────────────────────────────────────────
   
   Future<void> saveRequestedDates(List<String> dates) async {

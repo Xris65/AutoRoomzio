@@ -104,6 +104,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _resetWorkspace() async {
+    await _storage.resetWorkspace();
+    setState(() {
+      _workspaceName = null;
+    });
+  }
+
   int _currentIndex = 0;
 
   @override
@@ -177,7 +184,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                     ),
-                    const Icon(Icons.chevron_right, color: Colors.grey),
+                    if (_workspaceName != null)
+                      IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.red),
+                        tooltip: 'Réinitialiser',
+                        onPressed: _resetWorkspace,
+                      )
+                    else
+                      const Icon(Icons.chevron_right, color: Colors.grey),
                   ],
                 ),
               ),
