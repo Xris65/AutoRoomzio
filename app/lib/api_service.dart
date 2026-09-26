@@ -97,7 +97,7 @@ class RoomzApiService {
   /// Fetch workspaces on a given floor.
   Future<List<Map<String, dynamic>>> getWorkspaces(String token, String floorId) async {
     final response = await http.get(
-      Uri.parse("$_apiBase/floors/$floorId/workspaces?length=100&offset=0"),
+      Uri.parse("$_apiBase/floors/$floorId/workspaces/all?length=100&offset=0"),
       headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
     );
     if (response.statusCode == 200) {
