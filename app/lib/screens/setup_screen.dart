@@ -61,11 +61,20 @@ class _SetupScreenState extends State<SetupScreen> {
           
           if (savedFloorId != null) {
             initialFloor = initialFloors.firstWhere((f) => f['id'].toString() == savedFloorId);
-            final workspaces = await _api.getWorkspaces(widget.accessToken, savedSiteId, savedFloorId);
+            final allWs = await _api.getAllWorkspaces(widget.accessToken, savedSiteId, savedFloorId);
+            final workspaces = allWs.where((ws) {
+              if (ws['isReservable'] == false) return false;
+              if (ws['bookable'] == false) return false;
+              if (ws['isBookable'] == false) return false;
+              if (ws['type'] == 'Room') return false;
+              if (ws['type'] == 1) return false;
+              return true;
+            }).toList();
             final initialFeatures = await _api.getFloorPlanData(widget.accessToken, savedSiteId, savedFloorId);
             
             if (mounted) {
                _floorFeatures = initialFeatures;
+               _allWorkspaces = allWs;
             }
             
             for (final ws in workspaces) {
@@ -513,3 +522,5 @@ class _SelectTile extends StatelessWidget {
     );
   }
 }
+
+
