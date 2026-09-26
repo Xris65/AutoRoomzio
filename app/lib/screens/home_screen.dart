@@ -49,6 +49,8 @@ class _HomeScreenState extends State<HomeScreen> {
   int _projectionsCount = 4;
   int _bookingHorizon = 13;
   bool _hideWeekends = true; // Actif par défaut
+  bool _vacationMode = false;
+  bool _compactMode = false;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
   late PageController _pageController;
@@ -93,6 +95,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final initialTab = await _storage.getInitialTab();
     final horizon = await _storage.getBookingHorizon();
     final hideWe = await _storage.getHideWeekends();
+    final vac = await _storage.getVacationMode();
+    final comp = await _storage.getCompactMode();
     
     if (mounted) {
       setState(() {
@@ -108,6 +112,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _projectionsCount = projCount;
         _bookingHorizon = horizon;
         _hideWeekends = hideWe;
+        _vacationMode = vac;
+        _compactMode = comp;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
           _pageController.dispose();
@@ -334,6 +340,28 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_vacationMode)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.orange),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.beach_access, color: Colors.orange),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Mode Congés activé. L\'automatisation est en pause.',
+                              style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   // ── Current workspace card ───────────────────────────────────
                   Card(
                     clipBehavior: Clip.antiAlias,
@@ -409,23 +437,23 @@ class _HomeScreenState extends State<HomeScreen> {
                               final todayIsWeekend = today.weekday == DateTime.saturday || today.weekday == DateTime.sunday;
                               final tomorrowIsWeekend = tomorrow.weekday == DateTime.saturday || tomorrow.weekday == DateTime.sunday;
 
-                              final disableToday = _hideWeekends && todayIsWeekend;
-                              final disableTomorrow = _hideWeekends && tomorrowIsWeekend;
+                              final disableToday = _vacationMode || (_hideWeekends && todayIsWeekend);
+                              final disableTomorrow = _vacationMode || (_hideWeekends && tomorrowIsWeekend);
 
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   ElevatedButton.icon(
                                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                    icon: Icon(disableToday ? Icons.weekend : Icons.flash_on, size: 16),
-                                    label: Text(disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui', style: const TextStyle(fontSize: 11)),
+                                    icon: Icon(_vacationMode ? Icons.beach_access : (disableToday ? Icons.weekend : Icons.flash_on), size: 16),
+                                    label: Text(_vacationMode ? 'En Congés' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
                                     onPressed: disableToday ? null : () => _quickBook(0),
                                   ),
                                   const SizedBox(height: 8),
                                   ElevatedButton.icon(
                                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                    icon: Icon(disableTomorrow ? Icons.weekend : Icons.flash_on, size: 16),
-                                    label: Text(disableTomorrow ? 'Demain (Week-end)' : 'Demain', style: const TextStyle(fontSize: 11)),
+                                    icon: Icon(_vacationMode ? Icons.beach_access : (disableTomorrow ? Icons.weekend : Icons.flash_on), size: 16),
+                                    label: Text(_vacationMode ? 'En Congés' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
                                     onPressed: disableTomorrow ? null : () => _quickBook(1),
                                   ),
                                 ],
@@ -495,6 +523,27 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // ── Mode Congés ──────────────────────────────────────────────
+                  Card(
+                    color: _vacationMode ? Colors.orange.withValues(alpha: 0.1) : null,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: _vacationMode ? const BorderSide(color: Colors.orange) : BorderSide.none,
+                    ),
+                    child: SwitchListTile(
+                      title: const Text('Mode Congés / Pause', style: TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: const Text('Suspendre toutes les réservations automatiques temporairement', style: TextStyle(fontSize: 12)),
+                      value: _vacationMode,
+                      activeColor: Colors.orange,
+                      secondary: Icon(Icons.beach_access, color: _vacationMode ? Colors.orange : Colors.grey),
+                      onChanged: (val) {
+                        setState(() => _vacationMode = val);
+                        _storage.saveVacationMode(val);
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
                   // ── Toggle Automatisation ────────────────────────────────────
                   Card(
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -632,6 +681,8 @@ class _HomeScreenState extends State<HomeScreen> {
             side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: ListTile(
+            visualDensity: _compactMode ? VisualDensity.compact : null,
+            contentPadding: _compactMode ? const EdgeInsets.symmetric(horizontal: 8, vertical: 0) : null,
             leading: Icon(
               isBooked ? Icons.check_circle : Icons.pending,
               color: isBooked ? Colors.green : Colors.blue,
@@ -639,7 +690,7 @@ class _HomeScreenState extends State<HomeScreen> {
             title: Text('$weekDayName ${date.day}/${date.month}'),
             subtitle: Text(
               isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)',
-              style: TextStyle(color: isBooked ? Colors.green : Colors.blue, fontSize: 12),
+              style: TextStyle(color: isBooked ? Colors.green : Colors.blue, fontSize: _compactMode ? 10 : 12),
             ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
@@ -708,6 +759,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     lastDay: DateTime.now().add(const Duration(days: 365)),
                     focusedDay: _focusedDay,
                     startingDayOfWeek: StartingDayOfWeek.monday,
+                    rowHeight: _compactMode ? 42.0 : 52.0,
+                    daysOfWeekHeight: _compactMode ? 20.0 : 24.0,
                     enabledDayPredicate: _hideWeekends 
                         ? (day) => day.weekday != DateTime.saturday && day.weekday != DateTime.sunday 
                         : (day) => true,
@@ -849,6 +902,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _runAutomationNow() async {
+    if (_vacationMode) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Impossible : Le mode congés est activé.')));
+      return;
+    }
     setState(() => _isCalendarBusy = true);
     try {
       final token = await _api.refreshMyToken();
@@ -1227,6 +1284,30 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
               ),
+              const Divider(height: 1),
+              ValueListenableBuilder<int>(
+                valueListenable: fontNotifier,
+                builder: (context, currentFont, _) {
+                  return ListTile(
+                    title: const Text('Police d\'écriture'),
+                    leading: const Icon(Icons.font_download_rounded),
+                    trailing: DropdownButton<int>(
+                      value: currentFont,
+                      onChanged: (val) {
+                        if (val != null) {
+                          fontNotifier.value = val;
+                          _storage.saveFontFamilyIndex(val);
+                        }
+                      },
+                      items: const [
+                        DropdownMenuItem(value: 0, child: Text('Classique')),
+                        DropdownMenuItem(value: 1, child: Text('Moderne (Poppins)')),
+                        DropdownMenuItem(value: 2, child: Text('Code (Fira)')),
+                      ],
+                    ),
+                  );
+                },
+              ),
 
               ListTile(
                 title: const Text('Prévisions à afficher'),
@@ -1291,6 +1372,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 onChanged: (val) {
                   setState(() => _hideWeekends = val);
                   _storage.saveHideWeekends(val);
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('Affichage compact'),
+                subtitle: const Text('Réduit les marges pour voir plus d\'informations', style: TextStyle(fontSize: 12)),
+                secondary: const Icon(Icons.view_compact_rounded),
+                value: _compactMode,
+                onChanged: (val) {
+                  setState(() => _compactMode = val);
+                  _storage.saveCompactMode(val);
                 },
               ),
             ],

@@ -26,6 +26,12 @@ void callbackDispatcher() {
       return Future.value(true);
     }
 
+    final vacationMode = await storage.getVacationMode();
+    if (vacationMode) {
+      debugPrint("🌴 Vacation mode is ON, skipping automation.");
+      return Future.value(true);
+    }
+
     final token = await api.refreshMyToken();
     if (token == null) {
       debugPrint("⚠️ Missing or invalid refresh token, aborting task.");

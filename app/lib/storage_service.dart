@@ -253,6 +253,38 @@ class StorageService {
     final ms = prefs.getInt('last_sync_time');
     return ms != null ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
   }
+  // ── New Customizations ───────────────────────────────────────────────────
+
+  Future<void> saveVacationMode(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('vacation_mode', val);
+  }
+
+  Future<bool> getVacationMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('vacation_mode') ?? false;
+  }
+
+  Future<void> saveCompactMode(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('compact_mode', val);
+  }
+
+  Future<bool> getCompactMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('compact_mode') ?? false;
+  }
+
+  Future<void> saveFontFamilyIndex(int val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('font_family_index', val);
+  }
+
+  Future<int> getFontFamilyIndex() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('font_family_index') ?? 0;
+  }
+
 
   // ── Clear all (logout) ────────────────────────────────────────────────────
 
