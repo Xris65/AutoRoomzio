@@ -807,29 +807,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
 
+      // 🚀 Fire all requests in parallel instead of sequentially
+      final futures = datesToCheck.map((dateStr) async {
+        final isReserved = await _api.isAlreadyReserved(dateStr, accessToken, floorId, workspaceId);
+        return MapEntry(dateStr, isReserved);
+      });
+
+      if (_isLoading) _loadingTextNotifier.value = "Analyse des disponibilités du calendrier...";
+
+      final results = await Future.wait(futures);
+
       Set<String> newBookedDates = {};
       Set<String> newRequestedDates = Set.from(_requestedDates);
       Set<String> newIgnoredDates = Set.from(_ignoredDates);
 
-      int count = 0;
-      for (final dateStr in datesToCheck) {
-        if (_isLoading && count == (datesToCheck.length ~/ 2)) {
-           _loadingTextNotifier.value = "Analyse des disponibilités du calendrier...";
-        }
-        final isReserved = await _api.isAlreadyReserved(dateStr, accessToken, floorId, workspaceId);
-        
+      for (final entry in results) {
+        final dateStr = entry.key;
+        final isReserved = entry.value;
+
         if (isReserved) {
           newBookedDates.add(dateStr);
           newRequestedDates.add(dateStr);
-          newIgnoredDates.remove(dateStr); // If it's booked, override ignore
+          newIgnoredDates.remove(dateStr);
         } else {
           if (_bookedDates.contains(dateStr)) {
-            // It was booked locally but not on server -> user cancelled it externally
             newRequestedDates.remove(dateStr);
           }
         }
-        count++;
       }
+
 
       if (_isLoading) {
         _loadingTextNotifier.value = "C'est presque prêt !";
