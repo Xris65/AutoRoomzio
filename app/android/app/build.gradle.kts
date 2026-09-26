@@ -28,16 +28,6 @@ android {
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
         }
-    }
-
-    val vName = flutter.versionName
-    androidComponents {
-        onVariants { variant ->
-            variant.outputs.forEach { output ->
-                output.outputFileName.set("AutoRoomzio-v${vName}.apk")
-            }
-        }
-    }
 }
 
 kotlin {
