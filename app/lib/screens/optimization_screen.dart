@@ -42,11 +42,15 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
 
     final batteryOpt = await Permission.ignoreBatteryOptimizations.isGranted;
     final notif = await Permission.notification.isGranted;
+    
+    final storage = StorageService();
+    final autostart = await storage.getAutostartVerified();
 
     if (mounted) {
       setState(() {
         _isBatteryOptimized = !batteryOpt; // true if it is currently optimized (which is bad for us)
         _isNotifGranted = notif;
+        _isAutostartVerified = autostart;
       });
     }
   }
