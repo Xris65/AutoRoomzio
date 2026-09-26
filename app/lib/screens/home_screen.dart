@@ -36,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Set<String> _bookedDates = {};
   Set<String> _ignoredDates = {};
   Map<String, String> _bookedElsewhereMap = {};
+  Set<String> _occupiedByOthers = {};
 
   final Map<int, String> _weekDays = {
     1: 'Lundi',
@@ -1039,8 +1040,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     onPageChanged: (focusedDay) {
-                      _focusedDay = focusedDay;
-                    },
+                        _focusedDay = focusedDay;
+                        _syncCalendar();
+                      },
                     onDaySelected: (selectedDay, focusedDay) {
                       _handleDateTap(selectedDay);
                     },
@@ -1086,7 +1088,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final isBooked = _bookedDates.contains(dateStr);
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
-    final isOccupiedByOthers = !isBooked && _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
+    final isElsewhere = !isBooked && _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
+    final isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.contains(dateStr);
 
     Color? bgColor;
     Color textColor = isOutside ? Colors.grey : Theme.of(context).colorScheme.onSurface;
@@ -1101,10 +1104,13 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (isIgnored) {
       bgColor = Colors.red.withValues(alpha: 0.8);
       textColor = Colors.white;
-    } else if (isOccupiedByOthers) {
+    } else if (isElsewhere) {
       bgColor = Colors.orange.shade200;
       textColor = Colors.orange.shade900;
       strikeThrough = false;
+    } else if (isOccupiedByOthers) {
+      bgColor = Colors.grey.shade400;
+      textColor = Colors.white;
     } else if (isToday) {
       bgColor = Colors.lightBlue.withValues(alpha: 0.3);
     }
@@ -1269,6 +1275,18 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
 
       // Fetch the user's specific bookings — here (this desk) + elsewhere (other desks)
+            if (_isLoading) _loadingTextNotifier.value = "Récupération de l'occupation du bureau...";
+      final DateTime firstDay = DateTime(_focusedDay.year, _focusedDay.month, 1).subtract(const Duration(days: 7));
+      final DateTime lastDay = DateTime(_focusedDay.year, _focusedDay.month + 1, 0).add(const Duration(days: 7));
+      
+      List<String> visibleDates = [];
+      for (var d = firstDay; d.isBefore(lastDay) || d.isAtSameMomentAs(lastDay); d = d.add(const Duration(days: 1))) {
+        if (_hideWeekends && (d.weekday == DateTime.saturday || d.weekday == DateTime.sunday)) continue;
+        visibleDates.add(d.toIso8601String().split('T').first);
+      }
+      
+      final occupiedDates = await _api.getWorkspaceOccupancy(accessToken, workspaceId, visibleDates);
+
       final myBookings = await _api.getMyReservations(accessToken, workspaceId);
       final bookedHere = myBookings.here;
       final bookedElsewhere = myBookings.elsewhere;
@@ -1304,6 +1322,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _ignoredDates = newIgnoredDates;
           _bookedElsewhereMap = bookedElsewhere; // reuse field for "booked elsewhere by me"
         });
+          setState(() { _occupiedByOthers = occupiedDates; });
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());

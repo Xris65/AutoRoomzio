@@ -284,22 +284,24 @@ class RoomzApiService {
   /// Best approach: GET /workspaces/{id}/bookings or check workspace events.
   Future<Set<String>> getWorkspaceOccupancy(String token, String workspaceId, List<String> dates) async {
     final Set<String> occupied = {};
-    for (final date in dates) {
-      try {
-        final response = await http.get(
-          Uri.parse("$_apiBase/workspaces/$workspaceId/events/$date"),
-          headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
-        );
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          // If events exist and it's not our own booking, it's occupied
-          if (data != null && (data is List ? data.isNotEmpty : data['id'] != null)) {
-            occupied.add(date);
-          }
-        }
-        // 404 = no booking on that date, skip
-      } catch (_) {}
-    }
+    // Execute in parallel chunks of 10 to avoid overwhelming the server
+      for (int i = 0; i < dates.length; i += 10) {
+        final chunk = dates.skip(i).take(10);
+        await Future.wait(chunk.map((date) async {
+          try {
+            final response = await http.get(
+              Uri.parse("$_apiBase/workspaces/$workspaceId/events/$date"),
+              headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+            );
+            if (response.statusCode == 200) {
+              final data = jsonDecode(response.body);
+              if (data != null && (data is List ? data.isNotEmpty : data['id'] != null)) {
+                occupied.add(date);
+              }
+            }
+          } catch (_) {}
+        }));
+      }
     return occupied;
   }
 
