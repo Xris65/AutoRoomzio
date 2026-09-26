@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
 import 'background_task.dart';
 import 'storage_service.dart';
-import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
-import 'widgets/fun_loading_widget.dart';
 
 // Global theme notifiers
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
@@ -76,55 +74,11 @@ class MyApp extends StatelessWidget {
                   ),
                 ),
               ),
-              home: const _Splash(),
+              home: const HomeScreen(),
             );
           },
         );
       },
-    );
-  }
-}
-
-/// Checks for an existing session and routes accordingly.
-class _Splash extends StatefulWidget {
-  const _Splash();
-
-  @override
-  State<_Splash> createState() => _SplashState();
-}
-
-class _SplashState extends State<_Splash> {
-  @override
-  void initState() {
-    super.initState();
-    _route();
-  }
-
-  Future<void> _route() async {
-    final storage = StorageService();
-    final token = await storage.getRefreshToken();
-    
-    // Add a slight delay so the splash screen is actually visible
-    await Future.delayed(const Duration(milliseconds: 800));
-
-    if (!mounted) return;
-
-    if (token != null && token.isNotEmpty) {
-      // Already logged in — go straight to home
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
-    } else {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: FunLoadingWidget(isSplash: true),
     );
   }
 }

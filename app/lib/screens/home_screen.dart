@@ -51,7 +51,26 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _checkAuthAndLoad();
+  }
+
+  Future<void> _checkAuthAndLoad() async {
+    final token = await _storage.getRefreshToken();
+    if (token == null || token.isEmpty) {
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation1, animation2) => const LoginScreen(),
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+          ),
+        );
+      }
+      return;
+    }
+    
+    // Authenticated -> load data
+    await _loadData();
   }
 
   Future<void> _loadData() async {

@@ -2,42 +2,35 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 class FunLoadingWidget extends StatefulWidget {
-  final bool isSplash;
-  
-  const FunLoadingWidget({super.key, this.isSplash = false});
+  const FunLoadingWidget({super.key});
 
   @override
   State<FunLoadingWidget> createState() => _FunLoadingWidgetState();
 }
 
 class _FunLoadingWidgetState extends State<FunLoadingWidget> {
-  late final List<String> _messages;
+  final List<String> _messages = [
+    "Démarrage d'AutoRoomzio...",
+    "Connexion aux serveurs MyRoomz...",
+    "Vérification des places disponibles...",
+    "Préparation de votre bureau...",
+    "Réchauffement de la machine à café...",
+    "Ajustement de votre siège ergonomique...",
+    "C'est presque prêt !",
+  ];
   int _currentIndex = 0;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _messages = widget.isSplash 
-      ? ["Démarrage d'AutoRoomzio..."] 
-      : [
-          "Connexion aux serveurs MyRoomz...",
-          "Vérification des places disponibles...",
-          "Préparation de votre bureau...",
-          "Réchauffement de la machine à café...",
-          "Ajustement de votre siège ergonomique...",
-          "C'est presque prêt !",
-        ];
-        
-    if (!widget.isSplash) {
-      _timer = Timer.periodic(const Duration(milliseconds: 2500), (timer) {
-        if (mounted) {
-          setState(() {
-            _currentIndex = (_currentIndex + 1) % _messages.length;
-          });
-        }
-      });
-    }
+    _timer = Timer.periodic(const Duration(milliseconds: 2500), (timer) {
+      if (mounted) {
+        setState(() {
+          _currentIndex = (_currentIndex + 1) % _messages.length;
+        });
+      }
+    });
   }
 
   @override
