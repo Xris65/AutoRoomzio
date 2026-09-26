@@ -16,6 +16,10 @@ void callbackDispatcher() {
     final workspaceId = await storage.getWorkspaceId();
     final daysToBook = await storage.getDays();
     
+    final requestedDates = await storage.getRequestedDates();
+    final bookedDates = await storage.getBookedDates();
+    Set<String> newBooked = Set.from(bookedDates);
+
     if (floorId == null || workspaceId == null) {
       debugPrint("⚠️ Missing floor or workspace ID, aborting task.");
       return Future.value(true);
@@ -33,19 +37,27 @@ void callbackDispatcher() {
     // Check next 14 days
     for (int i = 1; i <= 14; i++) {
       final targetDate = now.add(Duration(days: i));
-      if (daysToBook.contains(targetDate.weekday)) {
-        final dateStr = formatter.format(targetDate);
+      final dateStr = formatter.format(targetDate);
+
+      if (daysToBook.contains(targetDate.weekday) || requestedDates.contains(dateStr)) {
         debugPrint("📅 Analyzing $dateStr");
         
         final isReserved = await api.isAlreadyReserved(dateStr, token, floorId, workspaceId);
         if (isReserved) {
           debugPrint("✅ Already reserved (or occupied) for $dateStr. Skip.");
+          newBooked.add(dateStr);
         } else {
           debugPrint("🆓 Free! Attempting booking...");
-          await api.reserveWorkspace(dateStr, token, workspaceId);
+          final success = await api.reserveWorkspace(dateStr, token, workspaceId);
+          if (success) {
+            newBooked.add(dateStr);
+          }
         }
       }
     }
+    
+    // Save updated booked dates so UI reflects background bookings immediately
+    await storage.saveBookedDates(newBooked.toList());
     
     return Future.value(true);
   });
