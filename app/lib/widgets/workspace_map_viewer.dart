@@ -62,17 +62,34 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     }
   }
 
-  void _initTransform(double viewW, double viewH, double mapW, double mapH) {
+  void _initTransform(double viewW, double viewH, double mapW, double mapH, double minReadableScale, Rect? targetRect) {
     if (mapW <= 0 || mapH <= 0 || viewW <= 0 || viewH <= 0) return;
-    final scaleX = viewW / mapW;
-    final scaleY = viewH / mapH;
-    // Use 92% of the viewport so there's a tiny margin on all sides
-    double scale = (scaleX < scaleY ? scaleX : scaleY) * 0.92;
-    scale = scale.clamp(0.001, 100.0);
-
-    // Center the scaled map in the viewport
-    final dx = (viewW - mapW * scale) / 2;
-    final dy = (viewH - mapH * scale) / 2;
+    
+    double scale;
+    double dx, dy;
+    
+    if (targetRect != null) {
+      // Focus on the selected workspace
+      scale = minReadableScale * 1.5; 
+      scale = scale.clamp(0.001, 100.0);
+      
+      final targetCx = targetRect.left + targetRect.width / 2;
+      final targetCy = targetRect.top + targetRect.height / 2;
+      dx = (viewW / 2) - (targetCx * scale);
+      dy = (viewH / 2) - (targetCy * scale);
+    } else {
+      // Fit map to screen by default
+      final scaleX = viewW / mapW;
+      final scaleY = viewH / mapH;
+      scale = (scaleX < scaleY ? scaleX : scaleY) * 0.92;
+      
+      // If the map is so huge that fitting to screen makes it unreadable, zoom in and center
+      if (scale < minReadableScale) scale = minReadableScale;
+      scale = scale.clamp(0.001, 100.0);
+      
+      dx = (viewW - mapW * scale) / 2;
+      dy = (viewH - mapH * scale) / 2;
+    }
 
     final m = Matrix4.identity();
     m.setTranslationRaw(dx, dy, 0.0);
@@ -91,16 +108,44 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     // ── 1. Compute bounding box of all GeoJSON features ──────────────────────
     double minX = double.infinity, minY = double.infinity;
     double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    
+    double totalDeskWidth = 0.0;
+    int deskCount = 0;
+    Rect? selectedRect;
 
     for (final feature in widget.features) {
+      final props = feature['properties'] ?? {};
       final coords = feature['geometry']?['coordinates'] as List?;
       if (coords == null) continue;
+      
+      double fMinX = double.infinity, fMinY = double.infinity;
+      double fMaxX = double.negativeInfinity, fMaxY = double.negativeInfinity;
+      
       _extractBounds(coords, (x, y) {
         if (x < minX) minX = x;
         if (y < minY) minY = y;
         if (x > maxX) maxX = x;
         if (y > maxY) maxY = y;
+        
+        if (x < fMinX) fMinX = x;
+        if (y < fMinY) fMinY = y;
+        if (x > fMaxX) fMaxX = x;
+        if (y > fMaxY) fMaxY = y;
       });
+      
+      if (fMinX == double.infinity) continue;
+      
+      final isDesk = props['workspaceType'] == 'Desk';
+      final width = fMaxX - fMinX;
+      if (isDesk && width > 0) {
+        totalDeskWidth += width;
+        deskCount++;
+      }
+      
+      final wsId = (props['workspaceId']?.toString() ?? props['roomId']?.toString() ?? props['id']?.toString())?.toLowerCase();
+      if (widget.selectedWorkspaceId != null && wsId == widget.selectedWorkspaceId?.toLowerCase()) {
+        selectedRect = Rect.fromLTRB(fMinX, fMinY, fMaxX, fMaxY);
+      }
     }
 
     if (minX == double.infinity) {
@@ -110,6 +155,21 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     const padding = 40.0;
     final mapWidth = maxX - minX + padding * 2;
     final mapHeight = maxY - minY + padding * 2;
+    
+    // Average desk width in the unscaled coordinate system.
+    final avgDeskWidth = deskCount > 0 ? totalDeskWidth / deskCount : 0.0;
+    // Calculate the minimum scale required to make a desk ~40 pixels wide on screen.
+    final minReadableScale = avgDeskWidth > 0 ? (40.0 / avgDeskWidth) : 0.01;
+    
+    if (selectedRect != null) {
+      // Offset selectedRect by global minX/minY and padding so it matches the canvas coordinates
+      selectedRect = Rect.fromLTRB(
+        selectedRect.left - minX + padding, 
+        selectedRect.top - minY + padding, 
+        selectedRect.right - minX + padding, 
+        selectedRect.bottom - minY + padding
+      );
+    }
 
     final wsMap = {
       for (var w in widget.workspaces) w['id']?.toString().toLowerCase(): w
@@ -128,12 +188,9 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
 
         final viewportSize = Size(viewW, viewH);
         if (_lastViewportSize != viewportSize) {
-          // First build or viewport resized — set the transform immediately
-          // (no postFrame needed because we have the size right now).
           _lastViewportSize = viewportSize;
-          // Schedule for next frame so the controller is ready
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            _initTransform(viewW, viewH, mapWidth, mapHeight);
+            _initTransform(viewW, viewH, mapWidth, mapHeight, minReadableScale, selectedRect);
           });
         }
 
