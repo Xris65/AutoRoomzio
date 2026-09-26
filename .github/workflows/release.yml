@@ -44,9 +44,10 @@ jobs:
         working-directory: ./app
         run: flutter build apk --release
 
-      - name: Upload APK to Release
+      - name: Rename Release and Upload APK
         if: ${{ steps.release.outputs['app--release_created'] }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          gh release edit ${{ steps.release.outputs['app--tag_name'] }} --title "AutoRoomzio ${{ steps.release.outputs['app--tag_name'] }}"
           gh release upload ${{ steps.release.outputs['app--tag_name'] }} ./app/build/app/outputs/flutter-apk/app-release.apk
