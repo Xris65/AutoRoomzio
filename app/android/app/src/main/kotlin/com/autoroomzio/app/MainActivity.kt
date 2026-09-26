@@ -1,4 +1,4 @@
-package com.example.auto_roomzio
+package com.autoroomzio.app
 
 import io.flutter.embedding.android.FlutterActivity
 
