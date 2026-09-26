@@ -69,11 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars(); // Cancels previous to avoid infinite queue
     
-    final mediaQuery = MediaQuery.of(context);
-    // On prend en compte la barre de statut (padding.top) + l'AppBar (kToolbarHeight)
-    // + un peu de marge (16) + la hauteur estimée du SnackBar (~60)
-    final topOffset = mediaQuery.padding.top + kToolbarHeight + 16.0 + 60.0;
-    final bottomMargin = math.max(0.0, mediaQuery.size.height - topOffset);
+    // On affiche l'alerte en bas, juste au-dessus de la barre de navigation
 
     Color bgColor = Theme.of(context).colorScheme.primary;
     IconData icon = Icons.info_outline;
@@ -97,11 +93,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         backgroundColor: bgColor,
         behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(bottom: bottomMargin, left: 16, right: 16),
+        margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
         elevation: 6,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         duration: const Duration(seconds: 3),
-        dismissDirection: DismissDirection.up,
       ),
     );
   }
