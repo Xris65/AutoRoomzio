@@ -217,6 +217,43 @@ class StorageService {
     return prefs.getInt('theme_mode') ?? 0; // 0: system, 1: light, 2: dark
   }
 
+  // ── Booking horizon ────────────────────────────────────────────────────────
+
+  Future<void> saveBookingHorizon(int val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('booking_horizon', val);
+  }
+
+  Future<int> getBookingHorizon() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('booking_horizon') ?? 13;
+  }
+
+  // ── Hide weekends in calendar ─────────────────────────────────────────────
+
+  Future<void> saveHideWeekends(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hide_weekends', val);
+  }
+
+  Future<bool> getHideWeekends() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('hide_weekends') ?? false;
+  }
+
+  // ── Last sync timestamp (cache TTL) ──────────────────────────────────────
+
+  Future<void> saveLastSyncTime() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_sync_time', DateTime.now().millisecondsSinceEpoch);
+  }
+
+  Future<DateTime?> getLastSyncTime() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ms = prefs.getInt('last_sync_time');
+    return ms != null ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
+  }
+
   // ── Clear all (logout) ────────────────────────────────────────────────────
 
   Future<void> clearAll() async {

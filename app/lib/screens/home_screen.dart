@@ -47,6 +47,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _notifySuccess = true;
   bool _notifyFailure = true;
   int _projectionsCount = 4;
+  int _bookingHorizon = 13;
+  bool _hideWeekends = false;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
 
@@ -87,6 +89,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final notifFailure = await _storage.getNotifyFailure();
     final projCount = await _storage.getProjectionsCount();
     final initialTab = await _storage.getInitialTab();
+    final horizon = await _storage.getBookingHorizon();
+    final hideWe = await _storage.getHideWeekends();
     
     if (mounted) {
       setState(() {
@@ -100,13 +104,25 @@ class _HomeScreenState extends State<HomeScreen> {
         _notifySuccess = notifSuccess;
         _notifyFailure = notifFailure;
         _projectionsCount = projCount;
+        _bookingHorizon = horizon;
+        _hideWeekends = hideWe;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
         }
       });
     }
 
-    await _syncCalendar();
+    // ── Sync cache: skip if last sync was less than 15 minutes ago ──────────
+    final lastSync = await _storage.getLastSyncTime();
+    final shouldSync = lastSync == null ||
+        DateTime.now().difference(lastSync).inMinutes >= 15;
+
+    if (shouldSync) {
+      await _syncCalendar();
+    } else {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
 
     if (mounted) {
       setState(() => _isLoading = false);
@@ -346,7 +362,56 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
+                  
+                  if (_workspaceName != null) ...[
+                    // ── 📊 Stats & Quick Actions ──────────────────────────────────
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Card(
+                            elevation: 0,
+                            color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                              child: Column(
+                                children: [
+                                  Text(
+                                    '${_bookedDates.where((d) => d.startsWith(DateTime.now().toIso8601String().substring(0, 7))).length}',
+                                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  const Text('réservés ce mois', style: TextStyle(fontSize: 10), textAlign: TextAlign.center),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                                icon: const Icon(Icons.flash_on, size: 16),
+                                label: const Text('Aujourd\'hui', style: TextStyle(fontSize: 11)),
+                                onPressed: () => _quickBook(0),
+                              ),
+                              const SizedBox(height: 8),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                                icon: const Icon(Icons.flash_on, size: 16),
+                                label: const Text('Demain', style: TextStyle(fontSize: 11)),
+                                onPressed: () => _quickBook(1),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                  ],
 
                   // ── Prochaines réservations ──────────────────────────────────
                   if (_workspaceName != null) ...[
@@ -617,6 +682,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   lastDay: DateTime.now().add(const Duration(days: 365)),
                   focusedDay: _focusedDay,
                   startingDayOfWeek: StartingDayOfWeek.monday,
+                  enabledDayPredicate: _hideWeekends 
+                      ? (day) => day.weekday != DateTime.saturday && day.weekday != DateTime.sunday 
+                      : (day) => true,
                   headerStyle: const HeaderStyle(
                     formatButtonVisible: false,
                     titleCentered: true,
@@ -825,7 +893,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }),
       );
       final now = DateTime.now();
-      for (int i = 0; i <= 13; i++) {
+      for (int i = 0; i <= _bookingHorizon; i++) {
         final d = now.add(Duration(days: i));
         if (d.weekday != DateTime.saturday && d.weekday != DateTime.sunday) {
           datesToCheck.add(d.toIso8601String().split('T').first);
@@ -863,7 +931,6 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
 
-
       if (_isLoading) {
         _loadingTextNotifier.value = "C'est presque prêt !";
         // Let the user see the final message for just a brief moment
@@ -879,11 +946,55 @@ class _HomeScreenState extends State<HomeScreen> {
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
+        _storage.saveLastSyncTime(); // Cache TTL
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
     }
   }
+
+  Future<void> _quickBook(int daysOffset) async {
+    if (_isCalendarBusy) return;
+    
+    final targetDate = DateTime.now().add(Duration(days: daysOffset));
+    if (targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Impossible de réserver le week-end.')));
+      return;
+    }
+
+    final dateStr = targetDate.toIso8601String().split('T').first;
+    if (_bookedDates.contains(dateStr)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Déjà réservé !')));
+      return;
+    }
+
+    final workspaceId = await _storage.getWorkspaceId();
+    if (workspaceId == null) return;
+
+    setState(() => _isCalendarBusy = true);
+    try {
+      final token = await _api.refreshMyToken();
+      if (token == null) return;
+      
+      final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
+      if (success) {
+        setState(() {
+          _bookedDates.add(dateStr);
+          _requestedDates.add(dateStr);
+          _ignoredDates.remove(dateStr);
+        });
+        _storage.saveBookedDates(_bookedDates.toList());
+        _storage.saveRequestedDates(_requestedDates.toList());
+        _storage.saveIgnoredDates(_ignoredDates.toList());
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✅ Bureau réservé pour ${daysOffset == 0 ? "aujourd'hui" : "demain"} !'), backgroundColor: Colors.green));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ Échec de la réservation.'), backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) setState(() => _isCalendarBusy = false);
+    }
+  }
+
 
   Future<void> _handleDateTap(DateTime selectedDay) async {
     if (_isCalendarBusy) return;
@@ -1102,6 +1213,51 @@ class _HomeScreenState extends State<HomeScreen> {
                     DropdownMenuItem(value: 13, child: Text('13 jours (Max)')),
                   ],
                 ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                title: const Text('Horizon de réservation'),
+                subtitle: const Text('Jours vérifiés par la synchronisation', style: TextStyle(fontSize: 12)),
+                leading: const Icon(Icons.sync_rounded),
+                trailing: DropdownButton<int>(
+                  value: _bookingHorizon,
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _bookingHorizon = val);
+                      _storage.saveBookingHorizon(val);
+                    }
+                  },
+                  items: const [
+                    DropdownMenuItem(value: 7, child: Text('7 jours')),
+                    DropdownMenuItem(value: 13, child: Text('13 jours (défaut)')),
+                    DropdownMenuItem(value: 20, child: Text('20 jours')),
+                    DropdownMenuItem(value: 30, child: Text('30 jours (Max)')),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text('Calendrier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            children: [
+              SwitchListTile(
+                title: const Text('Masquer les week-ends'),
+                subtitle: const Text('Cache le samedi et dimanche dans la vue calendrier', style: TextStyle(fontSize: 12)),
+                secondary: const Icon(Icons.weekend_rounded),
+                value: _hideWeekends,
+                onChanged: (val) {
+                  setState(() => _hideWeekends = val);
+                  _storage.saveHideWeekends(val);
+                },
               ),
             ],
           ),
