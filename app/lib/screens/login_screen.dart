@@ -41,21 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
     })()
   """;
 
-  // Dumps all keys from localStorage + sessionStorage for diagnostics
-  static const String _debugDumpJs = r"""
-    (function() {
-      var out = { localStorage: {}, sessionStorage: {} };
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        out.localStorage[k] = localStorage.getItem(k);
-      }
-      for (var i = 0; i < sessionStorage.length; i++) {
-        var k = sessionStorage.key(i);
-        out.sessionStorage[k] = sessionStorage.getItem(k);
-      }
-      return JSON.stringify(out);
-    })()
-  """;
+
 
   // Android controller
   WebViewController? _androidController;
@@ -185,93 +171,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
-  Future<void> _manualSync() async {
-    setState(() => _extracting = true);
-    
-    // First try normal extraction
-    Future<String?> readFn() async {
-      if (Platform.isAndroid) {
-        final r = await _androidController!.runJavaScriptReturningResult(_extractJs);
-        return r.toString();
-      } else {
-        final r = await _windowsController.executeScript(_extractJs);
-        return r?.toString();
-      }
-    }
 
-    final raw = await readFn();
-    
-    // Parse result
-    try {
-      if (raw != null && raw != 'null' && raw.trim().isNotEmpty && raw != 'undefined') {
-        final cleaned = raw.trim().startsWith('"') ? jsonDecode(raw.trim()) as String : raw.trim();
-        final oidcUser = jsonDecode(cleaned) as Map<String, dynamic>;
-        
-        final refreshToken = oidcUser['refresh_token'] as String?;
-        final accessToken  = oidcUser['access_token']  as String?;
-
-        if (refreshToken != null && accessToken != null) {
-          await _storage.saveRefreshToken(refreshToken);
-          if (!mounted) return;
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => SetupScreen(accessToken: accessToken)),
-          );
-          return;
-        }
-      }
-    } catch (_) {}
-
-    // Failed -> Show debug dump
-    if (!mounted) return;
-    setState(() => _extracting = false);
-    
-    String debugDump = '';
-    if (Platform.isAndroid) {
-      final d = await _androidController!.runJavaScriptReturningResult(_debugDumpJs);
-      debugDump = d.toString();
-    } else {
-      final d = await _windowsController.executeScript(_debugDumpJs);
-      debugDump = d?.toString() ?? 'null';
-    }
-
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Aucun token trouvé'),
-        content: SingleChildScrollView(child: Text(debugDump)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Connexion MyRoomz'),
-        actions: [
-          if (_extracting)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            )
-          else
-            TextButton.icon(
-              onPressed: _manualSync,
-              icon: const Icon(Icons.sync),
-              label: const Text('Récupérer Token'),
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
-            ),
-        ],
       ),
       body: _buildBody(),
     );
