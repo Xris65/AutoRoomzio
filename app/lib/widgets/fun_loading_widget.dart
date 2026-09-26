@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 class FunLoadingWidget extends StatefulWidget {
-  const FunLoadingWidget({super.key});
+  final ValueNotifier<String>? messageNotifier;
+
+  const FunLoadingWidget({super.key, this.messageNotifier});
 
   @override
   State<FunLoadingWidget> createState() => _FunLoadingWidgetState();
@@ -20,22 +22,37 @@ class _FunLoadingWidgetState extends State<FunLoadingWidget> {
   ];
   int _currentIndex = 0;
   Timer? _timer;
+  String? _currentExternalMessage;
 
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(const Duration(milliseconds: 2500), (timer) {
-      if (mounted) {
-        setState(() {
-          _currentIndex = (_currentIndex + 1) % _messages.length;
-        });
-      }
-    });
+    if (widget.messageNotifier != null) {
+      _currentExternalMessage = widget.messageNotifier!.value;
+      widget.messageNotifier!.addListener(_onMessageChanged);
+    } else {
+      _timer = Timer.periodic(const Duration(milliseconds: 2500), (timer) {
+        if (mounted) {
+          setState(() {
+            _currentIndex = (_currentIndex + 1) % _messages.length;
+          });
+        }
+      });
+    }
+  }
+
+  void _onMessageChanged() {
+    if (mounted && widget.messageNotifier != null) {
+      setState(() {
+        _currentExternalMessage = widget.messageNotifier!.value;
+      });
+    }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    widget.messageNotifier?.removeListener(_onMessageChanged);
     super.dispose();
   }
 
@@ -76,8 +93,8 @@ class _FunLoadingWidgetState extends State<FunLoadingWidget> {
               );
             },
             child: Text(
-              _messages[_currentIndex],
-              key: ValueKey<int>(_currentIndex),
+              _currentExternalMessage ?? _messages[_currentIndex],
+              key: ValueKey<String>(_currentExternalMessage ?? _messages[_currentIndex]),
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),

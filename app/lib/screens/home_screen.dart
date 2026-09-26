@@ -47,6 +47,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _notifyFailure = true;
   bool _autoSync = true;
   int _projectionsCount = 4;
+  final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
 
   @override
   void initState() {
@@ -194,7 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: FunLoadingWidget());
+      return Scaffold(body: FunLoadingWidget(messageNotifier: _loadingTextNotifier));
     }
 
     return Scaffold(
@@ -749,10 +750,13 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isCalendarBusy = true);
 
     try {
+      if (_isLoading) _loadingTextNotifier.value = "Connexion aux serveurs MyRoomz...";
       final accessToken = await _api.refreshMyToken();
       if (accessToken == null) return;
 
-      // Check requested dates + the next 13 days
+      if (_isLoading) _loadingTextNotifier.value = "Vérification de la configuration du bureau...";
+      
+      // We check requested dates + the next 13 days
       Set<String> datesToCheck = Set.from(_requestedDates);
       final now = DateTime.now();
       for (int i = 0; i <= 13; i++) {
@@ -760,11 +764,17 @@ class _HomeScreenState extends State<HomeScreen> {
         datesToCheck.add(d.toIso8601String().split('T').first);
       }
 
+      if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
+
       Set<String> newBookedDates = {};
       Set<String> newRequestedDates = Set.from(_requestedDates);
       Set<String> newIgnoredDates = Set.from(_ignoredDates);
 
+      int count = 0;
       for (final dateStr in datesToCheck) {
+        if (_isLoading && count == (datesToCheck.length ~/ 2)) {
+           _loadingTextNotifier.value = "Analyse des disponibilités du calendrier...";
+        }
         final isReserved = await _api.isAlreadyReserved(dateStr, accessToken, floorId, workspaceId);
         
         if (isReserved) {
@@ -777,6 +787,13 @@ class _HomeScreenState extends State<HomeScreen> {
             newRequestedDates.remove(dateStr);
           }
         }
+        count++;
+      }
+
+      if (_isLoading) {
+        _loadingTextNotifier.value = "C'est presque prêt !";
+        // Let the user see the final message for just a brief moment
+        await Future.delayed(const Duration(milliseconds: 1000));
       }
 
       if (mounted) {
