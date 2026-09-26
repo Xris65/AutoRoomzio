@@ -30,20 +30,85 @@ class _SetupScreenState extends State<SetupScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSites();
+    _loadInitialData();
   }
 
-  Future<void> _loadSites() async {
+  Future<void> _loadInitialData() async {
     setState(() => _loadingSites = true);
-    final sites = await _api.getSites(widget.accessToken);
-    if (mounted) {
-      setState(() {
-        _sites = sites;
-        _loadingSites = false;
-        if (sites.isEmpty) {
-          _errorMessage = 'Aucun bâtiment trouvé. Vérifiez votre compte MyRoomz.';
+    
+    try {
+      final sites = await _api.getSites(widget.accessToken);
+      
+      final savedSiteId = await _storage.getSiteId();
+      final savedFloorId = await _storage.getFloorId();
+      final savedWorkspaceId = await _storage.getWorkspaceId();
+
+      Map<String, dynamic>? initialSite;
+      Map<String, dynamic>? initialFloor;
+      Map<String, dynamic>? initialWorkspace;
+      String? initialRoomPrefix;
+      List<Map<String, dynamic>> initialFloors = [];
+      Map<String, List<Map<String, dynamic>>> initialRooms = {};
+
+      if (savedSiteId != null) {
+        try {
+          initialSite = sites.firstWhere((s) => s['id'].toString() == savedSiteId);
+          initialFloors = await _api.getFloors(widget.accessToken, savedSiteId);
+          
+          if (savedFloorId != null) {
+            initialFloor = initialFloors.firstWhere((f) => f['id'].toString() == savedFloorId);
+            final workspaces = await _api.getWorkspaces(widget.accessToken, savedFloorId);
+            
+            for (final ws in workspaces) {
+              final String name = ws['name']?.toString() ?? ws['id'].toString();
+              final lastDash = name.lastIndexOf('-');
+              String roomName = name;
+              if (lastDash > 0 && lastDash < name.length - 1) {
+                final suffix = name.substring(lastDash + 1);
+                if (suffix.length <= 4 && !suffix.contains(' ')) {
+                  roomName = name.substring(0, lastDash);
+                }
+              }
+              initialRooms.putIfAbsent(roomName, () => []).add(ws);
+              
+              if (ws['id'].toString() == savedWorkspaceId) {
+                initialWorkspace = ws;
+                initialRoomPrefix = roomName;
+              }
+            }
+          }
+        } catch (e) {
+          // If pre-fill fails (e.g., ID no longer exists), ignore and fallback to empty
         }
-      });
+      }
+
+      if (mounted) {
+        setState(() {
+          _sites = sites;
+          
+          if (initialWorkspace != null && initialRoomPrefix != null) {
+            _selectedSite = initialSite;
+            _floors = initialFloors;
+            _selectedFloor = initialFloor;
+            _rooms = initialRooms;
+            _selectedRoomPrefix = initialRoomPrefix;
+            _selectedWorkspace = initialWorkspace;
+            _currentStep = 3;
+          }
+          
+          _loadingSites = false;
+          if (sites.isEmpty) {
+            _errorMessage = 'Aucun bâtiment trouvé. Vérifiez votre compte MyRoomz.';
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = "Erreur de chargement: $e";
+          _loadingSites = false;
+        });
+      }
     }
   }
 
