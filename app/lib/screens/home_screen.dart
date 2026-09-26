@@ -883,12 +883,23 @@ class _HomeScreenState extends State<HomeScreen> {
       
       bool isBooked = _bookedDates.contains(dateStr);
       bool isRequested = _requestedDates.contains(dateStr);
-      bool isOccupied = _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
+      bool isElsewhere = _bookedElsewhereMap.containsKey(dateStr);
+      bool isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.contains(dateStr);
       bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday);
       if (_isVacation(date)) isRecurring = false;
 
-      if (isOccupied) {
-        upcoming.add({"date": date, "source": "Ailleurs", "isBooked": true, "name": _bookedElsewhereMap[dateStr]});
+      if (isElsewhere) {
+        if (_showAllReservations) {
+          upcoming.add({"date": date, "source": "Ailleurs", "isBooked": true, "name": _bookedElsewhereMap[dateStr]});
+        } else if (isRecurring && recurringProjectionsCount < _projectionsCount) {
+          upcoming.add({"date": date, "source": "Ailleurs", "isBooked": false, "name": _bookedElsewhereMap[dateStr]});
+          recurringProjectionsCount++;
+        }
+      } else if (isOccupiedByOthers) {
+        if (isRecurring && recurringProjectionsCount < _projectionsCount) {
+          upcoming.add({"date": date, "source": "Occupé", "isBooked": false});
+          recurringProjectionsCount++;
+        }
       } else if (isRequested) {
         upcoming.add({"date": date, "source": "Calendrier", "isBooked": isBooked});
       } else if (isBooked) {
@@ -929,22 +940,22 @@ class _HomeScreenState extends State<HomeScreen> {
             visualDensity: _compactMode ? VisualDensity.compact : null,
             contentPadding: _compactMode ? const EdgeInsets.symmetric(horizontal: 8, vertical: 0) : null,
             leading: Icon(
-              source == 'Ailleurs' ? Icons.person : (isBooked ? Icons.check_circle : Icons.pending),
-              color: source == 'Ailleurs' ? Colors.orange.shade900 : (isBooked ? Colors.green : Colors.blue),
+              source == 'Ailleurs' ? Icons.person : (source == 'Occupé' ? Icons.person_off : (isBooked ? Icons.check_circle : Icons.pending)),
+              color: source == 'Ailleurs' ? Colors.orange.shade900 : (source == 'Occupé' ? Colors.grey.shade700 : (isBooked ? Colors.green : Colors.blue)),
             ),
             title: Text('$weekDayName ${date.day}/${date.month}'),
             subtitle: Text(
-              source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)'),
-              style: TextStyle(color: source == 'Ailleurs' ? Colors.orange.shade900 : (isBooked ? Colors.green : Colors.blue), fontSize: _compactMode ? 10 : 12),
+              source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Occupé' ? 'Indisponible (réservé par qqn d\'autre)' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)')),
+              style: TextStyle(color: source == 'Ailleurs' ? Colors.orange.shade900 : (source == 'Occupé' ? Colors.grey.shade700 : (isBooked ? Colors.green : Colors.blue)), fontSize: _compactMode ? 10 : 12),
             ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Chip(
-                  label: Text(source, style: const TextStyle(fontSize: 10)),
+                  label: Text(source == 'Occupé' ? 'Bloqué' : source, style: const TextStyle(fontSize: 10)),
                   backgroundColor: source == 'Calendrier' 
                     ? Colors.purple.withValues(alpha: 0.1) 
-                    : (source == 'Ailleurs' ? Colors.orange.withValues(alpha: 0.3) : Colors.orange.withValues(alpha: 0.1)),
+                    : (source == 'Ailleurs' ? Colors.orange.withValues(alpha: 0.3) : (source == 'Occupé' ? Colors.grey.withValues(alpha: 0.2) : Colors.orange.withValues(alpha: 0.1))),
                   visualDensity: VisualDensity.compact,
                 ),
                 IconButton(
