@@ -594,6 +594,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
 
+    final differenceInDays = day.difference(today).inDays;
+    final isBookableNow = differenceInDays <= 14;
+
     final action = await showModalBottomSheet<String>(
       context: context,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
@@ -608,8 +611,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               if (!isBooked && !isRequested)
                 ListTile(
-                  leading: const Icon(Icons.check_circle_outline, color: Colors.blue),
-                  title: const Text('Réserver ce jour'),
+                  leading: Icon(
+                    isBookableNow ? Icons.check_circle_outline : Icons.pending_actions,
+                    color: isBookableNow ? Colors.green : Colors.blue
+                  ),
+                  title: Text(isBookableNow ? 'Réserver ce jour' : 'Programmer (En attente)'),
                   onTap: () => Navigator.pop(context, 'reserve'),
                 ),
               if (isBooked || isRequested)
@@ -653,13 +659,15 @@ class _HomeScreenState extends State<HomeScreen> {
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
 
-        final accessToken = await _api.refreshMyToken();
-        final workspaceId = await _storage.getWorkspaceId();
-        if (accessToken != null && workspaceId != null) {
-          final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
-          if (success) {
-            setState(() => _bookedDates.add(dateStr));
-            _storage.saveBookedDates(_bookedDates.toList());
+        if (isBookableNow) {
+          final accessToken = await _api.refreshMyToken();
+          final workspaceId = await _storage.getWorkspaceId();
+          if (accessToken != null && workspaceId != null) {
+            final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
+            if (success) {
+              setState(() => _bookedDates.add(dateStr));
+              _storage.saveBookedDates(_bookedDates.toList());
+            }
           }
         }
       } else if (action == 'cancel' || action == 'block') {
