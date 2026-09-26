@@ -1,8 +1,0 @@
-{
-  "packages": {
-    "app": {
-      "release-type": "dart",
-      "include-component-in-tag": false
-    }
-  }
-}

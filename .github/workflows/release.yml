@@ -1,4 +1,4 @@
-name: Release
+name: Build and Release
 
 on:
   push:
@@ -7,47 +7,56 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  release-please:
+  build-and-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Run Release Please
-        id: release
-        uses: googleapis/release-please-action@v4
-
       - name: Checkout code
-        if: ${{ steps.release.outputs['app--release_created'] }}
         uses: actions/checkout@v4
 
+      - name: Extract Version from pubspec.yaml
+        id: get_version
+        working-directory: ./app
+        run: |
+          VERSION=$(grep '^version: ' pubspec.yaml | awk '{print $2}')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "APP_VERSION=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Setup Java
-        if: ${{ steps.release.outputs['app--release_created'] }}
         uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
 
       - name: Setup Flutter
-        if: ${{ steps.release.outputs['app--release_created'] }}
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
       - name: Install dependencies
-        if: ${{ steps.release.outputs['app--release_created'] }}
         working-directory: ./app
         run: flutter pub get
 
       - name: Build APK
-        if: ${{ steps.release.outputs['app--release_created'] }}
         working-directory: ./app
         run: flutter build apk --release
 
-      - name: Rename Release and Upload APK
-        if: ${{ steps.release.outputs['app--release_created'] }}
+      - name: Push Git Tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release edit ${{ steps.release.outputs['app--tag_name'] }} --title "AutoRoomzio ${{ steps.release.outputs['app--tag_name'] }}"
-          gh release upload ${{ steps.release.outputs['app--tag_name'] }} ./app/build/app/outputs/flutter-apk/app-release.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f v${{ env.VERSION }}
+          git push -f origin v${{ env.VERSION }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.APP_VERSION }}
+          name: AutoRoomzio v${{ steps.get_version.outputs.APP_VERSION }}
+          generate_release_notes: true
+          files: app/build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
