@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -14,6 +15,7 @@ class OptimizationScreen extends StatefulWidget {
 class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBindingObserver {
 
   bool _isBatteryOptimized = true;
+  Timer? _pollingTimer;
   bool _isNotifGranted = false;
   bool _isAutostartVerified = false;
 
@@ -22,10 +24,15 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _checkPermissions();
+    // Poll permissions in case system dialogs hide the lifecycle events
+    _pollingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) _checkPermissions();
+    });
   }
 
   @override
   void dispose() {
+    _pollingTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -58,26 +65,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
 
   Future<void> _requestBattery() async {
     await Permission.ignoreBatteryOptimizations.request();
-    await _checkPermissions();
-    if (_isBatteryOptimized) {
-      if (!mounted) return;
-      final result = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text("Vérification manuelle"),
-          content: const Text("Sur certains téléphones (Xiaomi, Huawei, etc.), la détection automatique échoue. Avez-vous bien sélectionné 'Pas de restriction' ou désactivé l'optimisation pour AutoRoomzio ?"),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Non")),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Oui, c'est fait")),
-          ],
-        )
-      );
-      if (result == true) {
-        final storage = StorageService();
-        await storage.saveBatteryVerified(true);
-        setState(() => _isBatteryOptimized = false);
-      }
-    }
+    _checkPermissions();
   }
 
   Future<void> _requestNotif() async {
