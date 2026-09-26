@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'dart:convert'; // used by saveVacations/getVacations
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Uses shared_preferences for all platforms.
@@ -260,17 +260,33 @@ class StorageService {
   }
   // ── New Customizations ───────────────────────────────────────────────────
 
-  Future<void> saveVacationDates(String? startStr, String? endStr) async {
+  Future<void> saveVacations(List<Map<String, String>> vacations) async {
     final prefs = await SharedPreferences.getInstance();
-    if (startStr != null && endStr != null) {
-      await prefs.setString('vacation_start', startStr);
-      await prefs.setString('vacation_end', endStr);
+    await prefs.setString('vacation_periods', jsonEncode(vacations));
+  }
+
+  Future<List<Map<String, String>>> getVacations() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString('vacation_periods');
+    if (jsonString != null) {
+      try {
+        final List<dynamic> decoded = jsonDecode(jsonString);
+        return decoded.map((e) => Map<String, String>.from(e)).toList();
+      } catch (_) {
+        return [];
+      }
     } else {
-      await prefs.remove('vacation_start');
-      await prefs.remove('vacation_end');
+      // Backward-compat: migrate old single-vacation keys
+      final oldStart = prefs.getString('vacation_start');
+      final oldEnd = prefs.getString('vacation_end');
+      if (oldStart != null && oldEnd != null) {
+        return [{'start': oldStart, 'end': oldEnd}];
+      }
+      return [];
     }
   }
 
+  // Kept for background_task backward-compat
   Future<Map<String, String?>> getVacationDates() async {
     final prefs = await SharedPreferences.getInstance();
     return {

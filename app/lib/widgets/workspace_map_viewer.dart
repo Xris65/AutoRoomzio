@@ -1,5 +1,4 @@
-﻿import 'package:flutter/material.dart';
-import '../api_service.dart';
+import 'package:flutter/material.dart';
 
 class _RoomBounds {
   double minX = double.infinity;
@@ -56,7 +55,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     for (var feature in widget.features) {
       final geom = feature['geometry'];
       if (geom == null) continue;
-      final type = geom['type'];
       final coords = geom['coordinates'] as List?;
       if (coords == null) continue;
       
@@ -136,13 +134,12 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
               final wsId = (props['workspaceId']?.toString() ?? props['roomId']?.toString() ?? props['id']?.toString())?.toLowerCase();
               final isDesk = props['workspaceType'] == 'Desk';
               final workspace = wsMap[wsId];
-              
-              final isBookable = workspace != null;
+              final workspaceNonNull = workspace;
+              final isBookable = workspaceNonNull != null;
               final isSelected = widget.selectedWorkspaceId != null && widget.selectedWorkspaceId?.toLowerCase() == wsId;
 
               final geom = feature['geometry'];
               if (geom == null) continue;
-              final type = geom['type'];
               final coords = geom['coordinates'] as List?;
               if (coords == null || coords.isEmpty) continue;
 
@@ -244,7 +241,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                   child: GestureDetector(
                     onTap: () {
                       if (isBookable) {
-                        widget.onSelected(workspace!);
+                        widget.onSelected(workspaceNonNull);
                       }
                     },
                     child: Container(

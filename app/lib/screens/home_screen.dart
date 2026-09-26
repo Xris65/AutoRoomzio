@@ -60,11 +60,13 @@ class _HomeScreenState extends State<HomeScreen> {
   late PageController _pageController;
 
   bool _isVacation(DateTime date) {
-    if (_vacationStart == null || _vacationEnd == null) return false;
     final d = DateTime(date.year, date.month, date.day);
-    final s = DateTime(_vacationStart!.year, _vacationStart!.month, _vacationStart!.day);
-    final e = DateTime(_vacationEnd!.year, _vacationEnd!.month, _vacationEnd!.day);
-    return d.compareTo(s) >= 0 && d.compareTo(e) <= 0;
+    for (final v in _vacations) {
+      final start = DateTime(v.start.year, v.start.month, v.start.day);
+      final end = DateTime(v.end.year, v.end.month, v.end.day);
+      if (!d.isBefore(start) && !d.isAfter(end)) return true;
+    }
+    return false;
   }
 
   void _showTopToast(String message, {bool isError = false, bool isSuccess = false}) {
@@ -146,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final projCount = await _storage.getProjectionsCount();
     final initialTab = await _storage.getInitialTab();
     final hideWe = await _storage.getHideWeekends();
-    final vac = await _storage.getVacationDates();
+    final vacs = await _storage.getVacations();
     final comp = await _storage.getCompactMode();
     
     if (mounted) {
@@ -163,8 +165,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _notifyFailure = notifFailure;
         _projectionsCount = projCount;
         _hideWeekends = hideWe;
-        _vacationStart = vac['start'] != null ? DateTime.tryParse(vac['start']!) : null;
-        _vacationEnd = vac['end'] != null ? DateTime.tryParse(vac['end']!) : null;
+        _vacations = vacs.map((v) => DateTimeRange(
+          start: DateTime.parse(v['start']!),
+          end: DateTime.parse(v['end']!),
+        )).toList();
         _compactMode = comp;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
@@ -452,7 +456,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'Mode Congés activé. L\\'automatisation est en pause sur cette date.',
+                                "Mode Congés activé. L'automatisation est en pause sur cette date.",
                                 style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
                               ),
                             ),
@@ -1681,6 +1685,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+
+
 
 
 

@@ -1,4 +1,3 @@
-﻿import '../storage_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -12,7 +11,7 @@ class OptimizationScreen extends StatefulWidget {
 }
 
 class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBindingObserver {
-  final _storage = StorageService();
+
   bool _isBatteryOptimized = true;
   bool _isNotifGranted = false;
   bool _isAutostartVerified = false;
@@ -181,7 +180,6 @@ class _PermissionTile extends StatelessWidget {
   final String actionLabel;
 
   const _PermissionTile({
-    super.key,
     required this.title,
     required this.description,
     this.isOk,
