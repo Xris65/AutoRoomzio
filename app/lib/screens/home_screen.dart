@@ -68,11 +68,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars(); // Cancels previous to avoid infinite queue
     
-    final screenHeight = MediaQuery.of(context).size.height;
-    // Calculate margin so it floats near the top (e.g. just below AppBar).
-    // SnackBar appears from the bottom, so we push it up.
-    // We assume a standard SnackBar height of around 50-60 pixels.
-    final bottomMargin = math.max(0.0, screenHeight - 140.0);
+    final mediaQuery = MediaQuery.of(context);
+    // On prend en compte la barre de statut (padding.top) + l'AppBar (kToolbarHeight)
+    // + un peu de marge (16) + la hauteur estimée du SnackBar (~60)
+    final topOffset = mediaQuery.padding.top + kToolbarHeight + 16.0 + 60.0;
+    final bottomMargin = math.max(0.0, mediaQuery.size.height - topOffset);
 
     Color bgColor = Theme.of(context).colorScheme.primary;
     IconData icon = Icons.info_outline;
