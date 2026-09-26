@@ -22,9 +22,21 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _extracting = false;
   bool _windowsReady = false;
 
-  // Key used by the OIDC client library in the web app's localStorage
-  static const String _oidcKey = 'oidc.user:https://login.roomz.io:my-roomz';
   static const String _startUrl = 'https://my.roomz.io';
+
+  // JS snippet: searches ALL localStorage keys for an OIDC user object
+  // and returns the first one found. Resilient to key-name variations.
+  static const String _extractJs = r"""
+    (function() {
+      for (var i = 0; i < localStorage.length; i++) {
+        var key = localStorage.key(i);
+        if (key && key.startsWith('oidc.user')) {
+          return localStorage.getItem(key);
+        }
+      }
+      return null;
+    })()
+  """;
 
   // Android controller
   WebViewController? _androidController;
@@ -42,76 +54,89 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // ── Initialisation ────────────────────────────────────────────────────────
+
   void _initAndroid() {
     _androidController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: _tryExtractTokenAndroid,
+        onPageFinished: _onPageFinishedAndroid,
       ))
       ..loadRequest(Uri.parse(_startUrl));
   }
 
   Future<void> _initWindows() async {
     await _windowsController.initialize();
-    _windowsController.url.listen((url) {
-      if (url.startsWith('https://my.roomz.io')) {
-        _tryExtractTokenWindows();
+
+    // Listen to loading state — trigger extraction when page fully loads
+    _windowsController.loadingState.listen((state) async {
+      if (state == LoadingState.navigationCompleted) {
+        final url = await _windowsController.url.first;
+        if (url.startsWith('https://my.roomz.io')) {
+          await _tryExtract(() async {
+            final result = await _windowsController.executeScript(_extractJs);
+            return result?.toString();
+          });
+        }
       }
     });
+
     await _windowsController.loadUrl(_startUrl);
     if (mounted) setState(() => _windowsReady = true);
   }
 
   // ── Token extraction ──────────────────────────────────────────────────────
 
-  Future<void> _tryExtractTokenAndroid(String url) async {
-    if (!url.startsWith('https://my.roomz.io') || _extracting || _androidController == null) return;
-    setState(() => _extracting = true);
-
-    final result = await _androidController!.runJavaScriptReturningResult(
-      "window.localStorage.getItem('$_oidcKey')",
-    );
-    await _processOidcResult(result.toString());
+  Future<void> _onPageFinishedAndroid(String url) async {
+    if (!url.startsWith('https://my.roomz.io') || _androidController == null) return;
+    await _tryExtract(() async {
+      final result = await _androidController!
+          .runJavaScriptReturningResult(_extractJs);
+      return result.toString();
+    });
   }
 
-  Future<void> _tryExtractTokenWindows() async {
+  /// Shared extraction logic with retry: waits up to 5 × 1s for the OIDC
+  /// library to write the token into localStorage after the redirect.
+  Future<void> _tryExtract(Future<String?> Function() readFn) async {
     if (_extracting) return;
-    setState(() => _extracting = true);
+    if (mounted) setState(() => _extracting = true);
 
-    final result = await _windowsController.executeScript(
-      "window.localStorage.getItem('$_oidcKey')",
-    );
-    await _processOidcResult(result?.toString() ?? 'null');
-  }
+    for (int attempt = 0; attempt < 5; attempt++) {
+      // Give the OIDC library a moment to write to localStorage
+      await Future.delayed(const Duration(seconds: 1));
 
-  Future<void> _processOidcResult(String raw) async {
-    if (raw == 'null' || raw.isEmpty || raw == 'undefined' || raw == 'null\n') {
-      if (mounted) setState(() => _extracting = false);
-      return;
-    }
-
-    try {
-      // Result may be a JS-stringified JSON — unwrap one level if needed
-      final cleaned = raw.startsWith('"') ? jsonDecode(raw) as String : raw;
-      final oidcUser = jsonDecode(cleaned) as Map<String, dynamic>;
-
-      final refreshToken = oidcUser['refresh_token'] as String?;
-      final accessToken = oidcUser['access_token'] as String?;
-
-      if (refreshToken == null || accessToken == null) {
-        if (mounted) setState(() => _extracting = false);
-        return;
+      final raw = await readFn();
+      if (raw == null || raw == 'null' || raw.trim().isEmpty || raw == 'undefined') {
+        continue; // not ready yet, retry
       }
 
-      await _storage.saveRefreshToken(refreshToken);
+      try {
+        // Result may arrive as a JS-quoted string — unwrap one level if needed
+        final cleaned = raw.trim().startsWith('"')
+            ? jsonDecode(raw.trim()) as String
+            : raw.trim();
+        final oidcUser = jsonDecode(cleaned) as Map<String, dynamic>;
 
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => SetupScreen(accessToken: accessToken)),
-      );
-    } catch (_) {
-      if (mounted) setState(() => _extracting = false);
+        final refreshToken = oidcUser['refresh_token'] as String?;
+        final accessToken  = oidcUser['access_token']  as String?;
+
+        if (refreshToken == null || accessToken == null) continue;
+
+        await _storage.saveRefreshToken(refreshToken);
+
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => SetupScreen(accessToken: accessToken)),
+        );
+        return; // success
+      } catch (_) {
+        continue;
+      }
     }
+
+    // All retries exhausted — let user keep browsing
+    if (mounted) setState(() => _extracting = false);
   }
 
   @override
@@ -165,17 +190,9 @@ class _LoginScreenState extends State<LoginScreen> {
           children: [
             Icon(Icons.warning_amber_rounded, size: 64, color: Colors.orange),
             SizedBox(height: 16),
-            Text(
-              'Plateforme non supportée.',
-              style: TextStyle(fontSize: 18),
-              textAlign: TextAlign.center,
-            ),
+            Text('Plateforme non supportée.', style: TextStyle(fontSize: 18)),
             SizedBox(height: 8),
-            Text(
-              'Utilisez Android ou Windows.',
-              style: TextStyle(color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
+            Text('Utilisez Android ou Windows.', style: TextStyle(color: Colors.grey)),
           ],
         ),
       ),
