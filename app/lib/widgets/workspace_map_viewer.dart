@@ -62,15 +62,27 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     }
   }
 
-  void _initTransform(double viewW, double viewH, double mapW, double mapH, double minReadableScale, Rect? targetRect) {
+  void _initTransform(double viewW, double viewH, double mapW, double mapH, Rect? targetRect) {
     if (mapW <= 0 || mapH <= 0 || viewW <= 0 || viewH <= 0) return;
+    
+    final scaleX = viewW / mapW;
+    final scaleY = viewH / mapH;
+    final fitScale = (scaleX < scaleY ? scaleX : scaleY) * 0.92;
     
     double scale;
     double dx, dy;
     
     if (targetRect != null) {
-      // Focus on the selected workspace
-      scale = minReadableScale * 1.5; 
+      // Focus on the selected workspace: zoom in relative to the fitScale, but not too much.
+      // E.g., 2.5x the normal view
+      scale = fitScale * 2.5;
+      
+      // But don't zoom in so much that the desk fills the entire screen
+      final maxTargetScale = viewW / (targetRect.width * 2); 
+      if (scale > maxTargetScale && maxTargetScale > fitScale) {
+          scale = maxTargetScale;
+      }
+      
       scale = scale.clamp(0.001, 100.0);
       
       final targetCx = targetRect.left + targetRect.width / 2;
@@ -79,11 +91,11 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
       dy = (viewH / 2) - (targetCy * scale);
     } else {
       // Fit map to screen by default
-      final scaleX = viewW / mapW;
-      final scaleY = viewH / mapH;
-      scale = (scaleX < scaleY ? scaleX : scaleY) * 0.92;
+      scale = fitScale;
       
-      // If the map is so huge that fitting to screen makes it unreadable, zoom in and center
+      // Enforce a minimum scale just in case the map is ridiculously wide
+      // but only up to 2x the fitScale
+      final minReadableScale = fitScale * 2.0; 
       if (scale < minReadableScale) scale = minReadableScale;
       scale = scale.clamp(0.001, 100.0);
       
@@ -156,11 +168,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     final mapWidth = maxX - minX + padding * 2;
     final mapHeight = maxY - minY + padding * 2;
     
-    // Average desk width in the unscaled coordinate system.
-    final avgDeskWidth = deskCount > 0 ? totalDeskWidth / deskCount : 0.0;
-    // Calculate the minimum scale required to make a desk ~40 pixels wide on screen.
-    final minReadableScale = avgDeskWidth > 0 ? (40.0 / avgDeskWidth) : 0.01;
-    
     if (selectedRect != null) {
       // Offset selectedRect by global minX/minY and padding so it matches the canvas coordinates
       selectedRect = Rect.fromLTRB(
@@ -190,7 +197,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
         if (_lastViewportSize != viewportSize) {
           _lastViewportSize = viewportSize;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            _initTransform(viewW, viewH, mapWidth, mapHeight, minReadableScale, selectedRect);
+            _initTransform(viewW, viewH, mapWidth, mapHeight, selectedRect);
           });
         }
 
