@@ -51,12 +51,15 @@ jobs:
           git tag -f v${{ env.VERSION }}
           git push -f origin v${{ env.VERSION }}
 
+      - name: Rename APK
+        run: mv app/build/app/outputs/flutter-apk/app-release.apk app/build/app/outputs/flutter-apk/AutoRoomzio.apk
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.get_version.outputs.APP_VERSION }}
           name: AutoRoomzio v${{ steps.get_version.outputs.APP_VERSION }}
           generate_release_notes: true
-          files: app/build/app/outputs/flutter-apk/app-release.apk
+          files: app/build/app/outputs/flutter-apk/AutoRoomzio.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
