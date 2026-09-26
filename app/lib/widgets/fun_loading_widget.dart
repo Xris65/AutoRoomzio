@@ -30,7 +30,7 @@ class _FunLoadingWidgetState extends State<FunLoadingWidget> {
         ];
         
     if (!widget.isSplash) {
-      _timer = Timer.periodic(const Duration(milliseconds: 1800), (timer) {
+      _timer = Timer.periodic(const Duration(milliseconds: 2500), (timer) {
         if (mounted) {
           setState(() {
             _currentIndex = (_currentIndex + 1) % _messages.length;
@@ -67,7 +67,21 @@ class _FunLoadingWidgetState extends State<FunLoadingWidget> {
           const CircularProgressIndicator(),
           const SizedBox(height: 24),
           AnimatedSwitcher(
-            duration: const Duration(milliseconds: 500),
+            duration: const Duration(milliseconds: 1000),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (Widget child, Animation<double> animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0.0, 0.2), // Slide up slightly
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
+                ),
+              );
+            },
             child: Text(
               _messages[_currentIndex],
               key: ValueKey<int>(_currentIndex),
