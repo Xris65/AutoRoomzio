@@ -959,9 +959,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   visualDensity: VisualDensity.compact,
                 ),
                 IconButton(
-                  icon: Icon(source == 'Calendrier' ? Icons.delete_outline : Icons.block, size: 20),
+                  icon: Icon(isBooked ? Icons.delete_outline : Icons.block, size: 20),
                   color: Colors.redAccent,
-                  tooltip: source == 'Calendrier' ? 'Supprimer' : 'Bloquer',
+                  tooltip: isBooked ? 'Supprimer' : 'Bloquer',
                   onPressed: () => _quickAction(date, isBooked, source),
                 ),
               ],
