@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:disable_battery_optimization/disable_battery_optimization.dart';
@@ -61,6 +62,47 @@ class _HomeScreenState extends State<HomeScreen> {
     final s = DateTime(_vacationStart!.year, _vacationStart!.month, _vacationStart!.day);
     final e = DateTime(_vacationEnd!.year, _vacationEnd!.month, _vacationEnd!.day);
     return d.compareTo(s) >= 0 && d.compareTo(e) <= 0;
+  }
+
+  void _showTopToast(String message, {bool isError = false, bool isSuccess = false}) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars(); // Cancels previous to avoid infinite queue
+    
+    final screenHeight = MediaQuery.of(context).size.height;
+    // Calculate margin so it floats near the top (e.g. just below AppBar).
+    // SnackBar appears from the bottom, so we push it up.
+    // We assume a standard SnackBar height of around 50-60 pixels.
+    final bottomMargin = math.max(0.0, screenHeight - 140.0);
+
+    Color bgColor = Theme.of(context).colorScheme.primary;
+    IconData icon = Icons.info_outline;
+    
+    if (isError) {
+      bgColor = Colors.red.shade600;
+      icon = Icons.error_outline;
+    } else if (isSuccess) {
+      bgColor = Colors.green.shade600;
+      icon = Icons.check_circle_outline;
+    }
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(icon, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+          ],
+        ),
+        backgroundColor: bgColor,
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(bottom: bottomMargin, left: 16, right: 16),
+        elevation: 6,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 3),
+        dismissDirection: DismissDirection.up,
+      ),
+    );
   }
 
   @override
@@ -196,18 +238,14 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Automatisation activée'), backgroundColor: Colors.green),
-        );
+        _showTopToast('Automatisation activée', isSuccess: true);
       }
     } else {
       if (Platform.isAndroid) {
         Workmanager().cancelAll();
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('❌ Automatisation désactivée')),
-        );
+        _showTopToast('Automatisation désactivée');
       }
     }
   }
@@ -944,9 +982,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(source == 'Calendrier' ? 'Réservation supprimée' : 'Jour bloqué ($dateStr)')),
-        );
+        _showTopToast(source == 'Calendrier' ? 'Réservation supprimée' : 'Jour bloqué ($dateStr)');
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -990,13 +1026,11 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(addedCount > 0 
-              ? '✅ $addedCount réservation(s) ajoutée(s) !' 
-              : '✅ Le planning est déjà à jour (aucune nouvelle place réservable)'),
-            backgroundColor: addedCount > 0 ? Colors.green : Colors.blue,
-          ),
+        _showTopToast(
+          addedCount > 0 
+            ? '$addedCount réservation(s) ajoutée(s) !' 
+            : 'Le planning est déjà à jour (aucune nouvelle place réservable)',
+          isSuccess: addedCount > 0
         );
       }
     } finally {
@@ -1089,13 +1123,13 @@ class _HomeScreenState extends State<HomeScreen> {
     
     final targetDate = DateTime.now().add(Duration(days: daysOffset));
     if (_hideWeekends && (targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday)) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Réservation le week-end désactivée.')));
+      _showTopToast('Réservation le week-end désactivée.');
       return;
     }
 
     final dateStr = targetDate.toIso8601String().split('T').first;
     if (_bookedDates.contains(dateStr)) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Déjà réservé !')));
+      _showTopToast('Déjà réservé !');
       return;
     }
 
@@ -1117,9 +1151,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✅ Bureau réservé pour ${daysOffset == 0 ? "aujourd'hui" : "demain"} !'), backgroundColor: Colors.green));
+        _showTopToast('Bureau réservé pour ${daysOffset == 0 ? "aujourd'hui" : "demain"} !', isSuccess: true);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ Échec de la réservation.'), backgroundColor: Colors.red));
+        _showTopToast('Échec de la réservation.', isError: true);
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -1134,9 +1168,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final day = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
     
     if (day.isBefore(today)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Impossible de modifier le passé.')),
-      );
+      _showTopToast('Impossible de modifier le passé.');
       return;
     }
 
