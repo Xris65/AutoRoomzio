@@ -24,17 +24,36 @@ class _LoginScreenState extends State<LoginScreen> {
 
   static const String _startUrl = 'https://my.roomz.io';
 
-  // JS snippet: searches ALL localStorage keys for an OIDC user object
-  // and returns the first one found. Resilient to key-name variations.
+  // Searches localStorage then sessionStorage for any OIDC user object
   static const String _extractJs = r"""
     (function() {
-      for (var i = 0; i < localStorage.length; i++) {
-        var key = localStorage.key(i);
-        if (key && key.startsWith('oidc.user')) {
-          return localStorage.getItem(key);
+      var stores = [localStorage, sessionStorage];
+      for (var s = 0; s < stores.length; s++) {
+        var store = stores[s];
+        for (var i = 0; i < store.length; i++) {
+          var key = store.key(i);
+          if (key && key.startsWith('oidc.user')) {
+            return store.getItem(key);
+          }
         }
       }
       return null;
+    })()
+  """;
+
+  // Dumps all keys from localStorage + sessionStorage for diagnostics
+  static const String _debugDumpJs = r"""
+    (function() {
+      var out = { localStorage: {}, sessionStorage: {} };
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        out.localStorage[k] = localStorage.getItem(k);
+      }
+      for (var i = 0; i < sessionStorage.length; i++) {
+        var k = sessionStorage.key(i);
+        out.sessionStorage[k] = sessionStorage.getItem(k);
+      }
+      return JSON.stringify(out);
     })()
   """;
 
@@ -56,28 +75,47 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ── Initialisation ────────────────────────────────────────────────────────
 
-  void _initAndroid() {
+  void _initAndroid() async {
+    // Clear cookies before instantiating controller to prevent auto-login
+    await WebViewCookieManager().clearCookies();
+    
     _androidController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(NavigationDelegate(
         onPageFinished: _onPageFinishedAndroid,
-      ))
-      ..loadRequest(Uri.parse(_startUrl));
+      ));
+      
+    await _androidController!.clearCache();
+    await _androidController!.clearLocalStorage();
+    await _androidController!.loadRequest(Uri.parse(_startUrl));
+    
+    if (mounted) setState(() {});
   }
+
+  String _currentWindowsUrl = '';
 
   Future<void> _initWindows() async {
     await _windowsController.initialize();
 
-    // Listen to loading state — trigger extraction when page fully loads
+    // Clear cookies and cache for Windows to prevent auto-login
+    try {
+      await _windowsController.clearCookies();
+      await _windowsController.clearCache();
+    } catch (_) {}
+
+    // Track current URL locally so we don't subscribe to the stream multiple times
+    _windowsController.url.listen((url) {
+      _currentWindowsUrl = url;
+    });
+
+    // Trigger extraction when a page finishes loading on my.roomz.io
     _windowsController.loadingState.listen((state) async {
-      if (state == LoadingState.navigationCompleted) {
-        final url = await _windowsController.url.first;
-        if (url.startsWith('https://my.roomz.io')) {
-          await _tryExtract(() async {
-            final result = await _windowsController.executeScript(_extractJs);
-            return result?.toString();
-          });
-        }
+      if (state == LoadingState.navigationCompleted &&
+          _currentWindowsUrl.startsWith('https://my.roomz.io')) {
+        await _tryExtract(() async {
+          final result = await _windowsController.executeScript(_extractJs);
+          return result?.toString();
+        });
       }
     });
 
@@ -147,6 +185,68 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
+  Future<void> _manualSync() async {
+    setState(() => _extracting = true);
+    
+    // First try normal extraction
+    Future<String?> readFn() async {
+      if (Platform.isAndroid) {
+        final r = await _androidController!.runJavaScriptReturningResult(_extractJs);
+        return r.toString();
+      } else {
+        final r = await _windowsController.executeScript(_extractJs);
+        return r?.toString();
+      }
+    }
+
+    final raw = await readFn();
+    
+    // Parse result
+    try {
+      if (raw != null && raw != 'null' && raw.trim().isNotEmpty && raw != 'undefined') {
+        final cleaned = raw.trim().startsWith('"') ? jsonDecode(raw.trim()) as String : raw.trim();
+        final oidcUser = jsonDecode(cleaned) as Map<String, dynamic>;
+        
+        final refreshToken = oidcUser['refresh_token'] as String?;
+        final accessToken  = oidcUser['access_token']  as String?;
+
+        if (refreshToken != null && accessToken != null) {
+          await _storage.saveRefreshToken(refreshToken);
+          if (!mounted) return;
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => SetupScreen(accessToken: accessToken)),
+          );
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // Failed -> Show debug dump
+    if (!mounted) return;
+    setState(() => _extracting = false);
+    
+    String debugDump = '';
+    if (Platform.isAndroid) {
+      final d = await _androidController!.runJavaScriptReturningResult(_debugDumpJs);
+      debugDump = d.toString();
+    } else {
+      final d = await _windowsController.executeScript(_debugDumpJs);
+      debugDump = d?.toString() ?? 'null';
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Aucun token trouvé'),
+        content: SingleChildScrollView(child: Text(debugDump)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -163,6 +263,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
               ),
+            )
+          else
+            TextButton.icon(
+              onPressed: _manualSync,
+              icon: const Icon(Icons.sync),
+              label: const Text('Récupérer Token'),
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
             ),
         ],
       ),
