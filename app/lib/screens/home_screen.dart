@@ -809,9 +809,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   visualDensity: VisualDensity.compact,
                 ),
                 IconButton(
-                  icon: Icon(source == 'Calendrier' ? Icons.delete_outline : Icons.block, size: 20),
+                  icon: Icon(source == 'R�current' ? Icons.block : Icons.delete_outline, size: 20),
                   color: Colors.redAccent,
-                  tooltip: source == 'Calendrier' ? 'Supprimer' : 'Bloquer',
+                  tooltip: source == 'R�current' ? 'Bloquer' : 'Supprimer',
                   onPressed: () => _quickAction(date, isBooked, source),
                 ),
               ],
@@ -1007,31 +1007,33 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _quickAction(DateTime day, bool isBooked, String source) async {
     final dateStr = day.toIso8601String().split('T').first;
-    
     setState(() => _isCalendarBusy = true);
     try {
-      if (isBooked) {
-        final token = await _api.refreshMyToken();
-        final workspaceId = await _storage.getWorkspaceId();
-        if (token != null && workspaceId != null) {
-          await _api.cancelReservation(dateStr, token, workspaceId);
+      final token = await _api.refreshMyToken();
+      if (token != null) {
+        if (source == 'Ailleurs') {
+          final success = await _api.cancelBookingByDate(token, dateStr);
+          if (success) {
+            setState(() => _bookedElsewhereMap.remove(dateStr));
+            _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
+            if (mounted) _showTopToast('R�servation annul�e', isSuccess: true);
+          }
+        } else if (isBooked) {
+          final workspaceId = await _storage.getWorkspaceId();
+          if (workspaceId != null) {
+            await _api.cancelReservation(dateStr, token, workspaceId);
+          }
         }
       }
-      setState(() {
-        _requestedDates.remove(dateStr);
-        _bookedDates.remove(dateStr);
-        if (source == 'Récurrent') {
-          _ignoredDates.add(dateStr); // Only block automation
-        }
-      });
-      _storage.saveRequestedDates(_requestedDates.toList());
-      _storage.saveBookedDates(_bookedDates.toList());
-      if (source == 'Récurrent') {
-        _storage.saveIgnoredDates(_ignoredDates.toList());
-      }
-      
-      if (mounted) {
-        _showTopToast(source == 'Calendrier' ? 'Réservation supprimée' : 'Jour bloqué ($dateStr)');
+      if (source != 'Ailleurs') {
+        setState(() {
+          _requestedDates.remove(dateStr);
+          _bookedDates.remove(dateStr);
+          if (source.contains('current')) _ignoredDates.add(dateStr);
+        });
+        _storage.saveRequestedDates(_requestedDates.toList());
+        _storage.saveBookedDates(_bookedDates.toList());
+        if (source.contains('current')) _storage.saveIgnoredDates(_ignoredDates.toList());
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -1267,7 +1269,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: Text(isBooked ? 'Libérer la place' : 'Annuler la demande'),
                   onTap: () => Navigator.pop(context, 'cancel'),
                 ),
-              if (!isIgnored && !isWeekendAndHidden)
+              if (!isIgnored && !isWeekendAndHidden && !_bookedElsewhereMap.containsKey(dateStr))
                 ListTile(
                   leading: const Icon(Icons.block, color: Colors.redAccent),
                   title: const Text('Bloquer (Ignorer l\'automatisation)'),
@@ -1596,4 +1598,5 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
 
