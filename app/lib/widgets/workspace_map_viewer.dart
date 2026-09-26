@@ -85,8 +85,8 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     final mapWidth = maxX - minX + (padding * 2);
     final mapHeight = maxY - minY + (padding * 2);
 
-    final wsMap = {for (var w in widget.workspaces) w['id']: w};
-    final allWsMap = {for (var w in widget.allWorkspaces) w['id']: w};
+    final wsMap = {for (var w in widget.workspaces) w['id']?.toString().toLowerCase(): w};
+    final allWsMap = {for (var w in widget.allWorkspaces) w['id']?.toString().toLowerCase(): w};
 
     if (!_initialized) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -132,12 +132,12 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
 
             for (var feature in widget.features) {
               final props = feature['properties'] ?? {};
-              final wsId = props['workspaceId']?.toString();
+              final wsId = (props['workspaceId']?.toString() ?? props['roomId']?.toString() ?? props['id']?.toString())?.toLowerCase();
               final isDesk = props['workspaceType'] == 'Desk';
               final workspace = wsMap[wsId];
               
               final isBookable = workspace != null;
-              final isSelected = widget.selectedWorkspaceId != null && widget.selectedWorkspaceId == wsId;
+              final isSelected = widget.selectedWorkspaceId != null && widget.selectedWorkspaceId?.toLowerCase() == wsId;
 
               final geom = feature['geometry'];
               if (geom == null) continue;
@@ -200,7 +200,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                  }
               } else if (!isDesk) {
                  final roomWs = wsId != null ? allWsMap[wsId] : null;
-                 label = roomWs?['name']?.toString() ?? propName ?? "";
+                 label = roomWs?['name']?.toString() ?? propName ?? (wsId != null ? 'Err: $wsId' : '');
               }
 
               if (width == 0 && height == 0) {
@@ -334,3 +334,4 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     );
   }
 }
+
