@@ -670,16 +670,23 @@ class _HomeScreenState extends State<HomeScreen> {
                               label: const Text('Ajouter une période'),
                               onPressed: () async {
                                 final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-                                final picked = await showDateRangePicker(
-                                  context: context,
-                                  firstDate: today,
-                                  lastDate: today.add(const Duration(days: 365)),
-                                  saveText: 'VALIDER',
-                                );
-                                if (picked != null) {
-                                  // AUTO-CANCEL bookings and requests in this new vacation period
-                                  final toCancel = <String>[];
+                                DateTimeRange? picked;
+                                bool userConfirmed = false;
+                                final toCancel = <String>[];
+                                
+                                while (!userConfirmed) {
+                                  picked = await showDateRangePicker(
+                                    context: context,
+                                    firstDate: today,
+                                    lastDate: today.add(const Duration(days: 365)),
+                                    initialDateRange: picked,
+                                    saveText: 'VALIDER',
+                                  );
                                   
+                                  if (picked == null) break; // User closed the date picker itself
+                                  
+                                  // AUTO-CANCEL bookings and requests in this new vacation period
+                                  toCancel.clear();
                                   for (var i = 0; i <= picked.end.difference(picked.start).inDays; i++) {
                                     final d = picked.start.add(Duration(days: i));
                                     final dateStr = d.toIso8601String().split('T').first;
@@ -702,7 +709,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         actions: [
                                           TextButton(
                                             onPressed: () => Navigator.pop(context, false),
-                                            child: const Text('ANNULER'),
+                                            child: const Text('RECTIFIER'),
                                           ),
                                           FilledButton(
                                             onPressed: () => Navigator.pop(context, true),
@@ -712,8 +719,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ),
                                     );
                                     
-                                    if (confirm != true) return; // User cancelled
-                                    
+                                    if (confirm == true) {
+                                      userConfirmed = true;
+                                    } else {
+                                      // User clicked RECTIFIER. The while loop continues and re-opens the picker.
+                                    }
+                                  } else {
+                                    userConfirmed = true;
+                                  }
+                                }
+                                
+                                if (picked != null && userConfirmed) {
+                                  if (toCancel.isNotEmpty) {
                                     if (!mounted) return;
                                     final messenger = ScaffoldMessenger.of(context);
                                     messenger.showSnackBar(SnackBar(content: Text('Annulation de \${toCancel.length} journée(s)...')));
@@ -740,7 +757,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     messenger.showSnackBar(const SnackBar(content: Text('Journées libérées avec succès.')));
                                   }
                                   
-                                  setState(() => _vacations.add(picked));
+                                  setState(() => _vacations.add(picked!));
                                   _storage.saveVacations(_vacations.map((v) => {'start': v.start.toIso8601String(), 'end': v.end.toIso8601String()}).toList());
                                 }
                               },
