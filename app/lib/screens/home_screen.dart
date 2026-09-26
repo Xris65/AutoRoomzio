@@ -1257,6 +1257,32 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Widget _buildStyledDropdown<T>({
+    required T value,
+    required void Function(T?) onChanged,
+    required List<DropdownMenuItem<T>> items,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          isDense: true,
+          icon: const Icon(Icons.arrow_drop_down_rounded, size: 24),
+          focusColor: Colors.transparent,
+          dropdownColor: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          onChanged: onChanged,
+          items: items,
+        ),
+      ),
+    );
+  }
+
   Widget _buildSettingsTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -1295,9 +1321,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: const Text('Page de démarrage'),
                     subtitle: const Text('Onglet affiché à l\'ouverture', style: TextStyle(fontSize: 12)),
                     leading: const Icon(Icons.home_rounded),
-                    trailing: DropdownButton<int>(
-                      underline: const SizedBox(),
-                      focusColor: Colors.transparent,
+                    trailing: _buildStyledDropdown<int>(
                       value: snapshot.data ?? 0,
                       onChanged: (val) {
                         if (val != null) {
@@ -1318,9 +1342,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ListTile(
                 title: const Text('Couleur du thème'),
                 leading: const Icon(Icons.color_lens_rounded),
-                trailing: DropdownButton<int>(
-                  underline: const SizedBox(),
-                  focusColor: Colors.transparent,
+                trailing: _buildStyledDropdown<int>(
                   value: themeColorNotifier.value,
                   onChanged: (val) {
                     if (val != null) {
@@ -1344,9 +1366,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   return ListTile(
                     title: const Text('Police d\'écriture'),
                     leading: const Icon(Icons.font_download_rounded),
-                    trailing: DropdownButton<int>(
-                      underline: const SizedBox(),
-                      focusColor: Colors.transparent,
+                    trailing: _buildStyledDropdown<int>(
                       value: currentFont,
                       onChanged: (val) {
                         if (val != null) {
@@ -1368,9 +1388,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 title: const Text('Prévisions à afficher'),
                 subtitle: const Text('Nombre de réservations futures dans l\'accueil', style: TextStyle(fontSize: 12)),
                 leading: const Icon(Icons.format_list_numbered),
-                trailing: DropdownButton<int>(
-                  underline: const SizedBox(),
-                  focusColor: Colors.transparent,
+                trailing: _buildStyledDropdown<int>(
                   value: _projectionsCount,
                   onChanged: (val) {
                     if (val != null) {
@@ -1391,9 +1409,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 title: const Text('Horizon de réservation'),
                 subtitle: const Text('Jours vérifiés par la synchronisation', style: TextStyle(fontSize: 12)),
                 leading: const Icon(Icons.sync_rounded),
-                trailing: DropdownButton<int>(
-                  underline: const SizedBox(),
-                  focusColor: Colors.transparent,
+                trailing: _buildStyledDropdown<int>(
                   value: _bookingHorizon,
                   onChanged: (val) {
                     if (val != null) {
