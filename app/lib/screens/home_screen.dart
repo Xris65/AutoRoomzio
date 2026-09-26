@@ -406,11 +406,23 @@ class _HomeScreenState extends State<HomeScreen> {
               isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)',
               style: TextStyle(color: isBooked ? Colors.green : Colors.blue, fontSize: 12),
             ),
-            trailing: Chip(
-              label: Text(source, style: const TextStyle(fontSize: 10)),
-              backgroundColor: source == 'Calendrier' 
-                ? Colors.purple.withValues(alpha: 0.1) 
-                : Colors.orange.withValues(alpha: 0.1),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Chip(
+                  label: Text(source, style: const TextStyle(fontSize: 10)),
+                  backgroundColor: source == 'Calendrier' 
+                    ? Colors.purple.withValues(alpha: 0.1) 
+                    : Colors.orange.withValues(alpha: 0.1),
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  icon: Icon(source == 'Calendrier' ? Icons.delete_outline : Icons.block, size: 20),
+                  color: Colors.redAccent,
+                  tooltip: source == 'Calendrier' ? 'Supprimer' : 'Bloquer',
+                  onPressed: () => _quickAction(date, isBooked),
+                ),
+              ],
             ),
           ),
         );
@@ -559,6 +571,37 @@ class _HomeScreenState extends State<HomeScreen> {
         Text(text, style: const TextStyle(fontSize: 14)),
       ],
     );
+  }
+
+  Future<void> _quickAction(DateTime day, bool isBooked) async {
+    final dateStr = day.toIso8601String().split('T').first;
+    
+    setState(() => _isCalendarBusy = true);
+    try {
+      if (isBooked) {
+        final token = await _api.refreshMyToken();
+        final workspaceId = await _storage.getWorkspaceId();
+        if (token != null && workspaceId != null) {
+          await _api.cancelReservation(dateStr, token, workspaceId);
+        }
+      }
+      setState(() {
+        _requestedDates.remove(dateStr);
+        _bookedDates.remove(dateStr);
+        _ignoredDates.add(dateStr);
+      });
+      _storage.saveRequestedDates(_requestedDates.toList());
+      _storage.saveBookedDates(_bookedDates.toList());
+      _storage.saveIgnoredDates(_ignoredDates.toList());
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Réservation annulée/bloquée pour le $dateStr')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isCalendarBusy = false);
+    }
   }
 
   Future<void> _syncCalendar() async {
