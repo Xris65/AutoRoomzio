@@ -47,7 +47,6 @@ class MyApp extends StatelessWidget {
                 colorScheme: ColorScheme.fromSeed(seedColor: seedColor),
                 useMaterial3: true,
                 splashFactory: NoSplash.splashFactory,
-                highlightColor: seedColor.withOpacity(0.1),
                 appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
                 cardTheme: CardThemeData(
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -63,7 +62,6 @@ class MyApp extends StatelessWidget {
                 colorScheme: ColorScheme.fromSeed(seedColor: seedColor, brightness: Brightness.dark),
                 useMaterial3: true,
                 splashFactory: NoSplash.splashFactory,
-                highlightColor: seedColor.withOpacity(0.2),
                 appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
                 cardTheme: CardThemeData(
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
