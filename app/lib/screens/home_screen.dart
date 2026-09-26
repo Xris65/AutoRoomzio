@@ -97,6 +97,14 @@ class _HomeScreenState extends State<HomeScreen> {
           existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
           constraints: Constraints(networkType: NetworkType.connected),
         );
+        
+        // Exécuter immédiatement une première fois
+        Workmanager().registerOneOffTask(
+          "immediate_run",
+          "autoReservationTask",
+          existingWorkPolicy: ExistingWorkPolicy.replace,
+          constraints: Constraints(networkType: NetworkType.connected),
+        );
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
