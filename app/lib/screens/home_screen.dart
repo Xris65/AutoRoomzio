@@ -1,7 +1,8 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
@@ -175,9 +176,69 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Fetch latest bookings from API every time
     await _syncCalendar();
+    
+    if (Platform.isAndroid) {
+      final hasSeen = await _storage.getHasSeenOptimization();
+      if (!hasSeen && mounted) {
+        await _storage.saveHasSeenOptimization(true);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const OptimizationScreen()),
+            ).then((_) => _checkPermissionsStatus());
+          }
+        });
+      }
+    }
+    await _checkPermissionsStatus();
 
     if (mounted) {
       setState(() => _isLoading = false);
+    }
+  }
+
+  int _permissionStatus = 0;
+
+  Future<void> _checkPermissionsStatus() async {
+    if (!Platform.isAndroid) return;
+    final batteryOpt = await Permission.ignoreBatteryOptimizations.isGranted;
+    final notif = await Permission.notification.isGranted;
+    bool autostart = await _storage.getAutostartVerified();
+
+    if (autostart && _automationEnabled) {
+      final lastRun = await _storage.getLastAutomationRun();
+      if (lastRun != null) {
+        final hoursSinceLastRun = DateTime.now().difference(lastRun).inHours;
+        if (hoursSinceLastRun > 48) {
+          autostart = false;
+          await _storage.saveAutostartVerified(false);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('L\'automatisation semble avoir été bloquée par le système en arrière-plan. Veuillez vérifier l\'autostart.'),
+                backgroundColor: Colors.redAccent,
+              )
+            );
+          }
+        }
+      }
+    }
+
+    int okCount = 0;
+    if (batteryOpt) okCount++;
+    if (notif) okCount++;
+    if (autostart) okCount++;
+
+    if (mounted) {
+      setState(() {
+        if (okCount == 3) {
+          _permissionStatus = 1;
+        } else if (okCount > 0) {
+          _permissionStatus = 2;
+        } else {
+          _permissionStatus = 3;
+        }
+      });
     }
   }
 
@@ -203,12 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
           constraints: Constraints(networkType: NetworkType.connected),
         );
 
-        // Au lieu de demander brusquement, on ouvre l'écran d'optimisation
-        if (mounted) {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const OptimizationScreen()),
-          );
-        }
+        
       }
       if (mounted) {
         _showTopToast('Automatisation activée', isSuccess: true);
@@ -289,9 +345,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('AutoRoomzio'),
-        actions: [
-          IconButton(
+          title: const Text('AutoRoomzio'),
+          actions: [
+            if (Platform.isAndroid && _permissionStatus != 0)
+              IconButton(
+                icon: Icon(
+                  Icons.shield_rounded, 
+                  color: _permissionStatus == 1 ? Colors.green : (_permissionStatus == 2 ? Colors.orange : Colors.red.shade300)
+                ),
+                tooltip: 'Statut des permissions',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const OptimizationScreen()),
+                  ).then((_) => _checkPermissionsStatus());
+                },
+              ),
+            IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Se déconnecter',
             onPressed: _logout,
@@ -1602,5 +1671,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+
+
+
+
+
+
 
 
