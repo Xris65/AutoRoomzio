@@ -217,17 +217,7 @@ class StorageService {
     return prefs.getInt('theme_mode') ?? 0; // 0: system, 1: light, 2: dark
   }
 
-  // ── Booking horizon ────────────────────────────────────────────────────────
 
-  Future<void> saveBookingHorizon(int val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('booking_horizon', val);
-  }
-
-  Future<int> getBookingHorizon() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('booking_horizon') ?? 13;
-  }
 
   // ── Hide weekends in calendar ─────────────────────────────────────────────
 

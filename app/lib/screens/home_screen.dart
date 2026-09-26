@@ -47,7 +47,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _notifySuccess = true;
   bool _notifyFailure = true;
   int _projectionsCount = 4;
-  int _bookingHorizon = 13;
   bool _hideWeekends = true; // Actif par défaut
   DateTime? _vacationStart;
   DateTime? _vacationEnd;
@@ -102,7 +101,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final notifFailure = await _storage.getNotifyFailure();
     final projCount = await _storage.getProjectionsCount();
     final initialTab = await _storage.getInitialTab();
-    final horizon = await _storage.getBookingHorizon();
     final hideWe = await _storage.getHideWeekends();
     final vac = await _storage.getVacationDates();
     final comp = await _storage.getCompactMode();
@@ -119,7 +117,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _notifySuccess = notifSuccess;
         _notifyFailure = notifFailure;
         _projectionsCount = projCount;
-        _bookingHorizon = horizon;
         _hideWeekends = hideWe;
         _vacationStart = vac['start'] != null ? DateTime.tryParse(vac['start']!) : null;
         _vacationEnd = vac['end'] != null ? DateTime.tryParse(vac['end']!) : null;
@@ -966,7 +963,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final now = DateTime.now();
       
       int addedCount = 0;
-      for (int i = 1; i <= _bookingHorizon; i++) {
+      for (int i = 1; i <= 13; i++) {
         final targetDate = now.add(Duration(days: i));
         final isWeekend = targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday;
         
@@ -1029,7 +1026,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // We check requested dates + the next horizon days (including weekends, so they can be displayed if booked externally)
       Set<String> datesToCheck = Set.from(_requestedDates);
       final now = DateTime.now();
-      for (int i = 0; i <= _bookingHorizon; i++) {
+      for (int i = 0; i <= 13; i++) {
         final d = now.add(Duration(days: i));
         datesToCheck.add(d.toIso8601String().split('T').first);
       }
@@ -1401,27 +1398,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     DropdownMenuItem(value: 4, child: Text('4 jours (par défaut)')),
                     DropdownMenuItem(value: 7, child: Text('7 jours')),
                     DropdownMenuItem(value: 13, child: Text('13 jours (Max)')),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                title: const Text('Horizon de réservation'),
-                subtitle: const Text('Jours vérifiés par la synchronisation', style: TextStyle(fontSize: 12)),
-                leading: const Icon(Icons.sync_rounded),
-                trailing: _buildStyledDropdown<int>(
-                  value: _bookingHorizon,
-                  onChanged: (val) {
-                    if (val != null) {
-                      setState(() => _bookingHorizon = val);
-                      _storage.saveBookingHorizon(val);
-                    }
-                  },
-                  items: const [
-                    DropdownMenuItem(value: 7, child: Text('7 jours')),
-                    DropdownMenuItem(value: 13, child: Text('13 jours (défaut)')),
-                    DropdownMenuItem(value: 20, child: Text('20 jours')),
-                    DropdownMenuItem(value: 30, child: Text('30 jours (Max)')),
                   ],
                 ),
               ),

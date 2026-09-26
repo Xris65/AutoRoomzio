@@ -43,11 +43,10 @@ void callbackDispatcher() {
     final now = DateTime.now();
     final formatter = DateFormat('yyyy-MM-dd');
 
-    final bookingHorizon = await storage.getBookingHorizon();
     final hideWeekends = await storage.getHideWeekends();
     
-    // Check next days up to bookingHorizon
-    for (int i = 1; i <= bookingHorizon; i++) {
+    // Check next 13 days (max horizon for Roomz)
+    for (int i = 1; i <= 13; i++) {
       final targetDate = now.add(Duration(days: i));
       final isWeekend = targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday;
       
