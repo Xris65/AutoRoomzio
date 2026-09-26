@@ -213,7 +213,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                      child: Text(
                        label,
                        textAlign: TextAlign.center,
-                       style: const TextStyle(fontSize: 10, color: Colors.black87, fontWeight: FontWeight.bold),
+                       style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurface, fontWeight: FontWeight.bold),
                      ),
                    )
                  );
@@ -222,16 +222,16 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
 
               Color bgColor;
               if (isSelected) {
-                bgColor = Theme.of(context).colorScheme.primary;
+                 bgColor = Theme.of(context).colorScheme.primary;
               } else if (isBookable) {
-                bgColor = Theme.of(context).colorScheme.primaryContainer;
+                 bgColor = Theme.of(context).colorScheme.primaryContainer;
               } else {
-                bgColor = Colors.grey.shade300;
+                 bgColor = Theme.of(context).colorScheme.surfaceContainerHigh;
               }
 
               Color textColor = isSelected 
-                ? Theme.of(context).colorScheme.onPrimary 
-                : (isBookable ? Theme.of(context).colorScheme.onPrimaryContainer : Colors.grey.shade600);
+                 ? Theme.of(context).colorScheme.onPrimary 
+                 : (isBookable ? Theme.of(context).colorScheme.onPrimaryContainer : Theme.of(context).colorScheme.onSurfaceVariant);
 
               featureWidgets.add(
                 Positioned(
@@ -250,7 +250,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                         color: bgColor,
                         borderRadius: BorderRadius.circular(4),
                         border: Border.all(
-                          color: isSelected ? Theme.of(context).colorScheme.primary : Colors.grey.shade400,
+                          color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
                           width: isSelected ? 2 : 1,
                         ),
                       ),
@@ -293,7 +293,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                     height: rHeight,
                     child: Container(
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade400, width: 2),
+                        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant, width: 2),
                         borderRadius: BorderRadius.circular(8),
                         color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.6),
                       ),
@@ -310,7 +310,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 12,
-                                color: Colors.grey.shade800,
+                                color: Theme.of(context).colorScheme.onSurface,
                               ),
                             ),
                           ),
