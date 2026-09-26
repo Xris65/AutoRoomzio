@@ -38,7 +38,7 @@ class MyApp extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: themeColorNotifier,
       builder: (context, colorIndex, _) {
-        final colors = [Colors.lightBlue, Colors.green, Colors.deepPurple, Colors.orange];
+        final colors = [Colors.lightBlue, Colors.green, Colors.deepPurple, Colors.orange, Colors.red];
         final seedColor = colors[colorIndex % colors.length];
 
         return ValueListenableBuilder<ThemeMode>(
