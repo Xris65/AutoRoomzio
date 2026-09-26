@@ -945,7 +945,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             title: Text('$weekDayName ${date.day}/${date.month}'),
             subtitle: Text(
-              source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Occupé' ? 'Indisponible (réservé par qqn d\'autre)' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)')),
+              source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Occupé' ? 'Indisponible (réservé par ${item["name"] ?? "qqn d\'autre"})' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)')),
               style: TextStyle(color: source == 'Ailleurs' ? Colors.orange.shade900 : (source == 'Occupé' ? Colors.grey.shade700 : (isBooked ? Colors.green : Colors.blue)), fontSize: _compactMode ? 10 : 12),
             ),
             trailing: Row(
