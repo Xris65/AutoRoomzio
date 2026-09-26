@@ -387,14 +387,58 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _syncCalendar() async {
-    // ScaffoldMessenger.of(context).showSnackBar(
-    //   const SnackBar(content: Text('Synchronisation en cours...')),
-    // );
-    // final token = await _api.refreshMyToken();
-    // if (token != null) {
-    //   final serverReservations = await _api.getMyReservations(token);
-    //   // TODO: Merge serverReservations into _bookedDates
-    // }
+    final workspaceId = await _storage.getWorkspaceId();
+    final floorId = await _storage.getFloorId();
+
+    if (workspaceId == null || floorId == null) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Synchronisation en cours (cela peut prendre quelques secondes)...')),
+    );
+
+    final accessToken = await _api.refreshMyToken();
+    if (accessToken == null) return;
+
+    // Check requested dates + the next 14 days
+    Set<String> datesToCheck = Set.from(_requestedDates);
+    final now = DateTime.now();
+    for (int i = 0; i < 14; i++) {
+      final d = now.add(Duration(days: i));
+      datesToCheck.add(d.toIso8601String().split('T').first);
+    }
+
+    Set<String> newBookedDates = {};
+    Set<String> newRequestedDates = Set.from(_requestedDates);
+
+    for (final dateStr in datesToCheck) {
+      final isReserved = await _api.isAlreadyReserved(dateStr, accessToken, floorId, workspaceId);
+      
+      if (isReserved) {
+        newBookedDates.add(dateStr);
+        newRequestedDates.add(dateStr);
+      } else {
+        if (_bookedDates.contains(dateStr)) {
+          // It was booked locally but not on server -> user cancelled it externally
+          newRequestedDates.remove(dateStr);
+        }
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _bookedDates = newBookedDates;
+        _requestedDates = newRequestedDates;
+      });
+      _storage.saveBookedDates(_bookedDates.toList());
+      _storage.saveRequestedDates(_requestedDates.toList());
+
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('✅ Synchronisation terminée !'), backgroundColor: Colors.green),
+      );
+    }
   }
 
   Future<void> _handleDateTap(DateTime selectedDay) async {
