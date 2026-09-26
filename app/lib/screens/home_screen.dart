@@ -1,10 +1,9 @@
 import 'dart:io';
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:auto_start_flutter/auto_start_flutter.dart';
+import 'package:android_intent_plus/android_intent.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
 import '../storage_service.dart';
@@ -215,15 +214,8 @@ class _HomeScreenState extends State<HomeScreen> {
           await Permission.ignoreBatteryOptimizations.request();
         }
 
-        // Demander l'autostart spécifique aux fabricants (Xiaomi, etc.) si disponible
-        try {
-          final hasAutoStart = await isAutoStartAvailable;
-          if (hasAutoStart == true && mounted) {
-            await getAutoStartPermission();
-          }
-        } catch (e) {
-          debugPrint("Autostart check failed: $e");
-        }
+        // Demander l'autostart manuellement via android_intent_plus (pour Xiaomi, Huawei, etc.)
+        await _requestAutoStart();
       }
       if (mounted) {
         _showTopToast('Automatisation activée', isSuccess: true);
@@ -234,6 +226,47 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       if (mounted) {
         _showTopToast('Automatisation désactivée');
+      }
+    }
+  }
+
+  Future<void> _requestAutoStart() async {
+    if (!Platform.isAndroid) return;
+    
+    // Intents connus pour le démarrage automatique (autostart)
+    final intents = [
+      // Xiaomi
+      {'package': 'com.miui.securitycenter', 'component': 'com.miui.permcenter.autostart.AutoStartManagementActivity'},
+      // Huawei
+      {'package': 'com.huawei.systemmanager', 'component': 'com.huawei.systemmanager.optimize.process.ProtectActivity'},
+      {'package': 'com.huawei.systemmanager', 'component': 'com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity'},
+      // Oppo
+      {'package': 'com.coloros.safecenter', 'component': 'com.coloros.safecenter.permission.startup.StartupAppListActivity'},
+      {'package': 'com.coloros.safecenter', 'component': 'com.coloros.safecenter.startupapp.StartupAppListActivity'},
+      {'package': 'com.oppo.safe', 'component': 'com.oppo.safe.permission.startup.StartupAppListActivity'},
+      // Vivo
+      {'package': 'com.iqoo.secure', 'component': 'com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity'},
+      {'package': 'com.vivo.permissionmanager', 'component': 'com.vivo.permissionmanager.activity.BgStartUpManagerActivity'},
+      // Asus
+      {'package': 'com.asus.mobilemanager', 'component': 'com.asus.mobilemanager.entry.FunctionActivity'},
+      // Samsung (sometimes needed for older devices, though usually normal battery opt is enough)
+      {'package': 'com.samsung.android.lool', 'component': 'com.samsung.android.sm.ui.battery.BatteryActivity'},
+    ];
+
+    for (final intentDict in intents) {
+      try {
+        final intent = AndroidIntent(
+          action: 'android.intent.action.MAIN',
+          package: intentDict['package'],
+          componentName: intentDict['component'],
+        );
+        final canResolve = await intent.canResolveActivity();
+        if (canResolve ?? false) {
+          await intent.launch();
+          break; // Stop at the first working intent
+        }
+      } catch (e) {
+        debugPrint("Failed to launch intent ${intentDict['package']}: $e");
       }
     }
   }

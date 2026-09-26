@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart';
 import 'api_service.dart';
 import 'storage_service.dart';
+import 'notification_service.dart';
 
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -45,6 +46,8 @@ void callbackDispatcher() {
 
     final hideWeekends = await storage.getHideWeekends();
     
+    int newlyBookedCount = 0;
+    
     // Check next 13 days (max horizon for Roomz)
     for (int i = 1; i <= 13; i++) {
       final targetDate = now.add(Duration(days: i));
@@ -65,29 +68,32 @@ void callbackDispatcher() {
       final dateStr = formatter.format(targetDate);
 
       if (ignoredDates.contains(dateStr)) {
-        debugPrint("⛔ User ignored $dateStr. Skip.");
         continue;
       }
 
       if (daysToBook.contains(targetDate.weekday) || requestedDates.contains(dateStr)) {
-        debugPrint("📅 Analyzing $dateStr");
-        
         final isReserved = await api.isAlreadyReserved(dateStr, token, floorId, workspaceId);
         if (isReserved) {
-          debugPrint("✅ Already reserved (or occupied) for $dateStr. Skip.");
           newBooked.add(dateStr);
         } else {
-          debugPrint("🆓 Free! Attempting booking...");
           final success = await api.reserveWorkspace(dateStr, token, workspaceId);
           if (success) {
             newBooked.add(dateStr);
+            newlyBookedCount++;
           }
         }
       }
     }
     
-    // Save updated booked dates so UI reflects background bookings immediately
     await storage.saveBookedDates(newBooked.toList());
+    
+    if (newlyBookedCount > 0) {
+      final notifService = NotificationService();
+      await notifService.showNotification(
+        title: 'Réservation réussie',
+        body: 'AutoRoomzio vient de réserver $newlyBookedCount bureau(x) pour vous.',
+      );
+    }
     
     return Future.value(true);
   });

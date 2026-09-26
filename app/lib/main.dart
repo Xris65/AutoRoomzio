@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:workmanager/workmanager.dart';
 import 'background_task.dart';
 import 'storage_service.dart';
+import 'notification_service.dart';
 import 'screens/home_screen.dart';
 
 import 'package:google_fonts/google_fonts.dart';
@@ -15,6 +16,8 @@ final ValueNotifier<int> fontNotifier = ValueNotifier(0);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  await NotificationService().init();
 
   // Workmanager is Android-only
   if (Platform.isAndroid) {
