@@ -402,23 +402,35 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                icon: const Icon(Icons.flash_on, size: 16),
-                                label: const Text('Aujourd\'hui', style: TextStyle(fontSize: 11)),
-                                onPressed: () => _quickBook(0),
-                              ),
-                              const SizedBox(height: 8),
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                icon: const Icon(Icons.flash_on, size: 16),
-                                label: const Text('Demain', style: TextStyle(fontSize: 11)),
-                                onPressed: () => _quickBook(1),
-                              ),
-                            ],
+                          child: Builder(
+                            builder: (context) {
+                              final today = DateTime.now();
+                              final tomorrow = today.add(const Duration(days: 1));
+                              final todayIsWeekend = today.weekday == DateTime.saturday || today.weekday == DateTime.sunday;
+                              final tomorrowIsWeekend = tomorrow.weekday == DateTime.saturday || tomorrow.weekday == DateTime.sunday;
+
+                              final disableToday = _hideWeekends && todayIsWeekend;
+                              final disableTomorrow = _hideWeekends && tomorrowIsWeekend;
+
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                                    icon: Icon(disableToday ? Icons.weekend : Icons.flash_on, size: 16),
+                                    label: Text(disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui', style: const TextStyle(fontSize: 11)),
+                                    onPressed: disableToday ? null : () => _quickBook(0),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                                    icon: Icon(disableTomorrow ? Icons.weekend : Icons.flash_on, size: 16),
+                                    label: Text(disableTomorrow ? 'Demain (Week-end)' : 'Demain', style: const TextStyle(fontSize: 11)),
+                                    onPressed: disableTomorrow ? null : () => _quickBook(1),
+                                  ),
+                                ],
+                              );
+                            }
                           ),
                         ),
                       ],
@@ -846,12 +858,17 @@ class _HomeScreenState extends State<HomeScreen> {
       final now = DateTime.now();
       
       int addedCount = 0;
-      for (int i = 1; i <= 13; i++) {
+      for (int i = 1; i <= _bookingHorizon; i++) {
         final targetDate = now.add(Duration(days: i));
+        final isWeekend = targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday;
+        
+        if (_hideWeekends && isWeekend) continue;
+
         final dateStr = targetDate.toIso8601String().split('T').first;
 
         if (_ignoredDates.contains(dateStr) || _bookedDates.contains(dateStr)) continue;
 
+        // If not ignored/booked and it's either already requested or a valid automation day
         if (_requestedDates.contains(dateStr) || _selectedDays.contains(targetDate.weekday)) {
           final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
           if (success) {
@@ -900,17 +917,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (_isLoading) _loadingTextNotifier.value = "Vérification de la configuration du bureau...";
       
-      // We check requested dates (excluding weekends) + the next 13 weekdays
+      // We check requested dates (conditionally excluding weekends) + the next horizon days
       Set<String> datesToCheck = Set.from(
         _requestedDates.where((d) {
           final day = DateTime.parse(d).weekday;
-          return day != DateTime.saturday && day != DateTime.sunday;
+          final isWeekend = day == DateTime.saturday || day == DateTime.sunday;
+          return !(_hideWeekends && isWeekend);
         }),
       );
       final now = DateTime.now();
       for (int i = 0; i <= _bookingHorizon; i++) {
         final d = now.add(Duration(days: i));
-        if (d.weekday != DateTime.saturday && d.weekday != DateTime.sunday) {
+        final isWeekend = d.weekday == DateTime.saturday || d.weekday == DateTime.sunday;
+        if (!(_hideWeekends && isWeekend)) {
           datesToCheck.add(d.toIso8601String().split('T').first);
         }
       }
@@ -972,8 +991,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_isCalendarBusy) return;
     
     final targetDate = DateTime.now().add(Duration(days: daysOffset));
-    if (targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Impossible de réserver le week-end.')));
+    if (_hideWeekends && (targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Réservation le week-end désactivée.')));
       return;
     }
 
@@ -1265,8 +1284,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             children: [
               SwitchListTile(
-                title: const Text('Masquer les week-ends'),
-                subtitle: const Text('Cache le samedi et dimanche dans la vue calendrier', style: TextStyle(fontSize: 12)),
+                title: const Text('Désactiver le week-end'),
+                subtitle: const Text('Grise le samedi et dimanche, et empêche toute réservation (auto ou manuelle)', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.weekend_rounded),
                 value: _hideWeekends,
                 onChanged: (val) {

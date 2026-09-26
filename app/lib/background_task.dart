@@ -36,11 +36,14 @@ void callbackDispatcher() {
     final formatter = DateFormat('yyyy-MM-dd');
 
     final bookingHorizon = await storage.getBookingHorizon();
+    final hideWeekends = await storage.getHideWeekends();
     
-    // Check next weekdays up to bookingHorizon (no point booking Saturday/Sunday)
+    // Check next days up to bookingHorizon
     for (int i = 1; i <= bookingHorizon; i++) {
       final targetDate = now.add(Duration(days: i));
-      if (targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday) continue;
+      final isWeekend = targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday;
+      
+      if (hideWeekends && isWeekend) continue;
       final dateStr = formatter.format(targetDate);
 
       if (ignoredDates.contains(dateStr)) {
