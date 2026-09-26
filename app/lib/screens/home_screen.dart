@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -168,7 +169,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: _FunLoadingWidget());
     }
 
     return Scaffold(
@@ -1015,6 +1016,68 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _FunLoadingWidget extends StatefulWidget {
+  const _FunLoadingWidget();
+
+  @override
+  State<_FunLoadingWidget> createState() => _FunLoadingWidgetState();
+}
+
+class _FunLoadingWidgetState extends State<_FunLoadingWidget> {
+  final List<String> _messages = [
+    "Connexion aux serveurs MyRoomz...",
+    "Vérification des places disponibles...",
+    "Préparation de votre bureau...",
+    "Réchauffement de la machine à café...",
+    "Ajustement de votre siège ergonomique...",
+    "C'est presque prêt !",
+  ];
+  int _currentIndex = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 1800), (timer) {
+      if (mounted) {
+        setState(() {
+          _currentIndex = (_currentIndex + 1) % _messages.length;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.auto_awesome_mosaic_rounded, size: 72, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(height: 32),
+          const CircularProgressIndicator(),
+          const SizedBox(height: 24),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 500),
+            child: Text(
+              _messages[_currentIndex],
+              key: ValueKey<int>(_currentIndex),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
