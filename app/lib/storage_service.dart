@@ -133,6 +133,40 @@ class StorageService {
     await prefs.setBool('dark_mode', isDark);
   }
 
+  Future<void> saveAutomationTime(int hour, int minute) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('auto_time_hour', hour);
+    await prefs.setInt('auto_time_minute', minute);
+  }
+
+  Future<Map<String, int>> getAutomationTime() async {
+    final prefs = await SharedPreferences.getInstance();
+    return {
+      'hour': prefs.getInt('auto_time_hour') ?? 8,
+      'minute': prefs.getInt('auto_time_minute') ?? 0,
+    };
+  }
+
+  Future<void> saveNotifySuccess(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('notify_success', val);
+  }
+  
+  Future<bool> getNotifySuccess() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('notify_success') ?? true;
+  }
+  
+  Future<void> saveNotifyFailure(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('notify_failure', val);
+  }
+  
+  Future<bool> getNotifyFailure() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('notify_failure') ?? true;
+  }
+
   // ── Clear all (logout) ────────────────────────────────────────────────────
 
   Future<void> clearAll() async {

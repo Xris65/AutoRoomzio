@@ -39,6 +39,11 @@ class _HomeScreenState extends State<HomeScreen> {
     5: 'Vendredi',
   };
 
+  // Settings State
+  TimeOfDay _automationTime = const TimeOfDay(hour: 8, minute: 0);
+  bool _notifySuccess = true;
+  bool _notifyFailure = true;
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +57,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final booked = await _storage.getBookedDates();
     final ignored = await _storage.getIgnoredDates();
     final autoEnabled = await _storage.getAutomationEnabled();
+    final autoTimeMap = await _storage.getAutomationTime();
+    final notifSuccess = await _storage.getNotifySuccess();
+    final notifFailure = await _storage.getNotifyFailure();
     if (mounted) {
       setState(() {
         _selectedDays = days;
@@ -60,6 +68,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _bookedDates = booked.toSet();
         _ignoredDates = ignored.toSet();
         _automationEnabled = autoEnabled;
+        _automationTime = TimeOfDay(hour: autoTimeMap['hour']!, minute: autoTimeMap['minute']!);
+        _notifySuccess = notifSuccess;
+        _notifyFailure = notifFailure;
         _isLoading = false;
       });
     }
@@ -71,10 +82,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (val) {
       if (Platform.isAndroid) {
+        final now = DateTime.now();
+        var targetDate = DateTime(now.year, now.month, now.day, _automationTime.hour, _automationTime.minute);
+        if (targetDate.isBefore(now)) {
+          targetDate = targetDate.add(const Duration(days: 1));
+        }
+        final delay = targetDate.difference(now);
+
         Workmanager().registerPeriodicTask(
           "1",
           "autoReservationTask",
           frequency: const Duration(hours: 24),
+          initialDelay: delay,
           existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
           constraints: Constraints(networkType: NetworkType.connected),
         );
@@ -271,15 +290,39 @@ class _HomeScreenState extends State<HomeScreen> {
           // ── Toggle Automatisation ────────────────────────────────────
           Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: SwitchListTile(
-              title: const Text('Automatisation', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Réserver automatiquement mes places', style: TextStyle(fontSize: 12)),
-              value: _automationEnabled,
-              onChanged: _toggleAutomation,
-              secondary: Icon(
-                _automationEnabled ? Icons.auto_awesome : Icons.auto_awesome_outlined,
-                color: _automationEnabled ? Colors.green : Colors.grey,
-              ),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('Automatisation', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Réserver automatiquement mes places', style: TextStyle(fontSize: 12)),
+                  value: _automationEnabled,
+                  onChanged: _toggleAutomation,
+                  secondary: Icon(
+                    _automationEnabled ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+                    color: _automationEnabled ? Colors.green : Colors.grey,
+                  ),
+                ),
+                if (_automationEnabled) const Divider(height: 1),
+                if (_automationEnabled)
+                  ListTile(
+                    leading: const Icon(Icons.schedule, color: Colors.blue),
+                    title: const Text("Heure d'exécution"),
+                    subtitle: const Text("Heure approximative à laquelle l'automatisation s'exécutera chaque jour", style: TextStyle(fontSize: 11)),
+                    trailing: Text(_automationTime.format(context), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    onTap: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _automationTime,
+                      );
+                      if (time != null) {
+                        setState(() => _automationTime = time);
+                        await _storage.saveAutomationTime(time.hour, time.minute);
+                        // Refresh the task with the new delay
+                        _toggleAutomation(true);
+                      }
+                    },
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 24),
@@ -724,6 +767,41 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               );
             },
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text('Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            children: [
+              SwitchListTile(
+                title: const Text('Réservations réussies'),
+                subtitle: const Text('Être notifié quand l\'automatisation réserve une place', style: TextStyle(fontSize: 12)),
+                secondary: const Icon(Icons.notifications_active, color: Colors.green),
+                value: _notifySuccess,
+                onChanged: (val) {
+                  setState(() => _notifySuccess = val);
+                  _storage.saveNotifySuccess(val);
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('Échecs de réservation'),
+                subtitle: const Text('Être notifié en cas d\'erreur (ex: plus de place)', style: TextStyle(fontSize: 12)),
+                secondary: const Icon(Icons.error_outline, color: Colors.red),
+                value: _notifyFailure,
+                onChanged: (val) {
+                  setState(() => _notifyFailure = val);
+                  _storage.saveNotifyFailure(val);
+                },
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 24),
