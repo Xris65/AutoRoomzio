@@ -5,6 +5,7 @@ import 'background_task.dart';
 import 'storage_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
+import 'widgets/fun_loading_widget.dart';
 
 // Global theme notifiers
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
@@ -122,27 +123,8 @@ class _SplashState extends State<_Splash> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.auto_awesome_mosaic_rounded, size: 72, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: 24),
-            const Text(
-              'AutoRoomzio',
-              style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Vos réservations, en pilote automatique',
-              style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 48),
-            const CircularProgressIndicator(),
-          ],
-        ),
-      ),
+    return const Scaffold(
+      body: FunLoadingWidget(isSplash: true),
     );
   }
 }
