@@ -235,6 +235,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _toggleAutomation(bool val) async {
+    if (val && _selectedDays.isEmpty) {
+      _showTopToast('Veuillez sélectionner au moins un jour récurrent.', isError: true);
+      return;
+    }
+    
     setState(() => _automationEnabled = val);
     await _storage.saveAutomationEnabled(val);
 
@@ -287,6 +292,11 @@ class _HomeScreenState extends State<HomeScreen> {
         _selectedDays.sort();
       } else {
         _selectedDays.remove(day);
+        if (_selectedDays.isEmpty && _automationEnabled) {
+          _automationEnabled = false;
+          _storage.saveAutomationEnabled(false);
+          _showTopToast('Automatisation désactivée (aucun jour sélectionné)');
+        }
       }
     });
     _storage.saveDays(_selectedDays);
@@ -672,7 +682,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
                                 DateTimeRange? picked;
                                 bool userConfirmed = false;
-                                final toCancel = <String>[];
+                                var conflicts = <String>[];
+                                var toCleanLocally = <String>[];
                                 
                                 while (!userConfirmed) {
                                   picked = await showDateRangePicker(
@@ -686,25 +697,30 @@ class _HomeScreenState extends State<HomeScreen> {
                                   if (picked == null) break; // User closed the date picker itself
                                   
                                   // AUTO-CANCEL bookings and requests in this new vacation period
-                                  toCancel.clear();
+                                  conflicts.clear();
+                                  toCleanLocally.clear();
                                   for (var i = 0; i <= picked.end.difference(picked.start).inDays; i++) {
                                     final d = picked.start.add(Duration(days: i));
                                     final dateStr = d.toIso8601String().split('T').first;
                                     
+                                    if (_requestedDates.contains(dateStr)) {
+                                      toCleanLocally.add(dateStr);
+                                    }
+                                    
                                     if (_bookedDates.contains(dateStr) || 
-                                        _requestedDates.contains(dateStr) || 
                                         _bookedElsewhereMap.containsKey(dateStr)) {
-                                      toCancel.add(dateStr);
+                                      conflicts.add(dateStr);
+                                      toCleanLocally.add(dateStr);
                                     }
                                   }
                                   
-                                  if (toCancel.isNotEmpty) {
+                                  if (conflicts.isNotEmpty) {
                                     final p = picked;
                                     final confirm = await showDialog<bool>(
                                       context: context,
                                       builder: (context) => AlertDialog(
                                         title: const Text('Réservations existantes'),
-                                        content: Text("Pour vos congés du ${p.start.day}/${p.start.month} au ${p.end.day}/${p.end.month}, vous avez des réservations ou demandes :\n\n${toCancel.map((d) => '• $d').join('\n')}\n\nVoulez-vous ajouter ce congé et annuler automatiquement ces journées ?"),
+                                        content: Text("Pour vos congés du ${p.start.day}/${p.start.month} au ${p.end.day}/${p.end.month}, vous avez des réservations confirmées :\n\n${conflicts.map((d) => '• $d').join('\n')}\n\nVoulez-vous ajouter ce congé et annuler automatiquement ces journées ?"),
                                         actions: [
                                           TextButton(
                                             onPressed: () => Navigator.pop(context, false),
@@ -729,29 +745,30 @@ class _HomeScreenState extends State<HomeScreen> {
                                 }
                                 
                                 if (picked != null && userConfirmed) {
-                                  if (toCancel.isNotEmpty) {
+                                  if (conflicts.isNotEmpty) {
                                     if (!mounted) return;
                                     final messenger = ScaffoldMessenger.of(context);
                                     messenger.showSnackBar(SnackBar(content: Text('Annulation de \${toCancel.length} journée(s)...')));
                                     
-                                    for (final dateStr in toCancel) {
-                                      // Call API only if it's actually booked on the server
-                                      if (_bookedDates.contains(dateStr) || _bookedElsewhereMap.containsKey(dateStr)) {
-                                        final token = await _api.refreshMyToken();
-                                        if (token != null) {
-                                          await _api.cancelBookingByDate(token, dateStr);
-                                        }
+                                    for (final dateStr in conflicts) {
+                                      final token = await _api.refreshMyToken();
+                                      if (token != null) {
+                                        await _api.cancelBookingByDate(token, dateStr);
                                       }
-                                      setState(() {
-                                        _bookedDates.remove(dateStr);
-                                        _requestedDates.remove(dateStr);
-                                        _bookedElsewhereMap.remove(dateStr);
-                                      });
                                     }
                                     
-                                    _storage.saveBookedDates(_bookedDates.toList());
-                                    _storage.saveRequestedDates(_requestedDates.toList());
-                                    _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
+                                    if (toCleanLocally.isNotEmpty) {
+                                      setState(() {
+                                        for (final dateStr in toCleanLocally) {
+                                          _bookedDates.remove(dateStr);
+                                          _requestedDates.remove(dateStr);
+                                          _bookedElsewhereMap.remove(dateStr);
+                                        }
+                                      });
+                                      _storage.saveBookedDates(_bookedDates.toList());
+                                      _storage.saveRequestedDates(_requestedDates.toList());
+                                      _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
+                                    }
                                     
                                     messenger.showSnackBar(const SnackBar(content: Text('Journées libérées avec succès.')));
                                   }
