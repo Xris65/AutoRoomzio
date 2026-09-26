@@ -48,12 +48,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _notifySuccess = true;
   bool _notifyFailure = true;
   int _projectionsCount = 4;
-  bool _hideWeekends = true; // Actif par défaut
+  bool _hideWeekends = true; // Actif par dÃ©faut
   DateTime? _vacationStart;
   DateTime? _vacationEnd;
   bool _compactMode = false;
   bool _showAllReservations = true;
-  final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
+  final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("DÃ©marrage d'AutoRoomzio...");
   int _currentIndex = 0;
   late PageController _pageController;
 
@@ -202,7 +202,7 @@ class _HomeScreenState extends State<HomeScreen> {
           constraints: Constraints(networkType: NetworkType.connected),
         );
 
-        // Au lieu de demander brusquement, on ouvre l'écran d'optimisation
+        // Au lieu de demander brusquement, on ouvre l'Ã©cran d'optimisation
         if (mounted) {
           Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const OptimizationScreen()),
@@ -210,14 +210,14 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
       if (mounted) {
-        _showTopToast('Automatisation activée', isSuccess: true);
+        _showTopToast('Automatisation activÃ©e', isSuccess: true);
       }
     } else {
       if (Platform.isAndroid) {
         Workmanager().cancelAll();
       }
       if (mounted) {
-        _showTopToast('Automatisation désactivée');
+        _showTopToast('Automatisation dÃ©sactivÃ©e');
       }
     }
   }
@@ -247,7 +247,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (didChange == true) {
-      // Réinitialiser les dates liées à l'ancien bureau
+      // RÃ©initialiser les dates liÃ©es Ã  l'ancien bureau
       setState(() {
         _bookedDates = {};
         _requestedDates = {};
@@ -292,7 +292,7 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
-            tooltip: 'Se déconnecter',
+            tooltip: 'Se dÃ©connecter',
             onPressed: _logout,
           ),
         ],
@@ -322,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildNavItem(0, Icons.home_rounded, 'Accueil'),
                 _buildNavItem(1, Icons.calendar_month_rounded, 'Calendrier'),
                 _buildNavItem(2, Icons.auto_awesome, 'Automate'),
-                _buildNavItem(3, Icons.settings_rounded, 'Paramètres'),
+                _buildNavItem(3, Icons.settings_rounded, 'ParamÃ¨tres'),
               ],
             ),
           ),
@@ -386,14 +386,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'Mode Congés activé du ${_vacationStart!.day}/${_vacationStart!.month} au ${_vacationEnd!.day}/${_vacationEnd!.month}. L\'automatisation est en pause sur ces dates.',
+                              'Mode CongÃ©s activÃ© du ${_vacationStart!.day}/${_vacationStart!.month} au ${_vacationEnd!.day}/${_vacationEnd!.month}. L\'automatisation est en pause sur ces dates.',
                               style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  // ── Current workspace card ───────────────────────────────────
+                  // â”€â”€ Current workspace card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   Card(
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
@@ -408,10 +408,10 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text('Bureau sélectionné', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                  const Text('Bureau sÃ©lectionnÃ©', style: TextStyle(fontSize: 12, color: Colors.grey)),
                                   const SizedBox(height: 4),
                                   Text(
-                                    _workspaceName ?? 'Aucun bureau configuré',
+                                    _workspaceName ?? 'Aucun bureau configurÃ©',
                                     style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold,
@@ -424,7 +424,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (_workspaceName != null)
                               IconButton(
                                 icon: const Icon(Icons.clear, color: Colors.red),
-                                tooltip: 'Réinitialiser',
+                                tooltip: 'RÃ©initialiser',
                                 onPressed: _resetWorkspace,
                               )
                             else
@@ -437,7 +437,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 16),
                   
                   if (_workspaceName != null) ...[
-                    // ── 📊 Stats & Quick Actions ──────────────────────────────────
+                    // â”€â”€ ðŸ“Š Stats & Quick Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     Row(
                       children: [
                         Expanded(
@@ -453,7 +453,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary),
                                   ),
                                   const SizedBox(height: 4),
-                                  const Text('réservés ce mois', style: TextStyle(fontSize: 10), textAlign: TextAlign.center),
+                                  const Text('rÃ©servÃ©s ce mois', style: TextStyle(fontSize: 10), textAlign: TextAlign.center),
                                 ],
                               ),
                             ),
@@ -480,14 +480,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ElevatedButton.icon(
                                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
                                     icon: Icon(todayIsVacation ? Icons.beach_access : (disableToday ? Icons.weekend : Icons.flash_on), size: 16),
-                                    label: Text(todayIsVacation ? 'En Congés' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
+                                    label: Text(todayIsVacation ? 'En CongÃ©s' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
                                     onPressed: disableToday ? null : () => _quickBook(0),
                                   ),
                                   const SizedBox(height: 8),
                                   ElevatedButton.icon(
                                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
                                     icon: Icon(tomorrowIsVacation ? Icons.beach_access : (disableTomorrow ? Icons.weekend : Icons.flash_on), size: 16),
-                                    label: Text(tomorrowIsVacation ? 'En Congés' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
+                                    label: Text(tomorrowIsVacation ? 'En CongÃ©s' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
                                     onPressed: disableTomorrow ? null : () => _quickBook(1),
                                   ),
                                 ],
@@ -500,13 +500,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 24),
                   ],
 
-                  // ── Prochaines réservations ──────────────────────────────────
+                  // â”€â”€ Prochaines rÃ©servations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   if (_workspaceName != null) ...[
                     Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text(
-                            '?? Prochaines r�servations',
+                            '📅 Prochaines réservations',
                             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                           Row(
@@ -577,7 +577,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // ── Mode Congés ──────────────────────────────────────────────
+                  // â”€â”€ Mode CongÃ©s â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   Card(
                     color: (_vacationStart != null && _vacationEnd != null) ? Colors.orange.withValues(alpha: 0.1) : null,
                     shape: RoundedRectangleBorder(
@@ -585,7 +585,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       side: (_vacationStart != null && _vacationEnd != null) ? const BorderSide(color: Colors.orange) : BorderSide.none,
                     ),
                     child: ListTile(
-                      title: const Text('Mode Congés / Pause', style: TextStyle(fontWeight: FontWeight.bold)),
+                      title: const Text('Mode CongÃ©s / Pause', style: TextStyle(fontWeight: FontWeight.bold)),
                       subtitle: Text(
                         (_vacationStart != null && _vacationEnd != null)
                           ? 'Du ${_vacationStart!.day}/${_vacationStart!.month} au ${_vacationEnd!.day}/${_vacationEnd!.month}'
@@ -596,7 +596,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       trailing: (_vacationStart != null && _vacationEnd != null)
                         ? IconButton(
                             icon: const Icon(Icons.clear, color: Colors.orange),
-                            tooltip: 'Annuler les congés',
+                            tooltip: 'Annuler les congÃ©s',
                             onPressed: () {
                               setState(() {
                                 _vacationStart = null;
@@ -655,14 +655,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 16),
                   
-                  // ── Toggle Automatisation ────────────────────────────────────
+                  // â”€â”€ Toggle Automatisation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   Card(
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     child: Column(
                       children: [
                         SwitchListTile(
                           title: const Text('Automatisation', style: TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: const Text('Réserver automatiquement mes places', style: TextStyle(fontSize: 12)),
+                          subtitle: const Text('RÃ©server automatiquement mes places', style: TextStyle(fontSize: 12)),
                           value: _automationEnabled,
                           onChanged: _toggleAutomation,
                           secondary: Icon(
@@ -674,8 +674,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         if (_automationEnabled)
                           ListTile(
                             leading: const Icon(Icons.schedule, color: Colors.blue),
-                            title: const Text("Heure d'exécution"),
-                            subtitle: const Text("Heure approximative à laquelle l'automatisation s'exécutera chaque jour", style: TextStyle(fontSize: 11)),
+                            title: const Text("Heure d'exÃ©cution"),
+                            subtitle: const Text("Heure approximative Ã  laquelle l'automatisation s'exÃ©cutera chaque jour", style: TextStyle(fontSize: 11)),
                             trailing: Text(_automationTime.format(context), style: const TextStyle(fontWeight: FontWeight.bold)),
                             onTap: () async {
                               final time = await showTimePicker(
@@ -695,7 +695,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ListTile(
                             leading: const Icon(Icons.play_circle_fill, color: Colors.green),
                             title: const Text("Lancer maintenant"),
-                            subtitle: const Text("Exécuter manuellement la routine tout de suite", style: TextStyle(fontSize: 11)),
+                            subtitle: const Text("ExÃ©cuter manuellement la routine tout de suite", style: TextStyle(fontSize: 11)),
                             onTap: _runAutomationNow,
                           ),
                       ],
@@ -703,9 +703,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 24),
 
-                  // ── Jours récurrents ─────────────────────────────────────────
+                  // â”€â”€ Jours rÃ©currents â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   const Text(
-                    '📅 Jours de présence récurrents',
+                    'ðŸ“… Jours de prÃ©sence rÃ©currents',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
@@ -762,12 +762,12 @@ class _HomeScreenState extends State<HomeScreen> {
       } else if (isRequested) {
         upcoming.add({"date": date, "source": "Calendrier", "isBooked": isBooked});
       } else if (isBooked) {
-        // Réservation orpheline ou issue d'une récurrence
-        String source = isRecurring ? "Récurrent" : "Calendrier";
+        // RÃ©servation orpheline ou issue d'une rÃ©currence
+        String source = isRecurring ? "RÃ©current" : "Calendrier";
         upcoming.add({"date": date, "source": source, "isBooked": true});
       } else if (isRecurring && recurringProjectionsCount < _projectionsCount) {
         // Projection future de l'automatisation
-        upcoming.add({"date": date, "source": "Récurrent", "isBooked": false});
+        upcoming.add({"date": date, "source": "RÃ©current", "isBooked": false});
         recurringProjectionsCount++;
       }
     }
@@ -775,7 +775,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (upcoming.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(16.0),
-        child: Text('Aucune réservation prévue.', style: TextStyle(color: Colors.grey)),
+        child: Text('Aucune rÃ©servation prÃ©vue.', style: TextStyle(color: Colors.grey)),
       );
     }
 
@@ -804,7 +804,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             title: Text('$weekDayName ${date.day}/${date.month}'),
             subtitle: Text(
-              source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)'),
+              source == 'Ailleurs' ? 'RÃ©servÃ© sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (isBooked ? 'DÃ©jÃ  rÃ©servÃ©' : 'Sera rÃ©servÃ© (Automatique)'),
               style: TextStyle(color: source == 'Ailleurs' ? Colors.orange.shade900 : (isBooked ? Colors.green : Colors.blue), fontSize: _compactMode ? 10 : 12),
             ),
             trailing: Row(
@@ -818,9 +818,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   visualDensity: VisualDensity.compact,
                 ),
                 IconButton(
-                  icon: Icon(source == 'R�current' ? Icons.block : Icons.delete_outline, size: 20),
+                  icon: Icon(source == 'Récurrent' ? Icons.block : Icons.delete_outline, size: 20),
                   color: Colors.redAccent,
-                  tooltip: source == 'R�current' ? 'Bloquer' : 'Supprimer',
+                  tooltip: source == 'Récurrent' ? 'Bloquer' : 'Supprimer',
                   onPressed: () => _quickAction(date, isBooked, source),
                 ),
               ],
@@ -857,7 +857,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Row(
                   children: [
                     FilterChip(
-                      label: const Text("Toutes mes réservations"),
+                      label: const Text("Toutes mes rÃ©servations"),
                       selected: _showAllReservations,
                       onSelected: (val) => setState(() => _showAllReservations = val),
                     ),
@@ -926,10 +926,10 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _buildLegend(Colors.green, 'Réservé'),
+                _buildLegend(Colors.green, 'RÃ©servÃ©'),
                 _buildLegend(Colors.blue, 'En attente'),
-                _buildLegend(Colors.red.withValues(alpha: 0.8), 'Bloqué'),
-                _buildLegend(Colors.orange.shade300, 'Ailleurs 👤'),
+                _buildLegend(Colors.red.withValues(alpha: 0.8), 'BloquÃ©'),
+                _buildLegend(Colors.orange.shade300, 'Ailleurs ðŸ‘¤'),
               ],
             ),
           )
@@ -989,7 +989,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-        // Small "🔒" indicator for occupied by others
+        // Small "ðŸ”’" indicator for occupied by others
         if (isOccupiedByOthers)
           Positioned(
             bottom: 4,
@@ -1025,7 +1025,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (success) {
             setState(() => _bookedElsewhereMap.remove(dateStr));
             _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
-            if (mounted) _showTopToast('R�servation annul�e', isSuccess: true);
+            if (mounted) _showTopToast('Réservation annulée', isSuccess: true);
           }
         } else if (isBooked) {
           final workspaceId = await _storage.getWorkspaceId();
@@ -1088,8 +1088,8 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         _showTopToast(
           addedCount > 0 
-            ? '$addedCount réservation(s) ajoutée(s) !' 
-            : 'Le planning est déjà à jour (aucune nouvelle place réservable)',
+            ? '$addedCount rÃ©servation(s) ajoutÃ©e(s) !' 
+            : 'Le planning est dÃ©jÃ  Ã  jour (aucune nouvelle place rÃ©servable)',
           isSuccess: addedCount > 0
         );
       }
@@ -1115,7 +1115,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final accessToken = await _api.refreshMyToken();
       if (accessToken == null) return;
 
-      if (_isLoading) _loadingTextNotifier.value = "Vérification de la configuration du bureau...";
+      if (_isLoading) _loadingTextNotifier.value = "VÃ©rification de la configuration du bureau...";
       
       // We check requested dates + the next horizon days (including weekends, so they can be displayed if booked externally)
       Set<String> datesToCheck = Set.from(_requestedDates);
@@ -1125,9 +1125,9 @@ class _HomeScreenState extends State<HomeScreen> {
         datesToCheck.add(d.toIso8601String().split('T').first);
       }
 
-      if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
+      if (_isLoading) _loadingTextNotifier.value = "RÃ©cupÃ©ration de vos rÃ©servations...";
 
-      // Fetch the user's specific bookings — here (this desk) + elsewhere (other desks)
+      // Fetch the user's specific bookings â€” here (this desk) + elsewhere (other desks)
       final myBookings = await _api.getMyReservations(accessToken, workspaceId);
       final bookedHere = myBookings.here;
       final bookedElsewhere = myBookings.elsewhere;
@@ -1142,7 +1142,7 @@ class _HomeScreenState extends State<HomeScreen> {
           newRequestedDates.add(dateStr);
           newIgnoredDates.remove(dateStr);
         } else if (bookedElsewhere.containsKey(dateStr)) {
-          // Already booked elsewhere this day — remove from requested (can't double-book)
+          // Already booked elsewhere this day â€” remove from requested (can't double-book)
           newRequestedDates.remove(dateStr);
         } else {
           if (_bookedDates.contains(dateStr)) {
@@ -1152,7 +1152,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (_isLoading) {
-        _loadingTextNotifier.value = "C'est presque prêt !";
+        _loadingTextNotifier.value = "C'est presque prÃªt !";
         await Future.delayed(const Duration(milliseconds: 1000));
       }
 
@@ -1179,13 +1179,13 @@ class _HomeScreenState extends State<HomeScreen> {
     
     final targetDate = DateTime.now().add(Duration(days: daysOffset));
     if (_hideWeekends && (targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday)) {
-      _showTopToast('Réservation le week-end désactivée.');
+      _showTopToast('RÃ©servation le week-end dÃ©sactivÃ©e.');
       return;
     }
 
     final dateStr = targetDate.toIso8601String().split('T').first;
     if (_bookedDates.contains(dateStr)) {
-      _showTopToast('Déjà réservé !');
+      _showTopToast('DÃ©jÃ  rÃ©servÃ© !');
       return;
     }
 
@@ -1207,9 +1207,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
-        _showTopToast('Bureau réservé pour ${daysOffset == 0 ? "aujourd'hui" : "demain"} !', isSuccess: true);
+        _showTopToast('Bureau rÃ©servÃ© pour ${daysOffset == 0 ? "aujourd'hui" : "demain"} !', isSuccess: true);
       } else {
-        _showTopToast('Échec de la réservation.', isError: true);
+        _showTopToast('Ã‰chec de la rÃ©servation.', isError: true);
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -1224,7 +1224,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final day = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
     
     if (day.isBefore(today)) {
-      _showTopToast('Impossible de modifier le passé.');
+      _showTopToast('Impossible de modifier le passÃ©.');
       return;
     }
 
@@ -1254,13 +1254,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (isWeekendAndHidden)
                   const ListTile(
                     leading: Icon(Icons.weekend, color: Colors.grey),
-                    title: Text('Les nouvelles réservations le week-end sont désactivées.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    title: Text('Les nouvelles rÃ©servations le week-end sont dÃ©sactivÃ©es.', style: TextStyle(color: Colors.grey, fontSize: 12)),
                   )
                 else if (_bookedElsewhereMap.containsKey(dateStr))
                   ListTile(
                     leading: Icon(Icons.person_off, color: Colors.orange.shade900),
-                    title: Text('Libérer mon autre bureau (${_bookedElsewhereMap[dateStr] ?? "Ailleurs"})', style: TextStyle(color: Colors.orange.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
-                    subtitle: const Text("Annule la réservation que vous avez faite sur cet autre bureau ce jour-là.", style: TextStyle(fontSize: 11)),
+                    title: Text('LibÃ©rer mon autre bureau (${_bookedElsewhereMap[dateStr] ?? "Ailleurs"})', style: TextStyle(color: Colors.orange.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
+                    subtitle: const Text("Annule la rÃ©servation que vous avez faite sur cet autre bureau ce jour-lÃ .", style: TextStyle(fontSize: 11)),
                     onTap: () => Navigator.pop(context, 'cancel_elsewhere'),
                   )
                 else
@@ -1269,13 +1269,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       isBookableNow ? Icons.check_circle_outline : Icons.pending_actions,
                       color: isBookableNow ? Colors.green : Colors.blue
                     ),
-                    title: Text(isBookableNow ? 'Réserver ce jour' : 'Programmer (En attente)'),
+                    title: Text(isBookableNow ? 'RÃ©server ce jour' : 'Programmer (En attente)'),
                     onTap: () => Navigator.pop(context, 'reserve'),
                   ),
               if (isBooked || isRequested)
                 ListTile(
                   leading: const Icon(Icons.cancel_outlined, color: Colors.red),
-                  title: Text(isBooked ? 'Libérer la place' : 'Annuler la demande'),
+                  title: Text(isBooked ? 'LibÃ©rer la place' : 'Annuler la demande'),
                   onTap: () => Navigator.pop(context, 'cancel'),
                 ),
               if (!isIgnored && !isWeekendAndHidden && !_bookedElsewhereMap.containsKey(dateStr))
@@ -1287,7 +1287,7 @@ class _HomeScreenState extends State<HomeScreen> {
               if (isIgnored && !isWeekendAndHidden)
                 ListTile(
                   leading: const Icon(Icons.lock_open, color: Colors.green),
-                  title: const Text('Débloquer ce jour'),
+                  title: const Text('DÃ©bloquer ce jour'),
                   onTap: () => Navigator.pop(context, 'unblock'),
                 ),
               const SizedBox(height: 8),
@@ -1321,9 +1321,9 @@ class _HomeScreenState extends State<HomeScreen> {
             if (success) {
               setState(() => _bookedDates.add(dateStr));
               _storage.saveBookedDates(_bookedDates.toList());
-              if (mounted) _showTopToast('Place réservée pour le $dateStr', isSuccess: true);
+              if (mounted) _showTopToast('Place rÃ©servÃ©e pour le $dateStr', isSuccess: true);
             } else {
-              if (mounted) _showTopToast('Ce bureau n\'est plus disponible à cette date', isError: true);
+              if (mounted) _showTopToast('Ce bureau n\'est plus disponible Ã  cette date', isError: true);
             }
           }
         }
@@ -1354,9 +1354,9 @@ class _HomeScreenState extends State<HomeScreen> {
                _bookedElsewhereMap.remove(dateStr);
             });
             _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
-            if (mounted) _showTopToast('Votre réservation a été annulée.', isSuccess: true);
+            if (mounted) _showTopToast('Votre rÃ©servation a Ã©tÃ© annulÃ©e.', isSuccess: true);
           } else {
-            if (mounted) _showTopToast('Impossible d\'annuler la réservation.', isError: true);
+            if (mounted) _showTopToast('Impossible d\'annuler la rÃ©servation.', isError: true);
           }
         }
       } else if (action == 'unblock') {
@@ -1398,7 +1398,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text('Général', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const Text('GÃ©nÃ©ral', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
         Card(
           elevation: 0,
@@ -1429,8 +1429,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 future: _storage.getInitialTab(),
                 builder: (context, snapshot) {
                   return ListTile(
-                    title: const Text('Page de démarrage'),
-                    subtitle: const Text('Onglet affiché à l\'ouverture', style: TextStyle(fontSize: 12)),
+                    title: const Text('Page de dÃ©marrage'),
+                    subtitle: const Text('Onglet affichÃ© Ã  l\'ouverture', style: TextStyle(fontSize: 12)),
                     leading: const Icon(Icons.home_rounded),
                     trailing: _buildStyledDropdown<int>(
                       value: snapshot.data ?? 0,
@@ -1441,7 +1441,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                       },
                       items: const [
-                        DropdownMenuItem(value: 0, child: Text('Accueil (par défaut)')),
+                        DropdownMenuItem(value: 0, child: Text('Accueil (par dÃ©faut)')),
                         DropdownMenuItem(value: 1, child: Text('Calendrier')),
                         DropdownMenuItem(value: 2, child: Text('Automate')),
                       ],
@@ -1451,7 +1451,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const Divider(height: 1),
               ListTile(
-                title: const Text('Couleur du thème'),
+                title: const Text('Couleur du thÃ¨me'),
                 leading: const Icon(Icons.color_lens_rounded),
                 trailing: _buildStyledDropdown<int>(
                   value: themeColorNotifier.value,
@@ -1462,7 +1462,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   },
                   items: const [
-                    DropdownMenuItem(value: 0, child: Text('Bleu (par défaut)')),
+                    DropdownMenuItem(value: 0, child: Text('Bleu (par dÃ©faut)')),
                     DropdownMenuItem(value: 1, child: Text('Vert')),
                     DropdownMenuItem(value: 2, child: Text('Violet')),
                     DropdownMenuItem(value: 3, child: Text('Orange')),
@@ -1475,7 +1475,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 valueListenable: fontNotifier,
                 builder: (context, currentFont, _) {
                   return ListTile(
-                    title: const Text('Police d\'écriture'),
+                    title: const Text('Police d\'Ã©criture'),
                     leading: const Icon(Icons.font_download_rounded),
                     trailing: _buildStyledDropdown<int>(
                       value: currentFont,
@@ -1496,8 +1496,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
 
               ListTile(
-                title: const Text('Prévisions à afficher'),
-                subtitle: const Text('Nombre de réservations futures dans l\'accueil', style: TextStyle(fontSize: 12)),
+                title: const Text('PrÃ©visions Ã  afficher'),
+                subtitle: const Text('Nombre de rÃ©servations futures dans l\'accueil', style: TextStyle(fontSize: 12)),
                 leading: const Icon(Icons.format_list_numbered),
                 trailing: _buildStyledDropdown<int>(
                   value: _projectionsCount,
@@ -1509,7 +1509,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                   items: const [
                     DropdownMenuItem(value: 2, child: Text('2 jours')),
-                    DropdownMenuItem(value: 4, child: Text('4 jours (par défaut)')),
+                    DropdownMenuItem(value: 4, child: Text('4 jours (par dÃ©faut)')),
                     DropdownMenuItem(value: 7, child: Text('7 jours')),
                     DropdownMenuItem(value: 13, child: Text('13 jours (Max)')),
                   ],
@@ -1530,8 +1530,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             children: [
               SwitchListTile(
-                title: const Text('Désactiver le week-end'),
-                subtitle: const Text('Grise le samedi et dimanche, et empêche toute réservation (auto ou manuelle)', style: TextStyle(fontSize: 12)),
+                title: const Text('DÃ©sactiver le week-end'),
+                subtitle: const Text('Grise le samedi et dimanche, et empÃªche toute rÃ©servation (auto ou manuelle)', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.weekend_rounded),
                 value: _hideWeekends,
                 onChanged: (val) {
@@ -1542,7 +1542,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const Divider(height: 1),
               SwitchListTile(
                 title: const Text('Affichage compact'),
-                subtitle: const Text('Réduit les marges pour voir plus d\'informations', style: TextStyle(fontSize: 12)),
+                subtitle: const Text('RÃ©duit les marges pour voir plus d\'informations', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.view_compact_rounded),
                 value: _compactMode,
                 onChanged: (val) {
@@ -1565,8 +1565,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             children: [
               SwitchListTile(
-                title: const Text('Réservations réussies'),
-                subtitle: const Text('Être notifié quand l\'automatisation réserve une place', style: TextStyle(fontSize: 12)),
+                title: const Text('RÃ©servations rÃ©ussies'),
+                subtitle: const Text('ÃŠtre notifiÃ© quand l\'automatisation rÃ©serve une place', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.notifications_active, color: Colors.green),
                 value: _notifySuccess,
                 onChanged: (val) {
@@ -1576,8 +1576,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const Divider(height: 1),
               SwitchListTile(
-                title: const Text('Échecs de réservation'),
-                subtitle: const Text('Être notifié en cas d\'erreur (ex: plus de place)', style: TextStyle(fontSize: 12)),
+                title: const Text('Ã‰checs de rÃ©servation'),
+                subtitle: const Text('ÃŠtre notifiÃ© en cas d\'erreur (ex: plus de place)', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.error_outline, color: Colors.red),
                 value: _notifyFailure,
                 onChanged: (val) {
@@ -1589,7 +1589,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 24),
-        const Text('À propos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const Text('Ã€ propos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
         Card(
           elevation: 0,
