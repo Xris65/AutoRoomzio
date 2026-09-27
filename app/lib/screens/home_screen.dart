@@ -1,6 +1,8 @@
 ﻿import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
+import '../widgets/fun_loading_widget.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:workmanager/workmanager.dart';
@@ -10,8 +12,8 @@ import '../storage_service.dart';
 import 'login_screen.dart';
 import 'setup_screen.dart';
 import 'optimization_screen.dart';
-import '../widgets/fun_loading_widget.dart';
 import '../main.dart'; // for themeNotifier
+import '../notification_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -29,6 +31,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   bool _isCalendarBusy = false;
   bool _automationEnabled = false;
+
+  bool _canExit = false;
+
+  Map<String, int> _statsMap = {'manual': 0, 'auto': 0};
+  DateTime? _statsFirstUse;
+
 
   // Calendar State
   DateTime _focusedDay = DateTime.now();
@@ -152,6 +160,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final vacs = await _storage.getVacations();
     final comp = await _storage.getCompactMode();
     
+    await _storage.recordFirstUse();
+    final firstUse = await _storage.getFirstUse();
+    final stats = await _storage.getBookingStats();
+    
     if (mounted) {
       setState(() {
         _selectedDays = days;
@@ -171,6 +183,8 @@ class _HomeScreenState extends State<HomeScreen> {
           end: DateTime.parse(v['end']!),
         )).toList();
         _compactMode = comp;
+        _statsFirstUse = firstUse;
+        _statsMap = stats;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
           _pageController.dispose();
@@ -350,12 +364,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    Widget content;
     if (_isLoading) {
-      return Scaffold(body: FunLoadingWidget(messageNotifier: _loadingTextNotifier));
-    }
-
-    return Scaffold(
-      appBar: AppBar(
+      content = Scaffold(body: FunLoadingWidget(messageNotifier: _loadingTextNotifier));
+    } else {
+      content = Scaffold(
+        appBar: AppBar(
           title: const Text('AutoRoomzio'),
           actions: [
             if (Platform.isAndroid && _automationEnabled)
@@ -387,6 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildHomeTab(),
           _buildCalendarTab(),
           _buildAutomationTab(),
+          _buildStatsTab(),
           _buildSettingsTab(),
         ],
       ),
@@ -403,12 +418,33 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildNavItem(0, Icons.home_rounded, 'Accueil'),
                 _buildNavItem(1, Icons.calendar_month_rounded, 'Calendrier'),
                 _buildNavItem(2, Icons.auto_awesome, 'Automate'),
-                _buildNavItem(3, Icons.settings_rounded, 'Paramètres'),
+                _buildNavItem(3, Icons.insights_rounded, 'Stats'),
+                _buildNavItem(4, Icons.settings_rounded, 'Paramètres'),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+    return PopScope(
+      canPop: _canExit,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        
+        setState(() { _canExit = true; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Appuyez à nouveau pour quitter"),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) setState(() { _canExit = false; });
+        });
+      },
+      child: content,
     );
   }
 
@@ -421,11 +457,8 @@ class _HomeScreenState extends State<HomeScreen> {
         color: Colors.transparent,
         child: InkWell(
           onTap: () {
-            _pageController.animateToPage(
-              index,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
+            if (index == _currentIndex) return;
+            _pageController.jumpToPage(index);
           },
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -434,6 +467,30 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 2),
               Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  
+  Widget _buildShimmerLoading() {
+    return Shimmer.fromColors(
+      baseColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+      highlightColor: Theme.of(context).colorScheme.surface,
+      child: ListView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: 3,
+        itemBuilder: (_, index) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Container(
+            height: 72,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
           ),
         ),
       ),
@@ -518,90 +575,63 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 16),
                   
                   if (_workspaceName != null) ...[
-                    // ── 📊 Stats & Quick Actions ──────────────────────────────────
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Card(
-                            elevation: 0,
-                            color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-                              child: Column(
-                                children: [
-                                  Text(
-                                    '${_bookedDates.where((d) => d.startsWith(DateTime.now().toIso8601String().substring(0, 7))).length}',
-                                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  const Text('réservés ce mois', style: TextStyle(fontSize: 10), textAlign: TextAlign.center),
-                                ],
+                      // ⚡ Actions Rapides
+                      Builder(
+                        builder: (context) {
+                          final today = DateTime.now();
+                          final tomorrow = today.add(const Duration(days: 1));
+                          final todayIsWeekend = today.weekday == DateTime.saturday || today.weekday == DateTime.sunday;
+                          final tomorrowIsWeekend = tomorrow.weekday == DateTime.saturday || tomorrow.weekday == DateTime.sunday;
+
+                          final todayIsVacation = _isVacation(today);
+                          final tomorrowIsVacation = _isVacation(tomorrow);
+
+                          final disableToday = todayIsVacation || (_hideWeekends && todayIsWeekend);
+                          final disableTomorrow = tomorrowIsVacation || (_hideWeekends && tomorrowIsWeekend);
+
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                                  icon: Icon(todayIsVacation ? Icons.beach_access : (disableToday ? Icons.weekend : Icons.flash_on), size: 16),
+                                  label: Text(todayIsVacation ? 'En Congés' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
+                                  onPressed: disableToday ? null : () => _quickBook(0),
+                                ),
                               ),
-                            ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                                  icon: Icon(tomorrowIsVacation ? Icons.beach_access : (disableTomorrow ? Icons.weekend : Icons.flash_on), size: 16),
+                                  label: Text(tomorrowIsVacation ? 'En Congés' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
+                                  onPressed: disableTomorrow ? null : () => _quickBook(1),
+                                ),
+                              ),
+                            ],
+                          );
+                        }
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            '📅 Prochaines réservations',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Builder(
-                            builder: (context) {
-                              final today = DateTime.now();
-                              final tomorrow = today.add(const Duration(days: 1));
-                              final todayIsWeekend = today.weekday == DateTime.saturday || today.weekday == DateTime.sunday;
-                              final tomorrowIsWeekend = tomorrow.weekday == DateTime.saturday || tomorrow.weekday == DateTime.sunday;
-
-                              final todayIsVacation = _isVacation(today);
-                              final tomorrowIsVacation = _isVacation(tomorrow);
-
-                              final disableToday = todayIsVacation || (_hideWeekends && todayIsWeekend);
-                              final disableTomorrow = tomorrowIsVacation || (_hideWeekends && tomorrowIsWeekend);
-
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  ElevatedButton.icon(
-                                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                    icon: Icon(todayIsVacation ? Icons.beach_access : (disableToday ? Icons.weekend : Icons.flash_on), size: 16),
-                                    label: Text(todayIsVacation ? 'En Congés' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
-                                    onPressed: disableToday ? null : () => _quickBook(0),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  ElevatedButton.icon(
-                                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                    icon: Icon(tomorrowIsVacation ? Icons.beach_access : (disableTomorrow ? Icons.weekend : Icons.flash_on), size: 16),
-                                    label: Text(tomorrowIsVacation ? 'En Congés' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
-                                    onPressed: disableTomorrow ? null : () => _quickBook(1),
-                                  ),
-                                ],
-                              );
-                            }
+                          FilterChip(
+                            label: const Text("Toutes mes places", style: TextStyle(fontSize: 11)),
+                            visualDensity: VisualDensity.compact,
+                            selected: _showAllReservations,
+                            onSelected: (val) => setState(() => _showAllReservations = val),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                  ],
-
-                  // ── Prochaines réservations ──────────────────────────────────
-                  if (_workspaceName != null) ...[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          '🔮 Prochaines réservations',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        FilterChip(
-                          label: const Text("Toutes mes places", style: TextStyle(fontSize: 11)),
-                          visualDensity: VisualDensity.compact,
-                          selected: _showAllReservations,
-                          onSelected: (val) => setState(() => _showAllReservations = val),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    _buildUpcomingBookings(),
-                  ],
-                  if (_workspaceName == null)
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      _isCalendarBusy ? _buildShimmerLoading() : _buildUpcomingBookings(),
+                    ],
+                    if (_workspaceName == null)
                     const Padding(
                       padding: EdgeInsets.only(top: 12),
                       child: Text(
@@ -762,6 +792,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       setState(() {
                                         for (final dateStr in toCleanLocally) {
                                           _bookedDates.remove(dateStr);
+            _occupiedByOthers.remove(dateStr);
                                           _requestedDates.remove(dateStr);
                                           _bookedElsewhereMap.remove(dateStr);
                                         }
@@ -1189,6 +1220,7 @@ class _HomeScreenState extends State<HomeScreen> {
         } else {
           await _api.cancelReservation(dateStr, token, workspaceId);
         }
+        
       }
 
       setState(() {
@@ -1197,6 +1229,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _bookedElsewhereMap.remove(dateStr);
           } else {
             _bookedDates.remove(dateStr);
+            _occupiedByOthers.remove(dateStr);
             _requestedDates.remove(dateStr);
           }
         } else {
@@ -1242,6 +1275,8 @@ class _HomeScreenState extends State<HomeScreen> {
           final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
           if (success) {
             _bookedDates.add(dateStr);
+            await _storage.recordBookingStat(true);
+            await _refreshStats();
             addedCount++;
           }
         }
@@ -1262,6 +1297,16 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
+    }
+  }
+
+
+  Future<void> _refreshStats() async {
+    final stats = await _storage.getBookingStats();
+    if (mounted) {
+      setState(() {
+        _statsMap = stats;
+      });
     }
   }
 
@@ -1350,7 +1395,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _storage.saveIgnoredDates(_ignoredDates.toList());
         _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
         _storage.saveLastSyncTime(); // Cache TTL
-      }
+          await _refreshStats();
+        }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
     }
@@ -1381,6 +1427,8 @@ class _HomeScreenState extends State<HomeScreen> {
       
       final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
       if (success) {
+        await _storage.recordBookingStat(false);
+              await _refreshStats();
         setState(() {
           _bookedDates.add(dateStr);
           _requestedDates.add(dateStr);
@@ -1509,6 +1557,8 @@ class _HomeScreenState extends State<HomeScreen> {
           if (accessToken != null && workspaceId != null) {
             final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
             if (success) {
+              await _storage.recordBookingStat(false);
+              await _refreshStats();
               setState(() => _bookedDates.add(dateStr));
               _storage.saveBookedDates(_bookedDates.toList());
               if (mounted) _showTopToast('Place réservée pour le $dateStr', isSuccess: true);
@@ -1528,6 +1578,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _requestedDates.remove(dateStr);
           _bookedDates.remove(dateStr);
+            _occupiedByOthers.remove(dateStr);
           if (action == 'block') {
             _ignoredDates.add(dateStr);
           }
@@ -1581,6 +1632,230 @@ class _HomeScreenState extends State<HomeScreen> {
           items: items,
         ),
       ),
+    );
+  }
+
+
+  Widget _buildStatsTab() {
+    final manualCount = _statsMap['manual'] ?? 0;
+    final autoCount = _statsMap['auto'] ?? 0;
+    
+    // Combine upcoming from MyRoomz
+    final Set<String> allBookingsSet = {};
+    allBookingsSet.addAll(_bookedDates.map((d) => d.split('T')[0]));
+    allBookingsSet.addAll(_bookedElsewhereMap.keys.map((d) => d.split('T')[0]));
+    
+    final List<String> allBookings = allBookingsSet.toList();
+    
+    // 3. Jour Favori
+    final Map<int, int> dayCounts = {};
+    for (var dateStr in allBookings) {
+      try {
+        final d = DateTime.parse(dateStr);
+        dayCounts[d.weekday] = (dayCounts[d.weekday] ?? 0) + 1;
+      } catch (_) {}
+    }
+    
+    String favDayStr = "Aucun";
+    String favDayPct = "0%";
+    if (dayCounts.isNotEmpty) {
+      final favDay = dayCounts.entries.reduce((a, b) => a.value > b.value ? a : b);
+      final weekdays = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+      favDayStr = weekdays[favDay.key - 1];
+      final pct = (favDay.value / allBookings.length * 100).round();
+      favDayPct = "$pct%";
+    }
+
+    // 4. Moyenne de Présentiel
+    int avgPerMonth = 0;
+    if (_statsFirstUse != null && allBookings.isNotEmpty) {
+      final daysDiff = DateTime.now().difference(_statsFirstUse!).inDays;
+      final months = (daysDiff / 30).ceil() < 1 ? 1 : (daysDiff / 30).ceil();
+      avgPerMonth = (allBookings.length / months).round();
+    }
+
+    // 5. Taux de fidélité à la place
+    final bookedCount = _bookedDates.length;
+    final elsewhereCount = _bookedElsewhereMap.length;
+    final fidelity = (bookedCount + elsewhereCount) > 0 
+        ? ((bookedCount / (bookedCount + elsewhereCount)) * 100).round()
+        : 100;
+        
+    
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        const Text(
+          'Vos Statistiques',
+          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'L\'impact de l\'automatisation sur votre quotidien',
+          style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+        ),
+        const SizedBox(height: 24),
+        
+        // Grid de stats
+        Center(
+          child: Text(
+            'Cliquez sur une carte pour plus de détails',
+            style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+          ),
+        ),
+        const SizedBox(height: 12),
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 2,
+          mainAxisSpacing: 16,
+          crossAxisSpacing: 16,
+          childAspectRatio: 1.0,
+          children: [
+            _buildStatCard(
+              title: 'Réservations Automatiques',
+              value: '$autoCount',
+              icon: Icons.auto_awesome,
+              color: Theme.of(context).colorScheme.primary,
+              tooltip: 'Réservations réalisées automatiquement par l\'application via l\'automate.',
+            ),
+            _buildStatCard(
+              title: 'Réservations Manuelles',
+              value: '$manualCount',
+              icon: Icons.touch_app_rounded,
+              color: Colors.orange,
+              tooltip: 'Réservations effectuées en un clic depuis l\'application.',
+            ),
+            _buildStatCard(
+              title: 'Moyenne de Présentiel',
+              value: '$avgPerMonth jrs/mois',
+              icon: Icons.business_center_rounded,
+              color: Colors.blue,
+              tooltip: 'Moyenne calculée sur vos réservations actuelles et historiques.',
+            ),
+            _buildStatCard(
+              title: 'Fidélité au bureau sélectionné',
+              value: '$fidelity%',
+              icon: Icons.location_on_rounded,
+              color: Colors.green,
+              tooltip: 'Pourcentage de fois où vous réservez votre place favorite plutôt qu\'une autre place.',
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _buildStatCard(
+          title: 'Jour Favori',
+          value: favDayStr,
+          subtitle: '($favDayPct de tes venues)',
+          icon: Icons.today_rounded,
+          color: Colors.deepPurple,
+          tooltip: 'Le jour de la semaine où vous venez le plus souvent.',
+        ),
+      ],
+    );
+  }
+
+
+  Widget _buildStatCard({required String title, required String value, required IconData icon, required Color color, String? subtitle, String? tooltip}) {
+    return GestureDetector(
+      onTap: tooltip != null ? () => _showStatInfo(context, title, tooltip, icon, color) : null,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.2), width: 2),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 32),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
+            ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showStatInfo(BuildContext context, String title, String description, IconData icon, Color color) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return Container(
+          margin: const EdgeInsets.all(16).copyWith(bottom: 32),
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.15),
+                blurRadius: 40,
+                spreadRadius: 10,
+              )
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 56),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                title,
+                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                description,
+                style: TextStyle(fontSize: 16, height: 1.5, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: color,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("J'ai compris", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              )
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1773,6 +2048,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 onChanged: (val) {
                   setState(() => _notifyFailure = val);
                   _storage.saveNotifyFailure(val);
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                title: const Text('Tester les notifications', style: TextStyle(color: Colors.blue)),
+                subtitle: const Text('Envoyer une notification de test', style: TextStyle(fontSize: 12)),
+                leading: const Icon(Icons.send_rounded, color: Colors.blue),
+                onTap: () async {
+                  final notifService = NotificationService();
+                  await notifService.showNotification(
+                    title: 'AutoRoomzio - Test',
+                    body: 'Ceci est une notification de test ! Si tu vois ça, tout fonctionne. 🎉',
+                  );
                 },
               ),
             ],

@@ -363,4 +363,45 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
   }
+
+  // 📊 Stats Tracking
+  Future<void> recordFirstUse() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!prefs.containsKey('stats_first_use')) {
+      await prefs.setString('stats_first_use', DateTime.now().toIso8601String());
+    }
+  }
+
+  Future<DateTime> getFirstUse() async {
+    final prefs = await SharedPreferences.getInstance();
+    final d = prefs.getString('stats_first_use');
+    if (d != null) {
+      return DateTime.parse(d);
+    } else {
+      final now = DateTime.now();
+      await prefs.setString('stats_first_use', now.toIso8601String());
+      return now;
+    }
+  }
+
+  Future<void> recordBookingStat(bool isAuto) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (isAuto) {
+      final count = prefs.getInt('stats_auto_count') ?? 0;
+      await prefs.setInt('stats_auto_count', count + 1);
+    } else {
+      final count = prefs.getInt('stats_manual_count') ?? 0;
+      await prefs.setInt('stats_manual_count', count + 1);
+    }
+  }
+
+  Future<Map<String, int>> getBookingStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    return {
+      'manual': prefs.getInt('stats_manual_count') ?? 0,
+      'auto': prefs.getInt('stats_auto_count') ?? 0,
+    };
+  }
+
 }

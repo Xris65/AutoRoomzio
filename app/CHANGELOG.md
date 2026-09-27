@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0](https://github.com/Xris65/AutoRoomzio/compare/auto_roomzio-v1.2.2...auto_roomzio-v1.3.0) (2026-09-27)
+
+### Nouveautés & UX
+* **Onglet Statistiques** : Ajout d'un onglet dédié au suivi de votre activité (réservations, moyenne de présentiel et fidélité).
+* **Navigation fluide** : Le passage entre les onglets via le menu du bas est désormais instantané pour éviter les saccades visuelles.
+* **Chargement Shimmer** : Remplacement du spinner de chargement par un effet skeleton élégant et non-bloquant.
+* **Infobulles Stylisées** : Un clic sur une statistique affiche désormais un panneau détaillé et animé au design premium.
+* **Icône de Notification** : Intégration d'une icône vectorielle sur-mesure parfaitement adaptée à la barre d'état Android.
+* **Testeur d'alertes** : Ajout d'un bouton dédié dans les paramètres pour tester le bon fonctionnement de vos notifications.
+
+### Corrections de Bugs
+* **Blocage du Calendrier** : Résolution du bug empêchant de réserver à nouveau une date fraîchement annulée.
+* **Compteur Manuel** : Correction d'un crash Android silencieux qui bloquait l'incrémentation des statistiques manuelles.
+* **Synchronisation du Cache** : Les statistiques se mettent désormais à jour instantanément après une action de l'automate.
+
+
 ## [1.1.0](https://github.com/Xris65/AutoRoomzio/compare/auto_roomzio-v1.0.0...auto_roomzio-v1.1.0) (2026-09-26)
 
 
