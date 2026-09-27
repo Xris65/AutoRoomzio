@@ -15,48 +15,70 @@ final ValueNotifier<int> themeColorNotifier = ValueNotifier(0);
 final ValueNotifier<int> fontNotifier = ValueNotifier(0);
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  await NotificationService().init();
-
-  // Workmanager is Android-only
-  if (Platform.isAndroid) {
-    Workmanager().initialize(callbackDispatcher);
-
-    // Re-register the periodic task on every app launch to survive reboots
-    // and ensure the correct schedule time is always applied.
-    final storage = StorageService();
-    final automationEnabled = await storage.getAutomationEnabled();
-    if (automationEnabled) {
-      final autoTimeMap = await storage.getAutomationTime();
-      final now = DateTime.now();
-      var targetDate = DateTime(now.year, now.month, now.day,
-          autoTimeMap['hour']!, autoTimeMap['minute']!);
-      if (targetDate.isBefore(now)) {
-        targetDate = targetDate.add(const Duration(days: 1));
-      }
-      final delay = targetDate.difference(now);
-      Workmanager().registerPeriodicTask(
-        "1",
-        "autoReservationTask",
-        frequency: const Duration(hours: 24),
-        initialDelay: delay,
-        existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
-        constraints: Constraints(networkType: NetworkType.connected),
-      );
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    
+    try {
+      await NotificationService().init();
+    } catch (e, stack) {
+      debugPrint('Notification init failed: $e
+$stack');
     }
+
+    if (Platform.isAndroid) {
+      try {
+        Workmanager().initialize(callbackDispatcher);
+        final storage = StorageService();
+        final automationEnabled = await storage.getAutomationEnabled();
+        if (automationEnabled) {
+          final autoTimeMap = await storage.getAutomationTime();
+          final now = DateTime.now();
+          var targetDate = DateTime(now.year, now.month, now.day,
+              autoTimeMap['hour']!, autoTimeMap['minute']!);
+          if (targetDate.isBefore(now)) {
+            targetDate = targetDate.add(const Duration(days: 1));
+          }
+          final delay = targetDate.difference(now);
+          Workmanager().registerPeriodicTask(
+            "1",
+            "autoReservationTask",
+            frequency: const Duration(hours: 24),
+            initialDelay: delay,
+            existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
+            constraints: Constraints(networkType: NetworkType.connected),
+          );
+        }
+      } catch (e, stack) {
+        debugPrint('Workmanager init failed: $e
+$stack');
+      }
+    }
+
+    final modeIndex = await StorageService().getThemeModeIndex();
+    themeNotifier.value = modeIndex == 1 ? ThemeMode.light : (modeIndex == 2 ? ThemeMode.dark : ThemeMode.system);
+    
+    final colorIndex = await StorageService().getThemeColorIndex();
+    themeColorNotifier.value = colorIndex;
+
+    final fontIndex = await StorageService().getFontFamilyIndex();
+    fontNotifier.value = fontIndex;
+
+    runApp(const MyApp());
+  } catch (e, stack) {
+    runApp(MaterialApp(
+      home: Scaffold(
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Text('CRITICAL STARTUP ERROR:
+$e
+
+$stack', style: const TextStyle(color: Colors.red)),
+          ),
+        ),
+      ),
+    ));
   }
-
-  final modeIndex = await StorageService().getThemeModeIndex();
-  themeNotifier.value = modeIndex == 1 ? ThemeMode.light : (modeIndex == 2 ? ThemeMode.dark : ThemeMode.system);
-  
-  final colorIndex = await StorageService().getThemeColorIndex();
-  themeColorNotifier.value = colorIndex;
-
-  final fontIndex = await StorageService().getFontFamilyIndex();
-  fontNotifier.value = fontIndex;
-
-  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
