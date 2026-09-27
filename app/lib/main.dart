@@ -21,8 +21,7 @@ void main() async {
     try {
       await NotificationService().init();
     } catch (e, stack) {
-      debugPrint('Notification init failed: $e
-$stack');
+      debugPrint('Notification init failed: $e\n$stack');
     }
 
     if (Platform.isAndroid) {
@@ -49,8 +48,7 @@ $stack');
           );
         }
       } catch (e, stack) {
-        debugPrint('Workmanager init failed: $e
-$stack');
+        debugPrint('Workmanager init failed: $e\n$stack');
       }
     }
 
@@ -70,10 +68,7 @@ $stack');
         body: SafeArea(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
-            child: Text('CRITICAL STARTUP ERROR:
-$e
-
-$stack', style: const TextStyle(color: Colors.red)),
+            child: Text('CRITICAL STARTUP ERROR:\n$e\n\n$stack', style: const TextStyle(color: Colors.red)),
           ),
         ),
       ),
