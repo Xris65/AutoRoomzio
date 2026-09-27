@@ -57,7 +57,7 @@ jobs:
       - name: Extract Release Notes
         id: extract_notes
         run: |
-          awk -v ver="[${{ env.VERSION }}]" '$0 ~ "^## " ver {p=1; next} /^## / {if(p) exit} p' CHANGELOG.md > release_notes.txt
+          awk -v ver="## [${{ env.VERSION }}]" 'index($0, ver) == 1 {p=1; next} /^## / {if(p) exit} p' CHANGELOG.md > release_notes.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
