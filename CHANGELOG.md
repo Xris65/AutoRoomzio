@@ -4,29 +4,63 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 
 ## [1.2.2] - 2026-09-27
 
-### Ajouté
+### ✨ Ajouté
 - **Plan 2D** : Ajout de boutons flottants de zoom (+ / -) en bas à droite pour faciliter la navigation à une main.
-- **Permissions** : Images d'instructions visuelles dans les popups d'information pour la Batterie et l'Autostart.
-- **Autostart** : Popup de validation manuelle pour s'assurer que l'utilisateur a bien coché l'option.
+- **Permissions** : Images d'instructions visuelles (captures d'écran MIUI) intégrées dans les popups d'information pour la Batterie et l'Autostart.
+- **Autostart** : Popup de validation manuelle ajoutée après l'ouverture du menu système pour s'assurer que l'utilisateur a bien effectué l'action.
 
-### Corrigé
+### 🐛 Corrigé
 - **Autostart Xiaomi/Oppo/Huawei** : L'application parvient enfin à forcer l'ouverture du menu natif de démarrage automatique en contournant les restrictions de visibilité d'Android 11+.
-- **Plan 2D** : Blocage complet du défilement de la page (Stepper) lorsque le plan est affiché, empêchant les conflits tactiles et les sauts d'écran.
+- **Plan 2D** : Blocage complet du défilement de la page (`Stepper`) lorsque le plan est affiché, empêchant les conflits tactiles et les sauts d'écran.
 - **Plan 2D** : Ajustement de la marge (padding) pour que la carte prenne tout l'espace disponible à gauche.
 
 ## [1.2.1] - 2026-09-26
 
-### Ajouté
+### ✨ Ajouté
 - **Permissions** : Le menu d'optimisation de la batterie écoute désormais les changements en temps réel sans nécessiter de popup manuelle (polling asynchrone).
+
+### 🐛 Corrigé
+- **Plan 2D** : Chargement accéléré de la carte via parallélisation des requêtes API (Geometry + Status).
+- **Calendrier** : Correction d'un bug d'affichage où désactiver la vue globale désactivait de manière incorrecte l'affichage des bureaux alternatifs.
 
 ## [1.2.0] - 2026-09-26
 
-### Ajouté
-- **Transparence d'Occupation** : Le calendrier affiche maintenant une pastille grise avec le nom complet de la personne qui a réservé votre place habituelle.
+### ✨ Ajouté
+- **Transparence d'Occupation** : Le calendrier affiche maintenant une pastille grise avec le nom complet de la personne qui a "volé" votre place habituelle.
 - **Plan 2D Intelligent** : Intégration de la géométrie Map/GeoJSON pour un plan interactif lors de la configuration de votre bureau.
-- **Mode Ailleurs** : Support complet des pastilles oranges pour visualiser les réservations sur un autre bureau (et possibilité de les annuler d'un clic).
+- **Mode Ailleurs** : Support complet des pastilles oranges pour visualiser les réservations sur un autre bureau (et possibilité de les annuler d'un clic via l'API).
 - **Mode Vacances** : Déclarer des congés supprime désormais automatiquement toutes les réservations confirmées sur la période.
 
-### Optimisé
+### 🚀 Optimisé
 - **Performances Réseau** : Division par 4 du temps de synchronisation grâce à un pool de connexions HTTP (Keep-Alive) et au multiplexage TLS.
-- **Fluidité UI** : Le calendrier ne recharge les données d'occupation que pour l'horizon strict des 13 prochains jours, évitant les ralentissements au changement de mois.
+- **Fluidité UI** : Le calendrier ne recharge les données d'occupation que pour l'horizon strict des 13 prochains jours, évitant les ralentissements inutiles.
+
+## [1.1.1] - 2026-09-24
+
+### ✨ Ajouté
+- **Écran de Chargement Fun** : Remplacement du spinner basique par un écran animé avec des messages cycliques qui suit l'état réel des API.
+- **Configuration Avancée** : Nouvelles options dans les paramètres pour modifier l'heure d'exécution de l'automate et la limite de projection (en jours).
+- **Gestion des Dates (Bloquer)** : Possibilité de bloquer manuellement une date spécifique pour empêcher l'automate de réserver ce jour-là.
+- **Actions Rapides** : Nouveau menu Bottom Sheet intuitif au clic sur une date du calendrier.
+
+### 🐛 Corrigé
+- **Synchronisation** : L'automate ne synchronise plus inutilement les calendriers en cas de simple retour en arrière depuis les paramètres.
+
+## [1.1.0] - 2026-09-20
+
+### ✨ Ajouté
+- **Refonte Interface** : Nouvelle navigation par onglets (`BottomNavigationBar`) séparant proprement le Tableau de bord, le Calendrier et les Paramètres.
+- **Assistant de Configuration (`Stepper`)** : Refonte de la sélection du bureau (Bâtiment > Étage > Zone > Place) avec barres de recherche pour filtrer les immenses listes.
+- **Personnalisation** : Ajout du support complet du Mode Sombre et sélection parmi 5 thèmes de couleurs premium.
+- **Smart Sync** : L'application scanne et synchronise intelligemment les 14 prochains jours sans spammer l'API de MyRoomz.
+
+### 🐛 Corrigé
+- **API** : Mise à jour des endpoints MyRoomz (`/workspaces/all` et `/buildings`) pour s'aligner sur les changements de leur infrastructure.
+
+## [1.0.0] - 2026-09-15
+
+### 🎉 Lancement Initial (Refonte Flutter)
+- **Migration** : Réécriture complète de l'application depuis le script Python original vers une application mobile Flutter (Android).
+- **Pilote Automatique** : Système de `Background Fetch` pour exécuter la réservation silencieusement en tâche de fond tous les jours.
+- **Authentification Sécurisée** : Connexion via WebView interceptant les tokens OIDC sans jamais stocker les identifiants de l'utilisateur.
+- **Calendrier** : Vue liste des prochains jours permettant d'activer ou désactiver des jours de présence types.
