@@ -1,8 +1,8 @@
+import 'package:android_intent_plus/android_intent.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:android_intent_plus/android_intent.dart';
 import '../storage_service.dart';
 
 class OptimizationScreen extends StatefulWidget {
@@ -97,7 +97,6 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
           package: intentDict['package'],
           componentName: intentDict['component'],
         );
-        // Do not use canResolveActivity() due to Android 11+ package visibility rules
         await intent.launch();
         launched = true;
         break;
@@ -106,21 +105,40 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
       }
     }
 
-    if (!launched && mounted) {
-      // No OEM autostart menu found → standard Android, no config needed
+    if (!mounted) return;
+
+    if (launched) {
+      // Demander confirmation à l'utilisateur s'il l'a bien fait
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text("Vérification"),
+          content: const Text("Avez-vous bien autorisé le démarrage automatique pour AutoRoomzio dans les paramètres qui viennent de s'ouvrir ?"),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Non")),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Oui")),
+          ],
+        )
+      );
+      if (result == true) {
+        setState(() => _isAutostartVerified = true);
+        final storage = StorageService();
+        await storage.saveAutostartVerified(true);
+      }
+    } else {
+      // Aucun menu trouvé, pas besoin
       setState(() => _isAutostartVerified = true);
       final storage = StorageService();
       await storage.saveAutostartVerified(true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Votre téléphone ne nécessite pas de configuration d'autostart supplémentaire. ✓"),
+          content: Text("Votre téléphone ne nécessite pas de configuration d'autostart supplémentaire."),
           backgroundColor: Colors.green,
           duration: Duration(seconds: 4),
         ),
       );
     }
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(

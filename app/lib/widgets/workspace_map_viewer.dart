@@ -46,6 +46,18 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     super.dispose();
   }
 
+  void _zoomIn() {
+    final matrix = _controller.value.clone();
+    matrix.scale(1.5, 1.5);
+    _controller.value = matrix;
+  }
+
+  void _zoomOut() {
+    final matrix = _controller.value.clone();
+    matrix.scale(0.666, 0.666);
+    _controller.value = matrix;
+  }
+
   /// Recursively extracts all [x, y] leaf coordinate pairs from a GeoJSON
   /// coordinates array, regardless of nesting depth (Point/LineString/Polygon/
   /// MultiPolygon etc.).
@@ -379,25 +391,51 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
         });
 
         // ── 5. InteractiveViewer wrapping the positioned stack ────────────────
-        return InteractiveViewer(
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
           transformationController: _controller,
           constrained: false,
           boundaryMargin: const EdgeInsets.all(double.infinity),
           minScale: 0.01,
           maxScale: 50.0,
-          child: SizedBox(
+                child: SizedBox(
             width: mapWidth,
             height: mapHeight,
-            child: ColoredBox(
+                  child: ColoredBox(
               color: Theme.of(context)
                   .colorScheme
                   .surfaceContainerHighest
                   .withValues(alpha: 0.3),
-              child: Stack(
+                    child: Stack(
                 children: [...roomWidgets, ...featureWidgets],
               ),
+                  ),
+                ),
+              ),
             ),
-          ),
+            Positioned(
+              bottom: 16,
+              left: 16,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FloatingActionButton.small(
+                    heroTag: "zoomIn",
+                    onPressed: _zoomIn,
+                    child: const Icon(Icons.add),
+                  ),
+                  const SizedBox(height: 8),
+                  FloatingActionButton.small(
+                    heroTag: "zoomOut",
+                    onPressed: _zoomOut,
+                    child: const Icon(Icons.remove),
+                  ),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );

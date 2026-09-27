@@ -282,7 +282,8 @@ class _SetupScreenState extends State<SetupScreen> {
                   ),
                 )
               : Stepper(
-                  key: ValueKey(_showMap),
+                    physics: _showMap ? const NeverScrollableScrollPhysics() : null,
+                    key: ValueKey(_showMap),
                   currentStep: _showMap && _currentStep > 2 ? 2 : _currentStep,
                   onStepTapped: (step) {
                     if (step == 0) setState(() => _currentStep = 0);
@@ -372,9 +373,11 @@ class _SetupScreenState extends State<SetupScreen> {
                                       // Use 55% of screen height, min 300, max 600
                                       final screenH = MediaQuery.of(context).size.height;
                                       final mapH = (screenH * 0.55).clamp(300.0, 600.0);
-                                      return SizedBox(
-                                        height: mapH,
-                                        child: WorkspaceMapViewer(
+                                      return Transform.translate(
+                                          offset: const Offset(-24, 0),
+                                          child: SizedBox(
+                                            height: mapH,
+                                            child: WorkspaceMapViewer(
                                           features: _floorFeatures,
                                           workspaces: _rooms.values.expand((x) => x).toList(),
                                           allWorkspaces: _allWorkspaces,
@@ -396,8 +399,9 @@ class _SetupScreenState extends State<SetupScreen> {
                                             });
                                             _confirm(ws);
                                           },
-                                        ),
-                                      );
+                                            ),
+                                          ),
+                                        );
                                     },
                                   )
                                 else ...[
