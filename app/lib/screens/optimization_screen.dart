@@ -108,6 +108,9 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
     if (!mounted) return;
 
     if (launched) {
+      // Attendre un peu que le menu système s'ouvre bien par-dessus avant d'afficher la popup
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
       // Demander confirmation à l'utilisateur s'il l'a bien fait
       final result = await showDialog<bool>(
         context: context,
@@ -172,6 +175,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
               isOk: !_isBatteryOptimized,
               onTap: _requestBattery,
               actionLabel: "Désactiver l'optimisation",
+              infoText: "Dans l'écran qui va s'ouvrir, choisissez 'AutoRoomzio' et sélectionnez 'Pas de restriction' ou 'Non optimisée'.\n\nC'est indispensable pour que l'application puisse réserver votre place le matin en arrière-plan.",
             ),
             const SizedBox(height: 16),
 
@@ -182,6 +186,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
               isOk: _isAutostartVerified,
               onTap: _requestAutoStart,
               actionLabel: "Vérifier l'autostart",
+              infoText: "Certains téléphones bloquent le lancement des applications après un redémarrage.\n\nDans le menu qui va s'ouvrir, cherchez 'AutoRoomzio' et activez l'interrupteur pour l'autoriser à démarrer tout seul.",
             ),
             const SizedBox(height: 16),
 
@@ -215,13 +220,16 @@ class _PermissionTile extends StatelessWidget {
   final bool? isOk;
   final VoidCallback onTap;
   final String actionLabel;
+  final String? infoText;
 
   const _PermissionTile({
+    super.key,
     required this.title,
     required this.description,
     this.isOk,
     required this.onTap,
     required this.actionLabel,
+    this.infoText,
   });
 
   @override
@@ -267,6 +275,25 @@ class _PermissionTile extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
               ),
+              if (infoText != null)
+                IconButton(
+                  icon: const Icon(Icons.info_outline, color: Colors.blueGrey),
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: Text("Info : $title"),
+                        content: Text(infoText!),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text("Compris"),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
             ],
           ),
           const SizedBox(height: 8),
