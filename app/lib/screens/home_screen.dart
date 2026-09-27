@@ -1720,14 +1720,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: Column(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.timer_outlined, size: 48, color: Theme.of(context).colorScheme.onPrimary),
-                    const SizedBox(width: 8),
-                    Icon(Icons.info_outline, size: 16, color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.7)),
-                  ],
-                ),
+                Icon(Icons.timer_outlined, size: 48, color: Theme.of(context).colorScheme.onPrimary),
                 const SizedBox(height: 12),
                 Text(
                   'Temps gagné estimé',
@@ -1750,6 +1743,13 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 24),
         
         // Grid de stats
+        Center(
+          child: Text(
+            'Cliquez sur une carte pour plus de détails',
+            style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+          ),
+        ),
+        const SizedBox(height: 12),
         GridView.count(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -1823,21 +1823,10 @@ class _HomeScreenState extends State<HomeScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Flexible(
-                  child: Text(
-                    title,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
-                  ),
-                ),
-                if (tooltip != null) ...[
-                  const SizedBox(width: 4),
-                  Icon(Icons.info_outline, size: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
-                ],
-              ],
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
             ),
             if (subtitle != null) ...[
               const SizedBox(height: 4),
