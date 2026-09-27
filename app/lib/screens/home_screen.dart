@@ -13,6 +13,7 @@ import 'login_screen.dart';
 import 'setup_screen.dart';
 import 'optimization_screen.dart';
 import '../main.dart'; // for themeNotifier
+import '../notification_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -456,11 +457,8 @@ class _HomeScreenState extends State<HomeScreen> {
         color: Colors.transparent,
         child: InkWell(
           onTap: () {
-            _pageController.animateToPage(
-              index,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
+            if (index == _currentIndex) return;
+            _pageController.jumpToPage(index);
           },
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -2050,6 +2048,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 onChanged: (val) {
                   setState(() => _notifyFailure = val);
                   _storage.saveNotifyFailure(val);
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                title: const Text('Tester les notifications', style: TextStyle(color: Colors.blue)),
+                subtitle: const Text('Envoyer une notification de test', style: TextStyle(fontSize: 12)),
+                leading: const Icon(Icons.send_rounded, color: Colors.blue),
+                onTap: () async {
+                  final notifService = NotificationService();
+                  await notifService.showNotification(
+                    title: 'AutoRoomzio - Test',
+                    body: 'Ceci est une notification de test ! Si tu vois ça, tout fonctionne. 🎉',
+                  );
                 },
               ),
             ],
