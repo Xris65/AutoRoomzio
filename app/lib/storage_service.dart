@@ -397,6 +397,7 @@ class StorageService {
 
   Future<Map<String, int>> getBookingStats() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     return {
       'manual': prefs.getInt('stats_manual_count') ?? 0,
       'auto': prefs.getInt('stats_auto_count') ?? 0,

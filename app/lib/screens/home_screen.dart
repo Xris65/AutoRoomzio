@@ -1397,7 +1397,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _storage.saveIgnoredDates(_ignoredDates.toList());
         _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
         _storage.saveLastSyncTime(); // Cache TTL
-      }
+          await _refreshStats();
+        }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
     }
