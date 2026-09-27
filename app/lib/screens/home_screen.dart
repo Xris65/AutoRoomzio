@@ -1,6 +1,7 @@
 ﻿import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:workmanager/workmanager.dart';
@@ -10,7 +11,6 @@ import '../storage_service.dart';
 import 'login_screen.dart';
 import 'setup_screen.dart';
 import 'optimization_screen.dart';
-import '../widgets/fun_loading_widget.dart';
 import '../main.dart'; // for themeNotifier
 
 class HomeScreen extends StatefulWidget {
@@ -353,7 +353,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     Widget content;
     if (_isLoading) {
-      content = Scaffold(body: FunLoadingWidget(messageNotifier: _loadingTextNotifier));
+      content = Scaffold(
+        appBar: AppBar(title: const Text('AutoRoomzio')),
+        body: _buildShimmerLoading(),
+      );
     } else {
       content = Scaffold(
         appBar: AppBar(
@@ -388,6 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildHomeTab(),
           _buildCalendarTab(),
           _buildAutomationTab(),
+          _buildStatsTab(),
           _buildSettingsTab(),
         ],
       ),
@@ -404,7 +408,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildNavItem(0, Icons.home_rounded, 'Accueil'),
                 _buildNavItem(1, Icons.calendar_month_rounded, 'Calendrier'),
                 _buildNavItem(2, Icons.auto_awesome, 'Automate'),
-                _buildNavItem(3, Icons.settings_rounded, 'Paramètres'),
+                _buildNavItem(3, Icons.insights_rounded, 'Stats'),
+                _buildNavItem(4, Icons.settings_rounded, 'Paramètres'),
               ],
             ),
           ),
@@ -454,6 +459,44 @@ class _HomeScreenState extends State<HomeScreen> {
               Icon(icon, color: color),
               const SizedBox(height: 2),
               Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  
+  Widget _buildShimmerLoading() {
+    return Shimmer.fromColors(
+      baseColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+      highlightColor: Theme.of(context).colorScheme.surface,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(24),
+        itemCount: 4,
+        itemBuilder: (_, index) => Padding(
+          padding: const EdgeInsets.only(bottom: 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (index == 0) ...[
+                Container(
+                  width: 150,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+              Container(
+                height: 120,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
             ],
           ),
         ),
@@ -539,90 +582,63 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 16),
                   
                   if (_workspaceName != null) ...[
-                    // ── 📊 Stats & Quick Actions ──────────────────────────────────
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Card(
-                            elevation: 0,
-                            color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-                              child: Column(
-                                children: [
-                                  Text(
-                                    '${_bookedDates.where((d) => d.startsWith(DateTime.now().toIso8601String().substring(0, 7))).length}',
-                                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  const Text('réservés ce mois', style: TextStyle(fontSize: 10), textAlign: TextAlign.center),
-                                ],
+                      // ⚡ Actions Rapides
+                      Builder(
+                        builder: (context) {
+                          final today = DateTime.now();
+                          final tomorrow = today.add(const Duration(days: 1));
+                          final todayIsWeekend = today.weekday == DateTime.saturday || today.weekday == DateTime.sunday;
+                          final tomorrowIsWeekend = tomorrow.weekday == DateTime.saturday || tomorrow.weekday == DateTime.sunday;
+
+                          final todayIsVacation = _isVacation(today);
+                          final tomorrowIsVacation = _isVacation(tomorrow);
+
+                          final disableToday = todayIsVacation || (_hideWeekends && todayIsWeekend);
+                          final disableTomorrow = tomorrowIsVacation || (_hideWeekends && tomorrowIsWeekend);
+
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                                  icon: Icon(todayIsVacation ? Icons.beach_access : (disableToday ? Icons.weekend : Icons.flash_on), size: 16),
+                                  label: Text(todayIsVacation ? 'En Congés' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
+                                  onPressed: disableToday ? null : () => _quickBook(0),
+                                ),
                               ),
-                            ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                                  icon: Icon(tomorrowIsVacation ? Icons.beach_access : (disableTomorrow ? Icons.weekend : Icons.flash_on), size: 16),
+                                  label: Text(tomorrowIsVacation ? 'En Congés' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
+                                  onPressed: disableTomorrow ? null : () => _quickBook(1),
+                                ),
+                              ),
+                            ],
+                          );
+                        }
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            '📅 Prochaines réservations',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Builder(
-                            builder: (context) {
-                              final today = DateTime.now();
-                              final tomorrow = today.add(const Duration(days: 1));
-                              final todayIsWeekend = today.weekday == DateTime.saturday || today.weekday == DateTime.sunday;
-                              final tomorrowIsWeekend = tomorrow.weekday == DateTime.saturday || tomorrow.weekday == DateTime.sunday;
-
-                              final todayIsVacation = _isVacation(today);
-                              final tomorrowIsVacation = _isVacation(tomorrow);
-
-                              final disableToday = todayIsVacation || (_hideWeekends && todayIsWeekend);
-                              final disableTomorrow = tomorrowIsVacation || (_hideWeekends && tomorrowIsWeekend);
-
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  ElevatedButton.icon(
-                                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                    icon: Icon(todayIsVacation ? Icons.beach_access : (disableToday ? Icons.weekend : Icons.flash_on), size: 16),
-                                    label: Text(todayIsVacation ? 'En Congés' : (disableToday ? 'Aujourd\'hui (Week-end)' : 'Aujourd\'hui'), style: const TextStyle(fontSize: 11)),
-                                    onPressed: disableToday ? null : () => _quickBook(0),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  ElevatedButton.icon(
-                                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-                                    icon: Icon(tomorrowIsVacation ? Icons.beach_access : (disableTomorrow ? Icons.weekend : Icons.flash_on), size: 16),
-                                    label: Text(tomorrowIsVacation ? 'En Congés' : (disableTomorrow ? 'Demain (Week-end)' : 'Demain'), style: const TextStyle(fontSize: 11)),
-                                    onPressed: disableTomorrow ? null : () => _quickBook(1),
-                                  ),
-                                ],
-                              );
-                            }
+                          FilterChip(
+                            label: const Text("Toutes mes places", style: TextStyle(fontSize: 11)),
+                            visualDensity: VisualDensity.compact,
+                            selected: _showAllReservations,
+                            onSelected: (val) => setState(() => _showAllReservations = val),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                  ],
-
-                  // ── Prochaines réservations ──────────────────────────────────
-                  if (_workspaceName != null) ...[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          '🔮 Prochaines réservations',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        FilterChip(
-                          label: const Text("Toutes mes places", style: TextStyle(fontSize: 11)),
-                          visualDensity: VisualDensity.compact,
-                          selected: _showAllReservations,
-                          onSelected: (val) => setState(() => _showAllReservations = val),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    _buildUpcomingBookings(),
-                  ],
-                  if (_workspaceName == null)
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      _buildUpcomingBookings(),
+                    ],
+                    if (_workspaceName == null)
                     const Padding(
                       padding: EdgeInsets.only(top: 12),
                       child: Text(
@@ -1601,6 +1617,134 @@ class _HomeScreenState extends State<HomeScreen> {
           onChanged: onChanged,
           items: items,
         ),
+      ),
+    );
+  }
+
+
+  Widget _buildStatsTab() {
+    final bookedCount = _bookedDates.length;
+    final elsewhereCount = _bookedElsewhereMap.length;
+    final stolenCount = _occupiedByOthers.length;
+    final totalDays = bookedCount + elsewhereCount;
+    final savedTime = bookedCount * 2; // Estimation: 2 minutes sauvées par résa
+
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        const Text(
+          'Vos Statistiques',
+          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'L\'impact de l\'automatisation sur votre quotidien',
+          style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+        ),
+        const SizedBox(height: 24),
+        
+        // Temps gagné
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Theme.of(context).colorScheme.primary, Theme.of(context).colorScheme.primaryContainer],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            children: [
+              Icon(Icons.timer_outlined, size: 48, color: Theme.of(context).colorScheme.onPrimary),
+              const SizedBox(height: 12),
+              Text(
+                'Temps gagné estimé',
+                style: TextStyle(color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.9)),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$savedTime minutes',
+                style: TextStyle(
+                  fontSize: 32, 
+                  fontWeight: FontWeight.bold, 
+                  color: Theme.of(context).colorScheme.onPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Environ 2 min économisées par réservation automatique.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.7)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        
+        // Grid de stats
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 2,
+          mainAxisSpacing: 16,
+          crossAxisSpacing: 16,
+          childAspectRatio: 1.1,
+          children: [
+            _buildStatCard(
+              title: 'Places sécurisées',
+              value: '$bookedCount',
+              icon: Icons.check_circle_outline,
+              color: Colors.green,
+            ),
+            _buildStatCard(
+              title: 'Jours Ailleurs',
+              value: '$elsewhereCount',
+              icon: Icons.flight_takeoff_rounded,
+              color: Colors.orange,
+            ),
+            _buildStatCard(
+              title: 'Jours planifiés',
+              value: totalDays.toString(),
+              icon: Icons.calendar_month_outlined,
+              color: Colors.blue,
+            ),
+            _buildStatCard(
+              title: 'Vols évités',
+              value: '$stolenCount',
+              icon: Icons.shield_outlined,
+              color: Colors.deepPurple,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatCard({required String title, required String value, required IconData icon, required Color color}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.2), width: 2),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 32),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7)),
+          ),
+        ],
       ),
     );
   }
