@@ -159,6 +159,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final vacs = await _storage.getVacations();
     final comp = await _storage.getCompactMode();
     
+    await _storage.recordFirstUse();
+    final firstUse = await _storage.getFirstUse();
+    final stats = await _storage.getBookingStats();
+    
     if (mounted) {
       setState(() {
         _selectedDays = days;
@@ -178,6 +182,8 @@ class _HomeScreenState extends State<HomeScreen> {
           end: DateTime.parse(v['end']!),
         )).toList();
         _compactMode = comp;
+        _statsFirstUse = firstUse;
+        _statsMap = stats;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
           _pageController.dispose();
@@ -1636,8 +1642,16 @@ class _HomeScreenState extends State<HomeScreen> {
     final manualCount = _statsMap['manual']?.length ?? 0;
     final autoCount = _statsMap['auto']?.length ?? 0;
     
+    // Combine local history and upcoming from MyRoomz
+    final Set<String> allBookingsSet = {};
+    if (_statsMap['manual'] != null) allBookingsSet.addAll(_statsMap['manual']!);
+    if (_statsMap['auto'] != null) allBookingsSet.addAll(_statsMap['auto']!);
+    allBookingsSet.addAll(_bookedDates.map((d) => d.split('T')[0]));
+    allBookingsSet.addAll(_bookedElsewhereMap.keys.map((d) => d.split('T')[0]));
+    
+    final List<String> allBookings = allBookingsSet.toList();
+    
     // 3. Jour Favori
-    final List<String> allBookings = [...(_statsMap['manual'] ?? []), ...(_statsMap['auto'] ?? [])];
     final Map<int, int> dayCounts = {};
     for (var dateStr in allBookings) {
       try {
@@ -1671,7 +1685,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ? ((bookedCount / (bookedCount + elsewhereCount)) * 100).round()
         : 100;
         
-    final savedTime = autoCount * 2; // Estimation: 2 minutes sauvées par résa automatique
+    final savedTime = (autoCount * 2) + (manualCount * 1); // Estimation: 2min auto, 1min manuel
 
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -1685,6 +1699,54 @@ class _HomeScreenState extends State<HomeScreen> {
           'L\'impact de l\'automatisation sur votre quotidien',
           style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
         ),
+        const SizedBox(height: 24),
+        
+        // Temps gagné
+        Tooltip(
+          message: 'Basé sur vos réservations automatiques (2 min) et manuelles (1 min).',
+          triggerMode: TooltipTriggerMode.tap,
+          showDuration: const Duration(seconds: 3),
+          margin: const EdgeInsets.symmetric(horizontal: 24),
+          padding: const EdgeInsets.all(12),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Theme.of(context).colorScheme.primary, Theme.of(context).colorScheme.primaryContainer],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.timer_outlined, size: 48, color: Theme.of(context).colorScheme.onPrimary),
+                    const SizedBox(width: 8),
+                    Icon(Icons.info_outline, size: 16, color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.7)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Temps gagné estimé',
+                  style: TextStyle(color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.9)),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '$savedTime minutes',
+                  style: TextStyle(
+                    fontSize: 32, 
+                    fontWeight: FontWeight.bold, 
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        
         const SizedBox(height: 24),
         
         // Grid de stats
@@ -1701,24 +1763,28 @@ class _HomeScreenState extends State<HomeScreen> {
               value: '$autoCount',
               icon: Icons.auto_awesome,
               color: Theme.of(context).colorScheme.primary,
+              tooltip: 'Réservations réalisées automatiquement par l\'application via l\'automate.',
             ),
             _buildStatCard(
               title: 'Réservations Manuelles',
               value: '$manualCount',
               icon: Icons.touch_app_rounded,
               color: Colors.orange,
+              tooltip: 'Réservations effectuées en un clic depuis l\'application.',
             ),
             _buildStatCard(
               title: 'Moyenne de Présentiel',
               value: '$avgPerMonth jrs/mois',
               icon: Icons.business_center_rounded,
               color: Colors.blue,
+              tooltip: 'Moyenne calculée sur vos réservations actuelles et historiques.',
             ),
             _buildStatCard(
               title: 'Fidélité au bureau',
               value: '$fidelity%',
               icon: Icons.location_on_rounded,
               color: Colors.green,
+              tooltip: 'Pourcentage de fois où vous réservez votre place favorite plutôt qu\'une autre place.',
             ),
           ],
         ),
@@ -1729,49 +1795,12 @@ class _HomeScreenState extends State<HomeScreen> {
           subtitle: '($favDayPct de tes venues)',
           icon: Icons.today_rounded,
           color: Colors.deepPurple,
-        ),
-        
-        const SizedBox(height: 24),
-        // Temps gagné
-        Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Theme.of(context).colorScheme.primary, Theme.of(context).colorScheme.primaryContainer],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Column(
-            children: [
-              Icon(Icons.timer_outlined, size: 48, color: Theme.of(context).colorScheme.onPrimary),
-              const SizedBox(height: 12),
-              Text(
-                'Temps gagné estimé',
-                style: TextStyle(color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.9)),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '$savedTime minutes',
-                style: TextStyle(
-                  fontSize: 32, 
-                  fontWeight: FontWeight.bold, 
-                  color: Theme.of(context).colorScheme.onPrimary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Basé sur vos $autoCount réservations automatiques (2 min chacune).',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.7)),
-              ),
-            ],
-          ),
+          tooltip: 'Le jour de la semaine où vous venez le plus souvent.',
         ),
       ],
     );
   }
+
 
   Widget _buildStatCard({required String title, required String value, required IconData icon, required Color color, String? subtitle, String? tooltip}) {
     Widget cardContent = Container(
