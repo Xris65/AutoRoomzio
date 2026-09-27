@@ -176,6 +176,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
               onTap: _requestBattery,
               actionLabel: "Désactiver l'optimisation",
               infoText: "Dans l'écran qui va s'ouvrir, choisissez 'AutoRoomzio' et sélectionnez 'Pas de restriction' ou 'Non optimisée'.\n\nC'est indispensable pour que l'application puisse réserver votre place le matin en arrière-plan.",
+              infoImage: 'assets/images/battery.png',
             ),
             const SizedBox(height: 16),
 
@@ -187,6 +188,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
               onTap: _requestAutoStart,
               actionLabel: "Vérifier l'autostart",
               infoText: "Certains téléphones bloquent le lancement des applications après un redémarrage.\n\nDans le menu qui va s'ouvrir, cherchez 'AutoRoomzio' et activez l'interrupteur pour l'autoriser à démarrer tout seul.",
+              infoImage: 'assets/images/autostart.png',
             ),
             const SizedBox(height: 16),
 
@@ -221,6 +223,7 @@ class _PermissionTile extends StatelessWidget {
   final VoidCallback onTap;
   final String actionLabel;
   final String? infoText;
+  final String? infoImage;
 
   const _PermissionTile({
     super.key,
@@ -230,6 +233,7 @@ class _PermissionTile extends StatelessWidget {
     required this.onTap,
     required this.actionLabel,
     this.infoText,
+    this.infoImage,
   });
 
   @override
@@ -283,7 +287,21 @@ class _PermissionTile extends StatelessWidget {
                       context: context,
                       builder: (ctx) => AlertDialog(
                         title: Text("Info : $title"),
-                        content: Text(infoText!),
+                        content: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(infoText!),
+                              if (infoImage != null) ...[
+                                const SizedBox(height: 16),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.asset(infoImage!, fit: BoxFit.contain),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
                         actions: [
                           TextButton(
                             onPressed: () => Navigator.pop(ctx),
