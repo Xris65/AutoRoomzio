@@ -30,7 +30,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   bool _isCalendarBusy = false;
   bool _automationEnabled = false;
+
   bool _canExit = false;
+
+  Map<String, List<String>> _statsMap = {'manual': [], 'auto': []};
+  DateTime? _statsFirstUse;
+
 
   // Calendar State
   DateTime _focusedDay = DateTime.now();
@@ -1210,6 +1215,7 @@ class _HomeScreenState extends State<HomeScreen> {
         } else {
           await _api.cancelReservation(dateStr, token, workspaceId);
         }
+        await _storage.removeBookingStat(dateStr);
       }
 
       setState(() {
@@ -1263,6 +1269,7 @@ class _HomeScreenState extends State<HomeScreen> {
           final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
           if (success) {
             _bookedDates.add(dateStr);
+            await _storage.recordBookingStat(dateStr, true);
             addedCount++;
           }
         }
@@ -1402,6 +1409,7 @@ class _HomeScreenState extends State<HomeScreen> {
       
       final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
       if (success) {
+        await _storage.recordBookingStat(dateStr, false);
         setState(() {
           _bookedDates.add(dateStr);
           _requestedDates.add(dateStr);
@@ -1530,6 +1538,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (accessToken != null && workspaceId != null) {
             final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
             if (success) {
+              await _storage.recordBookingStat(dateStr, false);
               setState(() => _bookedDates.add(dateStr));
               _storage.saveBookedDates(_bookedDates.toList());
               if (mounted) _showTopToast('Place réservée pour le $dateStr', isSuccess: true);
@@ -1607,11 +1616,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   Widget _buildStatsTab() {
+    final manualCount = _statsMap['manual']?.length ?? 0;
+    final autoCount = _statsMap['auto']?.length ?? 0;
+    
+    // 3. Jour Favori
+    final List<String> allBookings = [...(_statsMap['manual'] ?? []), ...(_statsMap['auto'] ?? [])];
+    final Map<int, int> dayCounts = {};
+    for (var dateStr in allBookings) {
+      try {
+        final d = DateTime.parse(dateStr);
+        dayCounts[d.weekday] = (dayCounts[d.weekday] ?? 0) + 1;
+      } catch (_) {}
+    }
+    
+    String favDayStr = "Aucun";
+    String favDayPct = "0%";
+    if (dayCounts.isNotEmpty) {
+      final favDay = dayCounts.entries.reduce((a, b) => a.value > b.value ? a : b);
+      final weekdays = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+      favDayStr = weekdays[favDay.key - 1];
+      final pct = (favDay.value / allBookings.length * 100).round();
+      favDayPct = "$pct%";
+    }
+
+    // 4. Moyenne de Présentiel
+    int avgPerMonth = 0;
+    if (_statsFirstUse != null && allBookings.isNotEmpty) {
+      final daysDiff = DateTime.now().difference(_statsFirstUse!).inDays;
+      final months = (daysDiff / 30).ceil() < 1 ? 1 : (daysDiff / 30).ceil();
+      avgPerMonth = (allBookings.length / months).round();
+    }
+
+    // 5. Taux de fidélité à la place
     final bookedCount = _bookedDates.length;
     final elsewhereCount = _bookedElsewhereMap.length;
-    final stolenCount = _occupiedByOthers.length;
-    final totalDays = bookedCount + elsewhereCount;
-    final savedTime = bookedCount * 2; // Estimation: 2 minutes sauvées par résa
+    final fidelity = (bookedCount + elsewhereCount) > 0 
+        ? ((bookedCount / (bookedCount + elsewhereCount)) * 100).round()
+        : 100;
+        
+    final savedTime = autoCount * 2; // Estimation: 2 minutes sauvées par résa automatique
 
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -1627,6 +1670,51 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 24),
         
+        // Grid de stats
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 2,
+          mainAxisSpacing: 16,
+          crossAxisSpacing: 16,
+          childAspectRatio: 1.0,
+          children: [
+            _buildStatCard(
+              title: 'Réservations Automatiques',
+              value: '$autoCount',
+              icon: Icons.auto_awesome,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            _buildStatCard(
+              title: 'Réservations Manuelles',
+              value: '$manualCount',
+              icon: Icons.touch_app_rounded,
+              color: Colors.orange,
+            ),
+            _buildStatCard(
+              title: 'Moyenne de Présentiel',
+              value: '$avgPerMonth jrs/mois',
+              icon: Icons.business_center_rounded,
+              color: Colors.blue,
+            ),
+            _buildStatCard(
+              title: 'Fidélité au bureau',
+              value: '$fidelity%',
+              icon: Icons.location_on_rounded,
+              color: Colors.green,
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _buildStatCard(
+          title: 'Jour Favori',
+          value: favDayStr,
+          subtitle: '($favDayPct de tes venues)',
+          icon: Icons.today_rounded,
+          color: Colors.deepPurple,
+        ),
+        
+        const SizedBox(height: 24),
         // Temps gagné
         Container(
           padding: const EdgeInsets.all(24),
@@ -1657,55 +1745,18 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Environ 2 min économisées par réservation automatique.',
+                'Basé sur vos $autoCount réservations automatiques (2 min chacune).',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.7)),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 24),
-        
-        // Grid de stats
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          mainAxisSpacing: 16,
-          crossAxisSpacing: 16,
-          childAspectRatio: 1.1,
-          children: [
-            _buildStatCard(
-              title: 'Places sécurisées',
-              value: '$bookedCount',
-              icon: Icons.check_circle_outline,
-              color: Colors.green,
-            ),
-            _buildStatCard(
-              title: 'Jours Ailleurs',
-              value: '$elsewhereCount',
-              icon: Icons.flight_takeoff_rounded,
-              color: Colors.orange,
-            ),
-            _buildStatCard(
-              title: 'Jours planifiés',
-              value: totalDays.toString(),
-              icon: Icons.calendar_month_outlined,
-              color: Colors.blue,
-            ),
-            _buildStatCard(
-              title: 'Vols évités',
-              value: '$stolenCount',
-              icon: Icons.shield_outlined,
-              color: Colors.deepPurple,
-            ),
-          ],
-        ),
       ],
     );
   }
 
-  Widget _buildStatCard({required String title, required String value, required IconData icon, required Color color}) {
+  Widget _buildStatCard({required String title, required String value, required IconData icon, required Color color, String? subtitle}) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1721,6 +1772,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Text(
             value,
             style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 4),
           Text(
@@ -1728,6 +1780,14 @@ class _HomeScreenState extends State<HomeScreen> {
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7)),
           ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+            ),
+          ],
         ],
       ),
     );

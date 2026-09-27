@@ -363,4 +363,74 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
   }
+
+  // 📊 Stats Tracking
+  Future<void> recordFirstUse() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!prefs.containsKey('stats_first_use')) {
+      await prefs.setString('stats_first_use', DateTime.now().toIso8601String());
+    }
+  }
+
+  Future<DateTime> getFirstUse() async {
+    final prefs = await SharedPreferences.getInstance();
+    final d = prefs.getString('stats_first_use');
+    if (d != null) {
+      return DateTime.parse(d);
+    } else {
+      final now = DateTime.now();
+      await prefs.setString('stats_first_use', now.toIso8601String());
+      return now;
+    }
+  }
+
+  Future<void> recordBookingStat(String dateIso, bool isAuto) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> manual = prefs.getStringList('stats_manual') ?? [];
+    List<String> auto = prefs.getStringList('stats_auto') ?? [];
+    
+    final dateKey = dateIso.split('T')[0];
+    
+    manual.removeWhere((d) => d.startsWith(dateKey));
+    auto.removeWhere((d) => d.startsWith(dateKey));
+    
+    if (isAuto) {
+      auto.add(dateKey);
+      await prefs.setStringList('stats_auto', auto);
+    } else {
+      manual.add(dateKey);
+      await prefs.setStringList('stats_manual', manual);
+    }
+  }
+
+  Future<void> removeBookingStat(String dateIso) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> manual = prefs.getStringList('stats_manual') ?? [];
+    List<String> auto = prefs.getStringList('stats_auto') ?? [];
+    
+    final dateKey = dateIso.split('T')[0];
+    
+    bool changed = false;
+    final mLen = manual.length;
+    manual.removeWhere((d) => d.startsWith(dateKey));
+    if (manual.length < mLen) changed = true;
+    
+    final aLen = auto.length;
+    auto.removeWhere((d) => d.startsWith(dateKey));
+    if (auto.length < aLen) changed = true;
+    
+    if (changed) {
+      await prefs.setStringList('stats_manual', manual);
+      await prefs.setStringList('stats_auto', auto);
+    }
+  }
+
+  Future<Map<String, List<String>>> getBookingStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    return {
+      'manual': prefs.getStringList('stats_manual') ?? [],
+      'auto': prefs.getStringList('stats_auto') ?? [],
+    };
+  }
+
 }
