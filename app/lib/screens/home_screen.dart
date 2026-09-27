@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
+import '../widgets/fun_loading_widget.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:workmanager/workmanager.dart';
@@ -353,10 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     Widget content;
     if (_isLoading) {
-      content = Scaffold(
-        appBar: AppBar(title: const Text('AutoRoomzio')),
-        body: _buildShimmerLoading(),
-      );
+      content = Scaffold(body: FunLoadingWidget(messageNotifier: _loadingTextNotifier));
     } else {
       content = Scaffold(
         appBar: AppBar(
@@ -472,32 +470,18 @@ class _HomeScreenState extends State<HomeScreen> {
       baseColor: Theme.of(context).colorScheme.surfaceContainerHighest,
       highlightColor: Theme.of(context).colorScheme.surface,
       child: ListView.builder(
-        padding: const EdgeInsets.all(24),
-        itemCount: 4,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: 3,
         itemBuilder: (_, index) => Padding(
-          padding: const EdgeInsets.only(bottom: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (index == 0) ...[
-                Container(
-                  width: 150,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                const SizedBox(height: 24),
-              ],
-              Container(
-                height: 120,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-              ),
-            ],
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Container(
+            height: 72,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
           ),
         ),
       ),
@@ -636,7 +620,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      _buildUpcomingBookings(),
+                      _isCalendarBusy ? _buildShimmerLoading() : _buildUpcomingBookings(),
                     ],
                     if (_workspaceName == null)
                     const Padding(
