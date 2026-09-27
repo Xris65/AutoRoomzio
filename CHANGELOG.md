@@ -1,3 +1,15 @@
+## [1.3.0] - 2026-09-27
+
+### ✨ Ajouté
+- **Statistiques** : Refonte complète de l'onglet "Stats". L'application fait désormais la différence entre les réservations automatiques (faites par l'automate) et manuelles (cliquées).
+- **Statistiques** : Affichage du pourcentage de fidélité à la place, du nombre moyen de jours de présentiel par mois, et du jour favori.
+- **UI/UX** : Remplacement de la barre de chargement au sommet de l'écran par d'élégants "Skeleton Loaders" (animations de Shimmer) lors de la synchronisation des réservations.
+- **UI/UX** : Restauration de l'écran de chargement avec les petites phrases amusantes au lancement de l'application.
+- **Sécurité** : Ajout d'une protection "Double appui pour quitter" (appuyez deux fois sur Retour pour fermer l'application depuis l'accueil) afin d'éviter les fermetures accidentelles.
+
+### 🐛 Corrigé
+- **Pipeline (GitHub Actions)** : Correction du script d'extraction des notes de version (Changelog) qui échouait à cause d'une interprétation d'expression régulière, laissant les textes de "Release" vides sur GitHub.
+
 # Changelog
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
