@@ -1779,7 +1779,7 @@ class _HomeScreenState extends State<HomeScreen> {
               tooltip: 'Moyenne calculée sur vos réservations actuelles et historiques.',
             ),
             _buildStatCard(
-              title: 'Fidélité au bureau',
+              title: 'Fidélité au bureau sélectionné',
               value: '$fidelity%',
               icon: Icons.location_on_rounded,
               color: Colors.green,
