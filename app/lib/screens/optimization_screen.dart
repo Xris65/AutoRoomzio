@@ -1,8 +1,8 @@
+import 'package:android_intent_plus/android_intent.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:android_intent_plus/android_intent.dart';
 import '../storage_service.dart';
 
 class OptimizationScreen extends StatefulWidget {
@@ -97,7 +97,6 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
           package: intentDict['package'],
           componentName: intentDict['component'],
         );
-        // Do not use canResolveActivity() due to Android 11+ package visibility rules
         await intent.launch();
         launched = true;
         break;
@@ -106,21 +105,43 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
       }
     }
 
-    if (!launched && mounted) {
-      // No OEM autostart menu found → standard Android, no config needed
+    if (!mounted) return;
+
+    if (launched) {
+      // Attendre un peu que le menu système s'ouvre bien par-dessus avant d'afficher la popup
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      // Demander confirmation à l'utilisateur s'il l'a bien fait
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text("Vérification"),
+          content: const Text("Avez-vous bien autorisé le démarrage automatique pour AutoRoomzio dans les paramètres qui viennent de s'ouvrir ?"),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Non")),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Oui")),
+          ],
+        )
+      );
+      if (result == true) {
+        setState(() => _isAutostartVerified = true);
+        final storage = StorageService();
+        await storage.saveAutostartVerified(true);
+      }
+    } else {
+      // Aucun menu trouvé, pas besoin
       setState(() => _isAutostartVerified = true);
       final storage = StorageService();
       await storage.saveAutostartVerified(true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Votre téléphone ne nécessite pas de configuration d'autostart supplémentaire. ✓"),
+          content: Text("Votre téléphone ne nécessite pas de configuration d'autostart supplémentaire."),
           backgroundColor: Colors.green,
           duration: Duration(seconds: 4),
         ),
       );
     }
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -154,6 +175,8 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
               isOk: !_isBatteryOptimized,
               onTap: _requestBattery,
               actionLabel: "Désactiver l'optimisation",
+              infoText: "Dans l'écran qui va s'ouvrir, choisissez 'AutoRoomzio' et sélectionnez 'Pas de restriction' ou 'Non optimisée'.\n\nC'est indispensable pour que l'application puisse réserver votre place le matin en arrière-plan.",
+              infoImage: 'assets/images/battery.png',
             ),
             const SizedBox(height: 16),
 
@@ -164,6 +187,8 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
               isOk: _isAutostartVerified,
               onTap: _requestAutoStart,
               actionLabel: "Vérifier l'autostart",
+              infoText: "Certains téléphones bloquent le lancement des applications après un redémarrage.\n\nDans le menu qui va s'ouvrir, cherchez 'AutoRoomzio' et activez l'interrupteur pour l'autoriser à démarrer tout seul.",
+              infoImage: 'assets/images/autostart.png',
             ),
             const SizedBox(height: 16),
 
@@ -197,13 +222,18 @@ class _PermissionTile extends StatelessWidget {
   final bool? isOk;
   final VoidCallback onTap;
   final String actionLabel;
+  final String? infoText;
+  final String? infoImage;
 
   const _PermissionTile({
+    super.key,
     required this.title,
     required this.description,
     this.isOk,
     required this.onTap,
     required this.actionLabel,
+    this.infoText,
+    this.infoImage,
   });
 
   @override
@@ -249,6 +279,39 @@ class _PermissionTile extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
               ),
+              if (infoText != null)
+                IconButton(
+                  icon: const Icon(Icons.info_outline, color: Colors.blueGrey),
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: Text("Info : $title"),
+                        content: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(infoText!),
+                              if (infoImage != null) ...[
+                                const SizedBox(height: 16),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.asset(infoImage!, fit: BoxFit.contain),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text("Compris"),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
             ],
           ),
           const SizedBox(height: 8),

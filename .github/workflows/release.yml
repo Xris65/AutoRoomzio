@@ -54,12 +54,17 @@ jobs:
       - name: Rename APK
         run: mv app/build/app/outputs/flutter-apk/app-release.apk app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}.apk
 
+      - name: Extract Release Notes
+        id: extract_notes
+        run: |
+          awk '/^## \\[/{if (p) exit; p=1; next} p' CHANGELOG.md > release_notes.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.get_version.outputs.APP_VERSION }}
           name: AutoRoomzio v${{ steps.get_version.outputs.APP_VERSION }}
-          generate_release_notes: true
+          body_path: release_notes.txt
           files: app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
