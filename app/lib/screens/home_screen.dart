@@ -1683,8 +1683,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ? ((bookedCount / (bookedCount + elsewhereCount)) * 100).round()
         : 100;
         
-    final savedTime = (autoCount * 2) + (manualCount * 1); // Estimation: 2min auto, 1min manuel
-
+    
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
@@ -1697,49 +1696,6 @@ class _HomeScreenState extends State<HomeScreen> {
           'L\'impact de l\'automatisation sur votre quotidien',
           style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
         ),
-        const SizedBox(height: 24),
-        
-        // Temps gagné
-        GestureDetector(
-          onTap: () => _showStatInfo(
-            context, 
-            'Temps gagné estimé', 
-            'Temps estimé économisé grâce à AutoRoomzio.\n\nBasé sur vos réservations automatiques (2 min gagnées) et manuelles (1 min gagnée).', 
-            Icons.timer_outlined, 
-            Theme.of(context).colorScheme.primary
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Theme.of(context).colorScheme.primary, Theme.of(context).colorScheme.primaryContainer],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Column(
-              children: [
-                Icon(Icons.timer_outlined, size: 48, color: Theme.of(context).colorScheme.onPrimary),
-                const SizedBox(height: 12),
-                Text(
-                  'Temps gagné estimé',
-                  style: TextStyle(color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.9)),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '$savedTime minutes',
-                  style: TextStyle(
-                    fontSize: 32, 
-                    fontWeight: FontWeight.bold, 
-                    color: Theme.of(context).colorScheme.onPrimary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        
         const SizedBox(height: 24),
         
         // Grid de stats
