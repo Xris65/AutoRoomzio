@@ -417,7 +417,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
             ),
             Positioned(
               bottom: 16,
-              left: 16,
+              right: 16,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
