@@ -788,6 +788,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       setState(() {
                                         for (final dateStr in toCleanLocally) {
                                           _bookedDates.remove(dateStr);
+            _occupiedByOthers.remove(dateStr);
                                           _requestedDates.remove(dateStr);
                                           _bookedElsewhereMap.remove(dateStr);
                                         }
@@ -1224,6 +1225,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _bookedElsewhereMap.remove(dateStr);
           } else {
             _bookedDates.remove(dateStr);
+            _occupiedByOthers.remove(dateStr);
             _requestedDates.remove(dateStr);
           }
         } else {
@@ -1558,6 +1560,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _requestedDates.remove(dateStr);
           _bookedDates.remove(dateStr);
+            _occupiedByOthers.remove(dateStr);
           if (action == 'block') {
             _ignoredDates.add(dateStr);
           }
