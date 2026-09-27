@@ -29,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   bool _isCalendarBusy = false;
   bool _automationEnabled = false;
+  bool _canExit = false;
 
   // Calendar State
   DateTime _focusedDay = DateTime.now();
@@ -350,12 +351,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    Widget content;
     if (_isLoading) {
-      return Scaffold(body: FunLoadingWidget(messageNotifier: _loadingTextNotifier));
-    }
-
-    return Scaffold(
-      appBar: AppBar(
+      content = Scaffold(body: FunLoadingWidget(messageNotifier: _loadingTextNotifier));
+    } else {
+      content = Scaffold(
+        appBar: AppBar(
           title: const Text('AutoRoomzio'),
           actions: [
             if (Platform.isAndroid && _automationEnabled)
@@ -409,6 +410,26 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+    return PopScope(
+      canPop: _canExit,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        
+        setState(() { _canExit = true; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Appuyez à nouveau pour quitter"),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) setState(() { _canExit = false; });
+        });
+      },
+      child: content,
     );
   }
 
