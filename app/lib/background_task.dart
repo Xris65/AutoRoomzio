@@ -90,7 +90,7 @@ void callbackDispatcher() {
         } else {
           final success = await api.reserveWorkspace(dateStr, token, workspaceId);
           if (success) {
-            await storage.recordBookingStat(dateStr, true);
+            await storage.recordBookingStat(true);
             newBooked.add(dateStr);
             newlyBookedCount++;
           }

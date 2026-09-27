@@ -33,7 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _canExit = false;
 
-  Map<String, List<String>> _statsMap = {'manual': [], 'auto': []};
+  Map<String, int> _statsMap = {'manual': 0, 'auto': 0};
   DateTime? _statsFirstUse;
 
 
@@ -1222,8 +1222,7 @@ class _HomeScreenState extends State<HomeScreen> {
         } else {
           await _api.cancelReservation(dateStr, token, workspaceId);
         }
-        await _storage.removeBookingStat(dateStr);
-          await _refreshStats();
+        
       }
 
       setState(() {
@@ -1278,7 +1277,7 @@ class _HomeScreenState extends State<HomeScreen> {
           final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
           if (success) {
             _bookedDates.add(dateStr);
-            await _storage.recordBookingStat(dateStr, true);
+            await _storage.recordBookingStat(true);
             await _refreshStats();
             addedCount++;
           }
@@ -1429,7 +1428,7 @@ class _HomeScreenState extends State<HomeScreen> {
       
       final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
       if (success) {
-        await _storage.recordBookingStat(dateStr, false);
+        await _storage.recordBookingStat(false);
               await _refreshStats();
         setState(() {
           _bookedDates.add(dateStr);
@@ -1559,7 +1558,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (accessToken != null && workspaceId != null) {
             final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
             if (success) {
-              await _storage.recordBookingStat(dateStr, false);
+              await _storage.recordBookingStat(false);
               await _refreshStats();
               setState(() => _bookedDates.add(dateStr));
               _storage.saveBookedDates(_bookedDates.toList());
@@ -1639,13 +1638,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   Widget _buildStatsTab() {
-    final manualCount = _statsMap['manual']?.length ?? 0;
-    final autoCount = _statsMap['auto']?.length ?? 0;
+    final manualCount = _statsMap['manual'] ?? 0;
+    final autoCount = _statsMap['auto'] ?? 0;
     
-    // Combine local history and upcoming from MyRoomz
+    // Combine upcoming from MyRoomz
     final Set<String> allBookingsSet = {};
-    if (_statsMap['manual'] != null) allBookingsSet.addAll(_statsMap['manual']!);
-    if (_statsMap['auto'] != null) allBookingsSet.addAll(_statsMap['auto']!);
     allBookingsSet.addAll(_bookedDates.map((d) => d.split('T')[0]));
     allBookingsSet.addAll(_bookedElsewhereMap.keys.map((d) => d.split('T')[0]));
     
@@ -1702,12 +1699,14 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 24),
         
         // Temps gagné
-        Tooltip(
-          message: 'Basé sur vos réservations automatiques (2 min) et manuelles (1 min).',
-          triggerMode: TooltipTriggerMode.tap,
-          showDuration: const Duration(seconds: 3),
-          margin: const EdgeInsets.symmetric(horizontal: 24),
-          padding: const EdgeInsets.all(12),
+        GestureDetector(
+          onTap: () => _showStatInfo(
+            context, 
+            'Temps gagné estimé', 
+            'Temps estimé économisé grâce à AutoRoomzio.\n\nBasé sur vos réservations automatiques (2 min gagnées) et manuelles (1 min gagnée).', 
+            Icons.timer_outlined, 
+            Theme.of(context).colorScheme.primary
+          ),
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
@@ -1803,63 +1802,117 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   Widget _buildStatCard({required String title, required String value, required IconData icon, required Color color, String? subtitle, String? tooltip}) {
-    Widget cardContent = Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.2), width: 2),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: color, size: 32),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Flexible(
-                child: Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
-                ),
-              ),
-              if (tooltip != null) ...[
-                const SizedBox(width: 4),
-                Icon(Icons.info_outline, size: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
-              ],
-            ],
-          ),
-          if (subtitle != null) ...[
-            const SizedBox(height: 4),
+    return GestureDetector(
+      onTap: tooltip != null ? () => _showStatInfo(context, title, tooltip, icon, color) : null,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.2), width: 2),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 32),
+            const SizedBox(height: 8),
             Text(
-              subtitle,
+              value,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
             ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
+                  ),
+                ),
+                if (tooltip != null) ...[
+                  const SizedBox(width: 4),
+                  Icon(Icons.info_outline, size: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+                ],
+              ],
+            ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
-    
-    if (tooltip != null) {
-      return Tooltip(
-        message: tooltip,
-        triggerMode: TooltipTriggerMode.tap,
-        showDuration: const Duration(seconds: 3),
-        margin: const EdgeInsets.symmetric(horizontal: 24),
-        padding: const EdgeInsets.all(12),
-        child: cardContent,
-      );
-    }
-    return cardContent;
+  }
+
+  void _showStatInfo(BuildContext context, String title, String description, IconData icon, Color color) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return Container(
+          margin: const EdgeInsets.all(16).copyWith(bottom: 32),
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.15),
+                blurRadius: 40,
+                spreadRadius: 10,
+              )
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 56),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                title,
+                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                description,
+                style: TextStyle(fontSize: 16, height: 1.5, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: color,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("J'ai compris", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              )
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildSettingsTab() {

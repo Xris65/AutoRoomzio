@@ -384,52 +384,22 @@ class StorageService {
     }
   }
 
-  Future<void> recordBookingStat(String dateIso, bool isAuto) async {
+  Future<void> recordBookingStat(bool isAuto) async {
     final prefs = await SharedPreferences.getInstance();
-    List<String> manual = prefs.getStringList('stats_manual') ?? [];
-    List<String> auto = prefs.getStringList('stats_auto') ?? [];
-    
-    final dateKey = dateIso.split('T')[0];
-    
-    manual.removeWhere((d) => d.startsWith(dateKey));
-    auto.removeWhere((d) => d.startsWith(dateKey));
-    
     if (isAuto) {
-      auto.add(dateKey);
-      await prefs.setStringList('stats_auto', auto);
+      final count = prefs.getInt('stats_auto_count') ?? 0;
+      await prefs.setInt('stats_auto_count', count + 1);
     } else {
-      manual.add(dateKey);
-      await prefs.setStringList('stats_manual', manual);
+      final count = prefs.getInt('stats_manual_count') ?? 0;
+      await prefs.setInt('stats_manual_count', count + 1);
     }
   }
 
-  Future<void> removeBookingStat(String dateIso) async {
-    final prefs = await SharedPreferences.getInstance();
-    List<String> manual = prefs.getStringList('stats_manual') ?? [];
-    List<String> auto = prefs.getStringList('stats_auto') ?? [];
-    
-    final dateKey = dateIso.split('T')[0];
-    
-    bool changed = false;
-    final mLen = manual.length;
-    manual.removeWhere((d) => d.startsWith(dateKey));
-    if (manual.length < mLen) changed = true;
-    
-    final aLen = auto.length;
-    auto.removeWhere((d) => d.startsWith(dateKey));
-    if (auto.length < aLen) changed = true;
-    
-    if (changed) {
-      await prefs.setStringList('stats_manual', manual);
-      await prefs.setStringList('stats_auto', auto);
-    }
-  }
-
-  Future<Map<String, List<String>>> getBookingStats() async {
+  Future<Map<String, int>> getBookingStats() async {
     final prefs = await SharedPreferences.getInstance();
     return {
-      'manual': prefs.getStringList('stats_manual') ?? [],
-      'auto': prefs.getStringList('stats_auto') ?? [],
+      'manual': prefs.getInt('stats_manual_count') ?? 0,
+      'auto': prefs.getInt('stats_auto_count') ?? 0,
     };
   }
 
