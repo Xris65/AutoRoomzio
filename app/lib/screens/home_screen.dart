@@ -1217,6 +1217,7 @@ class _HomeScreenState extends State<HomeScreen> {
           await _api.cancelReservation(dateStr, token, workspaceId);
         }
         await _storage.removeBookingStat(dateStr);
+          await _refreshStats();
       }
 
       setState(() {
@@ -1272,6 +1273,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (success) {
             _bookedDates.add(dateStr);
             await _storage.recordBookingStat(dateStr, true);
+            await _refreshStats();
             addedCount++;
           }
         }
@@ -1292,6 +1294,16 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
+    }
+  }
+
+
+  Future<void> _refreshStats() async {
+    final stats = await _storage.getBookingStats();
+    if (mounted) {
+      setState(() {
+        _statsMap = stats;
+      });
     }
   }
 
@@ -1412,6 +1424,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
       if (success) {
         await _storage.recordBookingStat(dateStr, false);
+              await _refreshStats();
         setState(() {
           _bookedDates.add(dateStr);
           _requestedDates.add(dateStr);
@@ -1541,6 +1554,7 @@ class _HomeScreenState extends State<HomeScreen> {
             final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
             if (success) {
               await _storage.recordBookingStat(dateStr, false);
+              await _refreshStats();
               setState(() => _bookedDates.add(dateStr));
               _storage.saveBookedDates(_bookedDates.toList());
               if (mounted) _showTopToast('Place réservée pour le $dateStr', isSuccess: true);
@@ -1759,9 +1773,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildStatCard({required String title, required String value, required IconData icon, required Color color, String? subtitle}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
+  Widget _buildStatCard({required String title, required String value, required IconData icon, required Color color, String? subtitle, String? tooltip}) {
+    Widget cardContent = Container(
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(20),
@@ -1771,17 +1785,28 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(icon, color: color, size: 32),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Text(
             value,
-            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 4),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Flexible(
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
+                ),
+              ),
+              if (tooltip != null) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.info_outline, size: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+              ],
+            ],
           ),
           if (subtitle != null) ...[
             const SizedBox(height: 4),
@@ -1794,6 +1819,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+    
+    if (tooltip != null) {
+      return Tooltip(
+        message: tooltip,
+        triggerMode: TooltipTriggerMode.tap,
+        showDuration: const Duration(seconds: 3),
+        margin: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.all(12),
+        child: cardContent,
+      );
+    }
+    return cardContent;
   }
 
   Widget _buildSettingsTab() {
