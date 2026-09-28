@@ -5,6 +5,30 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// On Android, SharedPreferences data is stored in the app's private sandbox,
 /// which is sufficient security for a personal automation tool.
 class StorageService {
+
+  // === UI Settings ===
+
+  
+
+  Future<void> saveShowAutomation(bool show) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_automation_card', show);
+  }
+
+  Future<bool> getShowAutomation() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('show_automation_card') ?? true;
+  }
+
+  Future<void> saveShowStats(bool show) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_stats_card', show);
+  }
+
+  Future<bool> getShowStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('show_stats_card') ?? true;
+  }
   // ── Token ─────────────────────────────────────────────────────────────────
 
   Future<void> saveRefreshToken(String token) async {

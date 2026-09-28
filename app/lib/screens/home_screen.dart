@@ -31,6 +31,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   bool _isCalendarBusy = false;
   bool _automationEnabled = false;
+  bool _showAutomation = true;
+  bool _showStats = true;
 
   bool _canExit = false;
 
@@ -69,6 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late PageController _pageController;
 
   bool _isVacation(DateTime date) {
+    if (!_showAutomation) return false;
     final d = DateTime(date.year, date.month, date.day);
     for (final v in _vacations) {
       final start = DateTime(v.start.year, v.start.month, v.start.day);
@@ -152,6 +155,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final elsewhere = await _storage.getBookedElsewhereDates();
     final autoEnabled = await _storage.getAutomationEnabled();
     final autoTimeMap = await _storage.getAutomationTime();
+    final showAuto = await _storage.getShowAutomation();
+    final showStats = await _storage.getShowStats();
     final notifSuccess = await _storage.getNotifySuccess();
     final notifFailure = await _storage.getNotifyFailure();
     final projCount = await _storage.getProjectionsCount();
@@ -173,12 +178,14 @@ class _HomeScreenState extends State<HomeScreen> {
         _ignoredDates = ignored.toSet();
         _bookedElsewhereMap = {for (var d in elsewhere) d: "Ailleurs"};
         _automationEnabled = autoEnabled;
+      _showAutomation = showAuto;
+      _showStats = showStats;
         _automationTime = TimeOfDay(hour: autoTimeMap['hour']!, minute: autoTimeMap['minute']!);
         _notifySuccess = notifSuccess;
         _notifyFailure = notifFailure;
         _projectionsCount = projCount;
         _hideWeekends = hideWe;
-        _vacations = vacs.map((v) => DateTimeRange(
+          _vacations = vacs.map((v) => DateTimeRange(
           start: DateTime.parse(v['start']!),
           end: DateTime.parse(v['end']!),
         )).toList();
@@ -386,47 +393,63 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
             IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Se déconnecter',
-            onPressed: _logout,
-          ),
-        ],
-      ),
-      body: PageView(
-        controller: _pageController,
-        onPageChanged: (index) {
-          setState(() => _currentIndex = index);
-        },
-        children: [
-          _buildHomeTab(),
-          _buildCalendarTab(),
-          _buildAutomationTab(),
-          _buildStatsTab(),
-          _buildSettingsTab(),
-        ],
-      ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          border: Border(top: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.1))),
-        ),
-        child: SafeArea(
-          child: SizedBox(
-            height: 60,
-            child: Row(
-              children: [
-                _buildNavItem(0, Icons.home_rounded, 'Accueil'),
-                _buildNavItem(1, Icons.calendar_month_rounded, 'Calendrier'),
-                _buildNavItem(2, Icons.auto_awesome, 'Automate'),
-                _buildNavItem(3, Icons.insights_rounded, 'Stats'),
-                _buildNavItem(4, Icons.settings_rounded, 'Paramètres'),
-              ],
+              icon: const Icon(Icons.logout),
+              tooltip: 'Se déconnecter',
+              onPressed: _logout,
             ),
-          ),
+          ],
         ),
-      ),
-    );
-  }
+        body: Builder(
+          builder: (context) {
+            // All tabs always exist in the PageView to prevent layout shifts/flickers
+            final List<Widget> allPages = [
+              _buildHomeTab(),       // 0
+              _buildCalendarTab(),   // 1
+              _buildAutomationTab(), // 2
+              _buildStatsTab(),      // 3
+              _buildSettingsTab(),   // 4
+            ];
+
+            // Only visible tabs are shown in the BottomNavigationBar
+            final List<Map<String, dynamic>> visibleTabs = [
+              {'pageIndex': 0, 'icon': Icons.home_rounded, 'label': 'Accueil'},
+              {'pageIndex': 1, 'icon': Icons.calendar_month_rounded, 'label': 'Calendrier'},
+              if (_showAutomation) {'pageIndex': 2, 'icon': Icons.auto_awesome, 'label': 'Automate'},
+              if (_showStats) {'pageIndex': 3, 'icon': Icons.insights_rounded, 'label': 'Stats'},
+              {'pageIndex': 4, 'icon': Icons.settings_rounded, 'label': 'Paramètres'},
+            ];
+
+            return Scaffold(
+              backgroundColor: Colors.transparent,
+              body: PageView(
+                controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(),
+                onPageChanged: (index) {
+                  setState(() => _currentIndex = index);
+                },
+                children: allPages,
+              ),
+              bottomNavigationBar: Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  border: Border(top: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.1))),
+                ),
+                child: SafeArea(
+                  child: SizedBox(
+                    height: 60,
+                    child: Row(
+                      children: visibleTabs.map((tab) {
+                        return _buildNavItem(tab['pageIndex'] as int, tab['icon'] as IconData, tab['label'] as String);
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
 
     return PopScope(
       canPop: _canExit,
@@ -509,7 +532,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_vacations.any((v) => DateTime.now().isAfter(v.start.subtract(const Duration(days: 1))) && DateTime.now().isBefore(v.end.add(const Duration(days: 1)))))
+                  if (_showAutomation && _vacations.any((v) => DateTime.now().isAfter(v.start.subtract(const Duration(days: 1))) && DateTime.now().isBefore(v.end.add(const Duration(days: 1)))))
                       Container(
                         margin: const EdgeInsets.only(bottom: 16),
                         padding: const EdgeInsets.all(12),
@@ -691,7 +714,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             subtitle: Text('L\'automatisation est désactivée sur ces dates', style: TextStyle(fontSize: 12)),
                           ),
                           if (_vacations.isNotEmpty) const Divider(height: 1),
-                          ..._vacations.map((v) {
+                          if (_showAutomation) ..._vacations.map((v) {
                             return ListTile(
                               dense: true,
                               title: Text('Du ${v.start.day}/${v.start.month}/${v.start.year} au ${v.end.day}/${v.end.month}/${v.end.year}'),
@@ -1057,11 +1080,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (_hideWeekends && (normDay.weekday == DateTime.saturday || normDay.weekday == DateTime.sunday)) {
                         return false;
                       }
-                      for (final v in _vacations) {
-                        final start = DateTime(v.start.year, v.start.month, v.start.day);
-                        final end = DateTime(v.end.year, v.end.month, v.end.day);
-                        if (!normDay.isBefore(start) && !normDay.isAfter(end)) {
-                          return false;
+                      if (_showAutomation) {
+                        for (final v in _vacations) {
+                          final start = DateTime(v.start.year, v.start.month, v.start.day);
+                          final end = DateTime(v.end.year, v.end.month, v.end.day);
+                          if (!normDay.isBefore(start) && !normDay.isAfter(end)) {
+                            return false;
+                          }
                         }
                       }
                       return true;
@@ -1984,7 +2009,48 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 24),
-        const Text('Calendrier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        
+          const SizedBox(height: 24),
+          const Text('Interface Accueil', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+          const SizedBox(height: 8),
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            ),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('Afficher l\'encart Automatisation'),
+                  secondary: const Icon(Icons.auto_awesome),
+                  value: _showAutomation,
+                  onChanged: (val) {
+                    setState(() {
+                      _showAutomation = val;
+                      if (!val) {
+                        if (_automationEnabled) _toggleAutomation(false);
+                      }
+                    });
+                    _storage.saveShowAutomation(val);
+                  },
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  title: const Text('Afficher l\'encart Statistiques'),
+                  secondary: const Icon(Icons.insights_rounded),
+                  value: _showStats,
+                  onChanged: (val) {
+                    setState(() {
+                      _showStats = val;
+                    });
+                    _storage.saveShowStats(val);
+                  },
+                ),
+              ],
+            ),
+          ),
+          const Text('Calendrier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
         Card(
           elevation: 0,
