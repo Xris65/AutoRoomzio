@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:shimmer/shimmer.dart';
 import '../widgets/fun_loading_widget.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -409,7 +410,7 @@ class _HomeScreenState extends State<HomeScreen> {
             return Scaffold(
               backgroundColor: Colors.transparent,
               body: GestureDetector(
-                behavior: HitTestBehavior.translucent,
+                behavior: HitTestBehavior.opaque,
                 onHorizontalDragEnd: (details) {
                   if (details.primaryVelocity == null) return;
                   if (details.primaryVelocity! > 300) {
@@ -418,7 +419,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (_currentIndex < tabs.length - 1) setState(() => _currentIndex++);
                   }
                 },
-                child: AnimatedSwitcher(
+                child: SizedBox.expand(child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
                 layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
                   return Stack(
@@ -442,6 +443,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   key: ValueKey(tabs[_currentIndex]['id']),
                   child: tabs[_currentIndex]['widget'] as Widget,
                 ),
+              ),
               ),
               ),
               bottomNavigationBar: Container(
@@ -1938,7 +1940,7 @@ class _HomeScreenState extends State<HomeScreen> {
       key: const PageStorageKey('settings_scroll'),
       padding: const EdgeInsets.all(16),
       children: [
-        const Text('Général', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const Text('Apparence & Personnalisation', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
         Card(
           elevation: 0,
@@ -1963,31 +1965,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   );
                 },
-              ),
-              const Divider(height: 1),
-              FutureBuilder<int>(
-                future: _storage.getInitialTab(),
-                builder: (context, snapshot) {
-                  return ListTile(
-                    title: const Text('Page de démarrage'),
-                    subtitle: const Text('Onglet affiché à l\'ouverture', style: TextStyle(fontSize: 12)),
-                    leading: const Icon(Icons.home_rounded),
-                    trailing: _buildStyledDropdown<int>(
-                      value: snapshot.data ?? 0,
-                      onChanged: (val) {
-                        if (val != null) {
-                          _storage.saveInitialTab(val);
-                          setState(() {}); // refresh FutureBuilder
-                        }
-                      },
-                      items: const [
-                        DropdownMenuItem(value: 0, child: Text('Accueil (par défaut)')),
-                        DropdownMenuItem(value: 1, child: Text('Calendrier')),
-                        DropdownMenuItem(value: 2, child: Text('Automate')),
-                      ],
-                    ),
-                  );
-                }
               ),
               const Divider(height: 1),
               ListTile(
@@ -2034,10 +2011,103 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
+            ],
+          ),
+        ),
+        
+        const SizedBox(height: 24),
+        const Text('Interface & Navigation', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            children: [
+              FutureBuilder<int>(
+                future: _storage.getInitialTab(),
+                builder: (context, snapshot) {
+                  return ListTile(
+                    title: const Text('Page de démarrage'),
+                    subtitle: const Text('Onglet affiché à l\'ouverture', style: TextStyle(fontSize: 12)),
+                    leading: const Icon(Icons.home_rounded),
+                    trailing: _buildStyledDropdown<int>(
+                      value: snapshot.data ?? 0,
+                      onChanged: (val) {
+                        if (val != null) {
+                          _storage.saveInitialTab(val);
+                          setState(() {}); // refresh FutureBuilder
+                        }
+                      },
+                      items: const [
+                        DropdownMenuItem(value: 0, child: Text('Accueil (par défaut)')),
+                        DropdownMenuItem(value: 1, child: Text('Calendrier')),
+                        DropdownMenuItem(value: 2, child: Text('Automate')),
+                      ],
+                    ),
+                  );
+                }
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('Afficher l\'onglet Automatisation'),
+                secondary: const Icon(Icons.auto_awesome),
+                value: _showAutomation,
+                onChanged: (val) {
+                  setState(() {
+                    if (val) _currentIndex++; else _currentIndex--;
+                    _showAutomation = val;
+                    if (!val) {
+                      if (_automationEnabled) _toggleAutomation(false);
+                    }
+                  });
+                  _storage.saveShowAutomation(val);
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('Afficher l\'onglet Statistiques'),
+                secondary: const Icon(Icons.insights_rounded),
+                value: _showStats,
+                onChanged: (val) {
+                  setState(() {
+                    if (val) _currentIndex++; else _currentIndex--;
+                    _showStats = val;
+                  });
+                  _storage.saveShowStats(val);
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text("Tirer pour rafraîchir"),
+                subtitle: const Text("Actualiser en glissant vers le bas (Accueil, Calendrier)", style: TextStyle(fontSize: 12)),
+                secondary: const Icon(Icons.refresh_rounded),
+                value: _pullToRefreshEnabled,
+                onChanged: (val) {
+                  setState(() => _pullToRefreshEnabled = val);
+                  _storage.savePullToRefresh(val);
+                },
+              ),
+            ],
+          ),
+        ),
 
+        const SizedBox(height: 24),
+        const Text('Paramètres de l\'Accueil', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            children: [
               ListTile(
                 title: const Text('Prévisions à afficher'),
-                subtitle: const Text('Nombre de réservations futures dans l\'accueil', style: TextStyle(fontSize: 12)),
+                subtitle: const Text('Nombre de jours de réservations futures affichés', style: TextStyle(fontSize: 12)),
                 leading: const Icon(Icons.format_list_numbered),
                 trailing: _buildStyledDropdown<int>(
                   value: _projectionsCount,
@@ -2058,60 +2128,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+
         const SizedBox(height: 24),
-        
-          const SizedBox(height: 24),
-          const Text('Interface Accueil', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
-          const SizedBox(height: 8),
-          Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-            ),
-            child: Column(
-              children: [
-                SwitchListTile(
-                  title: const Text('Afficher l\'encart Automatisation'),
-                  secondary: const Icon(Icons.auto_awesome),
-                  value: _showAutomation,
-                  onChanged: (val) {
-                    setState(() {
-                      if (val) _currentIndex++; else _currentIndex--;
-                      _showAutomation = val;
-                      if (!val) {
-                        if (_automationEnabled) _toggleAutomation(false);
-                      }
-                                    });
-                    _storage.saveShowAutomation(val);
-                  },
-                ),
-                const Divider(height: 1),
-                SwitchListTile(
-                  title: const Text('Afficher l\'encart Statistiques'),
-                  secondary: const Icon(Icons.insights_rounded),
-                  value: _showStats,
-                  onChanged: (val) {
-                    setState(() {
-                      if (val) _currentIndex++; else _currentIndex--;
-                      _showStats = val;
-                                    });
-                    _storage.saveShowStats(val);
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text("Tirer pour rafraîchir"),
-                  subtitle: const Text("Actualiser en glissant vers le bas (Accueil, Calendrier)"),
-                  value: _pullToRefreshEnabled,
-                  onChanged: (val) {
-                    setState(() => _pullToRefreshEnabled = val);
-                    _storage.savePullToRefresh(val);
-                  },
-                ),
-              ],
-            ),
-          ),
-          const Text('Calendrier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const Text('Paramètres du Calendrier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
         Card(
           elevation: 0,
@@ -2123,7 +2142,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               SwitchListTile(
                 title: const Text('Désactiver le week-end'),
-                subtitle: const Text('Grise le samedi et dimanche, et empêche toute réservation (auto ou manuelle)', style: TextStyle(fontSize: 12)),
+                subtitle: const Text('Grise le samedi/dimanche, bloque les réservations', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.weekend_rounded),
                 value: _hideWeekends,
                 onChanged: (val) {
@@ -2145,6 +2164,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        
         const SizedBox(height: 24),
         const Text('Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
@@ -2158,7 +2178,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               SwitchListTile(
                 title: const Text('Réservations réussies'),
-                subtitle: const Text('Être notifié quand l\'automatisation réserve une place', style: TextStyle(fontSize: 12)),
+                subtitle: const Text('Être notifié quand l\'automatisation réserve', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.notifications_active, color: Colors.green),
                 value: _notifySuccess,
                 onChanged: (val) {
@@ -2193,6 +2213,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        
         const SizedBox(height: 24),
         const Text('À propos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
@@ -2202,33 +2223,33 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
-          child: FutureBuilder<PackageInfo>(
-            future: PackageInfo.fromPlatform(),
-            builder: (context, snapshot) {
-              return ListTile(
-                leading: const Icon(Icons.info_outline_rounded),
-                title: const Text('Version'),
-                trailing: Text(snapshot.hasData ? snapshot.data!.version : '...'),
-              );
-            },
+          child: Column(
+            children: [
+              FutureBuilder<PackageInfo>(
+                future: PackageInfo.fromPlatform(),
+                builder: (context, snapshot) {
+                  return ListTile(
+                    leading: const Icon(Icons.info_outline_rounded),
+                    title: const Text('Version'),
+                    trailing: Text(snapshot.hasData ? snapshot.data!.version : '...'),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.code_rounded),
+                title: const Text('Code Source'),
+                subtitle: const Text('Voir le projet sur GitHub', style: TextStyle(fontSize: 12)),
+                trailing: const Icon(Icons.open_in_new_rounded, size: 16),
+                onTap: () async {
+                  final url = Uri.parse('https://github.com/Xris65/AutoRoomzio');
+                  await launchUrl(url, mode: LaunchMode.externalApplication);
+                },
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
