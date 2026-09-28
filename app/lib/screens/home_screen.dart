@@ -69,7 +69,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showAllReservations = true;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
-  late PageController _pageController;
 
   bool _isVacation(DateTime date) {
     if (!_showAutomation) return false;
@@ -124,7 +123,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(initialPage: _currentIndex);
     _checkAuthAndLoad();
   }
 
@@ -195,9 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _statsMap = stats;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
-          _pageController.dispose();
-          _pageController = PageController(initialPage: _currentIndex);
-        }
+                    }
       });
     }
 
@@ -412,13 +408,41 @@ class _HomeScreenState extends State<HomeScreen> {
 
             return Scaffold(
               backgroundColor: Colors.transparent,
-              body: PageView(
-                key: ValueKey(tabs.length),
-                controller: _pageController,
-                onPageChanged: (index) {
-                  setState(() => _currentIndex = index);
+              body: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragEnd: (details) {
+                  if (details.primaryVelocity == null) return;
+                  if (details.primaryVelocity! > 300) {
+                    if (_currentIndex > 0) setState(() => _currentIndex--);
+                  } else if (details.primaryVelocity! < -300) {
+                    if (_currentIndex < tabs.length - 1) setState(() => _currentIndex++);
+                  }
                 },
-                children: tabs.map((t) => KeyedSubtree(key: ValueKey(t['id']), child: t['widget'] as Widget)).toList(),
+                child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
+                  return Stack(
+                    alignment: Alignment.topCenter,
+                    children: <Widget>[
+                      ...previousChildren,
+                      if (currentChild != null) currentChild,
+                    ],
+                  );
+                },
+                transitionBuilder: (Widget child, Animation<double> animation) {
+                  return SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.04), // slight slide up
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: FadeTransition(opacity: animation, child: child),
+                  );
+                },
+                child: KeyedSubtree(
+                  key: ValueKey(tabs[_currentIndex]['id']),
+                  child: tabs[_currentIndex]['widget'] as Widget,
+                ),
+              ),
               ),
               bottomNavigationBar: Container(
                 decoration: BoxDecoration(
@@ -472,7 +496,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: InkWell(
           onTap: () {
             if (index == _currentIndex) return;
-            _pageController.jumpToPage(index);
+              setState(() => _currentIndex = index);
           },
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -2058,11 +2082,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (!val) {
                         if (_automationEnabled) _toggleAutomation(false);
                       }
-                      
-                      final oldController = _pageController;
-                      _pageController = PageController(initialPage: _currentIndex);
-                      oldController.dispose();
-                    });
+                                    });
                     _storage.saveShowAutomation(val);
                   },
                 ),
@@ -2075,11 +2095,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     setState(() {
                       if (val) _currentIndex++; else _currentIndex--;
                       _showStats = val;
-                      
-                      final oldController = _pageController;
-                      _pageController = PageController(initialPage: _currentIndex);
-                      oldController.dispose();
-                    });
+                                    });
                     _storage.saveShowStats(val);
                   },
                 ),
