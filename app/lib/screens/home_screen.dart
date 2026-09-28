@@ -117,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         backgroundColor: bgColor,
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
         elevation: 6,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         duration: const Duration(seconds: 3),
@@ -481,7 +481,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("Appuyez à nouveau pour quitter"),
-            duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+              duration: Duration(seconds: 2),
           ),
         );
         Future.delayed(const Duration(seconds: 2), () {
@@ -1952,45 +1954,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _downloadAndInstallApk(String url) async {
-    try {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(color: Colors.blue),
-              SizedBox(height: 16),
-              Text('Téléchargement en cours...\nVeuillez patienter.'),
-            ],
-          ),
-        ),
-      );
-
-      final response = await http.get(Uri.parse(url));
-      
-      if (!mounted) return;
-      Navigator.pop(context);
-
-      if (response.statusCode == 200) {
-        final tempDir = await getTemporaryDirectory();
-        final file = File('${tempDir.path}/AutoRoomzio_update.apk');
-        await file.writeAsBytes(response.bodyBytes);
-        
-        final result = await OpenFilex.open(file.path);
-        if (result.type != ResultType.done) {
-          if (mounted) _showTopToast('Erreur lors du lancement de l\'installation.', isError: true);
-        }
-      } else {
-        _showTopToast('Échec du téléchargement.', isError: true);
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context);
-        _showTopToast('Erreur de connexion.', isError: true);
-      }
-    }
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => DownloadDialog(url: url),
+    );
   }
 
   Future<void> _checkForUpdates() async {
@@ -2381,6 +2349,102 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+
+class DownloadDialog extends StatefulWidget {
+  final String url;
+  const DownloadDialog({super.key, required this.url});
+
+  @override
+  State<DownloadDialog> createState() => _DownloadDialogState();
+}
+
+class _DownloadDialogState extends State<DownloadDialog> {
+  double _progress = 0.0;
+  String _downloaded = "0 MB";
+  String _total = "0 MB";
+  bool _isDownloading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _startDownload();
+  }
+
+  Future<void> _startDownload() async {
+    try {
+      final request = http.Request('GET', Uri.parse(widget.url));
+      final response = await http.Client().send(request);
+      
+      final contentLength = response.contentLength ?? 0;
+      int receivedBytes = 0;
+      
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/AutoRoomzio_update.apk');
+      final sink = file.openWrite();
+
+      response.stream.listen(
+        (List<int> chunk) {
+          receivedBytes += chunk.length;
+          sink.add(chunk);
+          if (mounted) {
+            setState(() {
+              if (contentLength > 0) {
+                _progress = receivedBytes / contentLength;
+                _total = (contentLength / (1024 * 1024)).toStringAsFixed(1);
+              }
+              _downloaded = (receivedBytes / (1024 * 1024)).toStringAsFixed(1);
+            });
+          }
+        },
+        onDone: () async {
+          await sink.close();
+          if (!mounted) return;
+          setState(() { _isDownloading = false; });
+          Navigator.pop(context);
+          
+          final result = await OpenFilex.open(file.path);
+          if (result.type != ResultType.done) {
+            // handle error if needed, but context might be dead.
+          }
+        },
+        onError: (e) async {
+          await sink.close();
+          if (mounted) Navigator.pop(context);
+        },
+      );
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('Téléchargement'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinearProgressIndicator(
+            value: _progress > 0 ? _progress : null,
+            backgroundColor: Colors.grey.withValues(alpha: 0.2),
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('$_downloaded MB / $_total MB', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${(_progress * 100).toInt()}%', style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
