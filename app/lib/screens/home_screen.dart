@@ -1,6 +1,11 @@
-﻿import 'dart:io';
+import 'dart:io';
+import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:shimmer/shimmer.dart';
 import '../widgets/fun_loading_widget.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -31,6 +36,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   bool _isCalendarBusy = false;
   bool _automationEnabled = false;
+  bool _showAutomation = true;
+  bool _showStats = true;
 
   bool _canExit = false;
 
@@ -59,16 +66,17 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _notifySuccess = true;
   bool _notifyFailure = true;
   int _projectionsCount = 4;
-  bool _hideWeekends = true; // Actif par défaut
+  bool _hideWeekends = true;
+  bool _pullToRefreshEnabled = true; // Actif par défaut
   List<DateTimeRange> _vacations = [];
 
   bool _compactMode = false;
   bool _showAllReservations = true;
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
-  late PageController _pageController;
 
   bool _isVacation(DateTime date) {
+    if (!_showAutomation) return false;
     final d = DateTime(date.year, date.month, date.day);
     for (final v in _vacations) {
       final start = DateTime(v.start.year, v.start.month, v.start.day);
@@ -109,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         backgroundColor: bgColor,
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
         elevation: 6,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         duration: const Duration(seconds: 3),
@@ -120,7 +128,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(initialPage: _currentIndex);
     _checkAuthAndLoad();
   }
 
@@ -152,6 +159,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final elsewhere = await _storage.getBookedElsewhereDates();
     final autoEnabled = await _storage.getAutomationEnabled();
     final autoTimeMap = await _storage.getAutomationTime();
+    final showAuto = await _storage.getShowAutomation();
+    final showStats = await _storage.getShowStats();
     final notifSuccess = await _storage.getNotifySuccess();
     final notifFailure = await _storage.getNotifyFailure();
     final projCount = await _storage.getProjectionsCount();
@@ -173,23 +182,23 @@ class _HomeScreenState extends State<HomeScreen> {
         _ignoredDates = ignored.toSet();
         _bookedElsewhereMap = {for (var d in elsewhere) d: "Ailleurs"};
         _automationEnabled = autoEnabled;
+      _showAutomation = showAuto;
+      _showStats = showStats;
         _automationTime = TimeOfDay(hour: autoTimeMap['hour']!, minute: autoTimeMap['minute']!);
         _notifySuccess = notifSuccess;
         _notifyFailure = notifFailure;
         _projectionsCount = projCount;
         _hideWeekends = hideWe;
-        _vacations = vacs.map((v) => DateTimeRange(
+          _vacations = vacs.map((v) => DateTimeRange(
           start: DateTime.parse(v['start']!),
           end: DateTime.parse(v['end']!),
-        )).toList();
+        )).toList()..sort((a, b) => a.start.compareTo(b.start));
         _compactMode = comp;
         _statsFirstUse = firstUse;
         _statsMap = stats;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
-          _pageController.dispose();
-          _pageController = PageController(initialPage: _currentIndex);
-        }
+                    }
       });
     }
 
@@ -386,47 +395,82 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
             IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Se déconnecter',
-            onPressed: _logout,
-          ),
-        ],
-      ),
-      body: PageView(
-        controller: _pageController,
-        onPageChanged: (index) {
-          setState(() => _currentIndex = index);
-        },
-        children: [
-          _buildHomeTab(),
-          _buildCalendarTab(),
-          _buildAutomationTab(),
-          _buildStatsTab(),
-          _buildSettingsTab(),
-        ],
-      ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          border: Border(top: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.1))),
-        ),
-        child: SafeArea(
-          child: SizedBox(
-            height: 60,
-            child: Row(
-              children: [
-                _buildNavItem(0, Icons.home_rounded, 'Accueil'),
-                _buildNavItem(1, Icons.calendar_month_rounded, 'Calendrier'),
-                _buildNavItem(2, Icons.auto_awesome, 'Automate'),
-                _buildNavItem(3, Icons.insights_rounded, 'Stats'),
-                _buildNavItem(4, Icons.settings_rounded, 'Paramètres'),
-              ],
+              icon: const Icon(Icons.logout),
+              tooltip: 'Se déconnecter',
+              onPressed: _logout,
             ),
-          ),
+          ],
         ),
-      ),
-    );
-  }
+        body: Builder(
+          builder: (context) {
+            final List<Map<String, dynamic>> tabs = [
+              {'id': 'home', 'icon': Icons.home_rounded, 'label': 'Accueil', 'widget': _buildHomeTab()},
+              {'id': 'calendar', 'icon': Icons.calendar_month_rounded, 'label': 'Calendrier', 'widget': _buildCalendarTab()},
+              if (_showAutomation) {'id': 'auto', 'icon': Icons.auto_awesome, 'label': 'Automate', 'widget': _buildAutomationTab()},
+              if (_showStats) {'id': 'stats', 'icon': Icons.insights_rounded, 'label': 'Stats', 'widget': _buildStatsTab()},
+              {'id': 'settings', 'icon': Icons.settings_rounded, 'label': 'Paramètres', 'widget': _buildSettingsTab()},
+            ];
+
+            return Scaffold(
+              backgroundColor: Colors.transparent,
+              body: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragEnd: (details) {
+                  if (details.primaryVelocity == null) return;
+                  if (details.primaryVelocity! > 300) {
+                    if (_currentIndex > 0) setState(() => _currentIndex--);
+                  } else if (details.primaryVelocity! < -300) {
+                    if (_currentIndex < tabs.length - 1) setState(() => _currentIndex++);
+                  }
+                },
+                child: SizedBox.expand(child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
+                  return Stack(
+                    alignment: Alignment.topCenter,
+                    children: <Widget>[
+                      ...previousChildren,
+                      if (currentChild != null) currentChild,
+                    ],
+                  );
+                },
+                transitionBuilder: (Widget child, Animation<double> animation) {
+                  return SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.04), // slight slide up
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: FadeTransition(opacity: animation, child: child),
+                  );
+                },
+                child: KeyedSubtree(
+                  key: ValueKey(tabs[_currentIndex]['id']),
+                  child: tabs[_currentIndex]['widget'] as Widget,
+                ),
+              ),
+              ),
+              ),
+              bottomNavigationBar: Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  border: Border(top: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.1))),
+                ),
+                child: SafeArea(
+                  child: SizedBox(
+                    height: 60,
+                    child: Row(
+                      children: List.generate(tabs.length, (index) {
+                        return _buildNavItem(index, tabs[index]['icon'] as IconData, tabs[index]['label'] as String);
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
 
     return PopScope(
       canPop: _canExit,
@@ -437,7 +481,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("Appuyez à nouveau pour quitter"),
-            duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+              duration: Duration(seconds: 2),
           ),
         );
         Future.delayed(const Duration(seconds: 2), () {
@@ -458,7 +504,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: InkWell(
           onTap: () {
             if (index == _currentIndex) return;
-            _pageController.jumpToPage(index);
+              setState(() => _currentIndex = index);
           },
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -497,6 +543,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _wrapWithPtr(Widget child) {
+    if (_pullToRefreshEnabled) {
+      return RefreshIndicator(
+        onRefresh: _syncCalendar,
+        child: child,
+      );
+    }
+    return child;
+  }
+
   Widget _buildHomeTab() {
     return Stack(
       children: [
@@ -504,12 +560,18 @@ class _HomeScreenState extends State<HomeScreen> {
           absorbing: _isCalendarBusy,
           child: Opacity(
             opacity: _isCalendarBusy ? 0.5 : 1.0,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (_vacations.any((v) => DateTime.now().isAfter(v.start.subtract(const Duration(days: 1))) && DateTime.now().isBefore(v.end.add(const Duration(days: 1)))))
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return _wrapWithPtr(
+                  SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: constraints.maxHeight - 32), // -32 for padding (16*2)
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                  if (_showAutomation && _vacations.any((v) => DateTime.now().isAfter(v.start.subtract(const Duration(days: 1))) && DateTime.now().isBefore(v.end.add(const Duration(days: 1)))))
                       Container(
                         margin: const EdgeInsets.only(bottom: 16),
                         padding: const EdgeInsets.all(12),
@@ -644,6 +706,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+        );
+        },
+        ),
+        ),
         ),
         if (_isCalendarBusy)
           const Positioned(
@@ -691,7 +757,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             subtitle: Text('L\'automatisation est désactivée sur ces dates', style: TextStyle(fontSize: 12)),
                           ),
                           if (_vacations.isNotEmpty) const Divider(height: 1),
-                          ..._vacations.map((v) {
+                          if (_showAutomation) ..._vacations.map((v) {
                             return ListTile(
                               dense: true,
                               title: Text('Du ${v.start.day}/${v.start.month}/${v.start.year} au ${v.end.day}/${v.end.month}/${v.end.year}'),
@@ -805,7 +871,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                     messenger.showSnackBar(const SnackBar(content: Text('Journées libérées avec succès.')));
                                   }
                                   
-                                  setState(() => _vacations.add(picked!));
+                                  setState(() {
+                                _vacations.add(picked!);
+                                _vacations.sort((a, b) => a.start.compareTo(b.start));
+                              });
                                   _storage.saveVacations(_vacations.map((v) => {'start': v.start.toIso8601String(), 'end': v.end.toIso8601String()}).toList());
                                 }
                               },
@@ -1018,9 +1087,15 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return SingleChildScrollView(
-      child: Column(
-        children: [
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return _wrapWithPtr(
+          SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Column(
+            children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Row(
@@ -1052,16 +1127,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Opacity(
                   opacity: _isCalendarBusy ? 0.5 : 1.0,
                   child: TableCalendar(
+                      availableGestures: AvailableGestures.horizontalSwipe,
                     enabledDayPredicate: (day) {
                       final normDay = DateTime(day.year, day.month, day.day);
                       if (_hideWeekends && (normDay.weekday == DateTime.saturday || normDay.weekday == DateTime.sunday)) {
                         return false;
                       }
-                      for (final v in _vacations) {
-                        final start = DateTime(v.start.year, v.start.month, v.start.day);
-                        final end = DateTime(v.end.year, v.end.month, v.end.day);
-                        if (!normDay.isBefore(start) && !normDay.isAfter(end)) {
-                          return false;
+                      if (_showAutomation) {
+                        for (final v in _vacations) {
+                          final start = DateTime(v.start.year, v.start.month, v.start.day);
+                          final end = DateTime(v.end.year, v.end.month, v.end.day);
+                          if (!normDay.isBefore(start) && !normDay.isAfter(end)) {
+                            return false;
+                          }
                         }
                       }
                       return true;
@@ -1122,6 +1200,10 @@ class _HomeScreenState extends State<HomeScreen> {
           )
         ],
       ),
+      ),
+      ),
+    );
+    },
     );
   }
 
@@ -1859,11 +1941,97 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  bool _isNewer(String latest, String current) {
+    final l = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    final c = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    for (int i = 0; i < 3; i++) {
+      final lv = i < l.length ? l[i] : 0;
+      final cv = i < c.length ? c[i] : 0;
+      if (lv > cv) return true;
+      if (lv < cv) return false;
+    }
+    return false;
+  }
+
+  Future<void> _downloadAndInstallApk(String url) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => DownloadDialog(url: url),
+    );
+  }
+
+  Future<void> _checkForUpdates() async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.blue)),
+      );
+
+      final response = await http.get(Uri.parse('https://api.github.com/repos/Xris65/AutoRoomzio/releases/latest'));
+      if (!mounted) return;
+      Navigator.pop(context); // close loading
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final latestTag = data['tag_name'] as String; // e.g. "v1.3.1"
+        
+        String? apkUrl;
+        if (data['assets'] != null && data['assets'].isNotEmpty) {
+          apkUrl = data['assets'][0]['browser_download_url'] as String?;
+        }
+
+        final packageInfo = await PackageInfo.fromPlatform();
+        final currentVersion = packageInfo.version;
+        
+        final latestVersion = latestTag.replaceAll('v', '');
+        
+        if (latestVersion != currentVersion && _isNewer(latestVersion, currentVersion)) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Mise à jour disponible 🎉'),
+              content: Text('Une nouvelle version (v$latestVersion) de AutoRoomzio est disponible !\n\nVoulez-vous la télécharger et l\'installer maintenant ?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Plus tard', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    if (apkUrl != null) {
+                      _downloadAndInstallApk(apkUrl);
+                    } else {
+                      launchUrl(Uri.parse(data['html_url']), mode: LaunchMode.externalApplication);
+                    }
+                  },
+                  child: const Text('Installer'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          _showTopToast('Votre application est déjà à jour ! (v$currentVersion)', isSuccess: true);
+        }
+      } else {
+        _showTopToast('Erreur serveur lors de la vérification.', isError: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showTopToast('Impossible de vérifier les mises à jour (Pas de connexion)', isError: true);
+      }
+    }
+  }
+
   Widget _buildSettingsTab() {
     return ListView(
+      key: const PageStorageKey('settings_scroll'),
       padding: const EdgeInsets.all(16),
       children: [
-        const Text('Général', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const Text('Apparence & Personnalisation', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
         Card(
           elevation: 0,
@@ -1888,31 +2056,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   );
                 },
-              ),
-              const Divider(height: 1),
-              FutureBuilder<int>(
-                future: _storage.getInitialTab(),
-                builder: (context, snapshot) {
-                  return ListTile(
-                    title: const Text('Page de démarrage'),
-                    subtitle: const Text('Onglet affiché à l\'ouverture', style: TextStyle(fontSize: 12)),
-                    leading: const Icon(Icons.home_rounded),
-                    trailing: _buildStyledDropdown<int>(
-                      value: snapshot.data ?? 0,
-                      onChanged: (val) {
-                        if (val != null) {
-                          _storage.saveInitialTab(val);
-                          setState(() {}); // refresh FutureBuilder
-                        }
-                      },
-                      items: const [
-                        DropdownMenuItem(value: 0, child: Text('Accueil (par défaut)')),
-                        DropdownMenuItem(value: 1, child: Text('Calendrier')),
-                        DropdownMenuItem(value: 2, child: Text('Automate')),
-                      ],
-                    ),
-                  );
-                }
               ),
               const Divider(height: 1),
               ListTile(
@@ -1959,10 +2102,103 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
+            ],
+          ),
+        ),
+        
+        const SizedBox(height: 24),
+        const Text('Interface & Navigation', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            children: [
+              FutureBuilder<int>(
+                future: _storage.getInitialTab(),
+                builder: (context, snapshot) {
+                  return ListTile(
+                    title: const Text('Page de démarrage'),
+                    subtitle: const Text('Onglet affiché à l\'ouverture', style: TextStyle(fontSize: 12)),
+                    leading: const Icon(Icons.home_rounded),
+                    trailing: _buildStyledDropdown<int>(
+                      value: snapshot.data ?? 0,
+                      onChanged: (val) {
+                        if (val != null) {
+                          _storage.saveInitialTab(val);
+                          setState(() {}); // refresh FutureBuilder
+                        }
+                      },
+                      items: const [
+                        DropdownMenuItem(value: 0, child: Text('Accueil (par défaut)')),
+                        DropdownMenuItem(value: 1, child: Text('Calendrier')),
+                        DropdownMenuItem(value: 2, child: Text('Automate')),
+                      ],
+                    ),
+                  );
+                }
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('Afficher l\'onglet Automatisation'),
+                secondary: const Icon(Icons.auto_awesome),
+                value: _showAutomation,
+                onChanged: (val) {
+                  setState(() {
+                    if (val) _currentIndex++; else _currentIndex--;
+                    _showAutomation = val;
+                    if (!val) {
+                      if (_automationEnabled) _toggleAutomation(false);
+                    }
+                  });
+                  _storage.saveShowAutomation(val);
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('Afficher l\'onglet Statistiques'),
+                secondary: const Icon(Icons.insights_rounded),
+                value: _showStats,
+                onChanged: (val) {
+                  setState(() {
+                    if (val) _currentIndex++; else _currentIndex--;
+                    _showStats = val;
+                  });
+                  _storage.saveShowStats(val);
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text("Tirer pour rafraîchir"),
+                subtitle: const Text("Actualiser en glissant vers le bas (Accueil, Calendrier)", style: TextStyle(fontSize: 12)),
+                secondary: const Icon(Icons.refresh_rounded),
+                value: _pullToRefreshEnabled,
+                onChanged: (val) {
+                  setState(() => _pullToRefreshEnabled = val);
+                  _storage.savePullToRefresh(val);
+                },
+              ),
+            ],
+          ),
+        ),
 
+        const SizedBox(height: 24),
+        const Text('Paramètres de l\'Accueil', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            children: [
               ListTile(
                 title: const Text('Prévisions à afficher'),
-                subtitle: const Text('Nombre de réservations futures dans l\'accueil', style: TextStyle(fontSize: 12)),
+                subtitle: const Text('Nombre de jours de réservations futures affichés', style: TextStyle(fontSize: 12)),
                 leading: const Icon(Icons.format_list_numbered),
                 trailing: _buildStyledDropdown<int>(
                   value: _projectionsCount,
@@ -1983,8 +2219,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+
         const SizedBox(height: 24),
-        const Text('Calendrier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+        const Text('Paramètres du Calendrier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
         Card(
           elevation: 0,
@@ -1996,7 +2233,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               SwitchListTile(
                 title: const Text('Désactiver le week-end'),
-                subtitle: const Text('Grise le samedi et dimanche, et empêche toute réservation (auto ou manuelle)', style: TextStyle(fontSize: 12)),
+                subtitle: const Text('Grise le samedi/dimanche, bloque les réservations', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.weekend_rounded),
                 value: _hideWeekends,
                 onChanged: (val) {
@@ -2018,6 +2255,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        
         const SizedBox(height: 24),
         const Text('Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
@@ -2031,7 +2269,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               SwitchListTile(
                 title: const Text('Réservations réussies'),
-                subtitle: const Text('Être notifié quand l\'automatisation réserve une place', style: TextStyle(fontSize: 12)),
+                subtitle: const Text('Être notifié quand l\'automatisation réserve', style: TextStyle(fontSize: 12)),
                 secondary: const Icon(Icons.notifications_active, color: Colors.green),
                 value: _notifySuccess,
                 onChanged: (val) {
@@ -2066,6 +2304,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        
         const SizedBox(height: 24),
         const Text('À propos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
         const SizedBox(height: 8),
@@ -2075,15 +2314,38 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
-          child: FutureBuilder<PackageInfo>(
-            future: PackageInfo.fromPlatform(),
-            builder: (context, snapshot) {
-              return ListTile(
-                leading: const Icon(Icons.info_outline_rounded),
-                title: const Text('Version'),
-                trailing: Text(snapshot.hasData ? snapshot.data!.version : '...'),
-              );
-            },
+          child: Column(
+            children: [
+              FutureBuilder<PackageInfo>(
+                future: PackageInfo.fromPlatform(),
+                builder: (context, snapshot) {
+                  return ListTile(
+                    leading: const Icon(Icons.info_outline_rounded),
+                    title: const Text('Version'),
+                    trailing: Text(snapshot.hasData ? snapshot.data!.version : '...'),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.code_rounded),
+                title: const Text('Code Source'),
+                subtitle: const Text('Voir le projet sur GitHub', style: TextStyle(fontSize: 12)),
+                trailing: const Icon(Icons.open_in_new_rounded, size: 16),
+                onTap: () async {
+                  final url = Uri.parse('https://github.com/Xris65/AutoRoomzio');
+                  await launchUrl(url, mode: LaunchMode.externalApplication);
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.system_update_rounded, color: Colors.green),
+                title: const Text('Rechercher des mises à jour', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Vérifier si une nouvelle version est disponible', style: TextStyle(fontSize: 12)),
+                trailing: const Icon(Icons.download_rounded, size: 16, color: Colors.green),
+                onTap: _checkForUpdates,
+              ),
+            ],
           ),
         ),
       ],
@@ -2092,16 +2354,97 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 
+class DownloadDialog extends StatefulWidget {
+  final String url;
+  const DownloadDialog({super.key, required this.url});
 
+  @override
+  State<DownloadDialog> createState() => _DownloadDialogState();
+}
 
+class _DownloadDialogState extends State<DownloadDialog> {
+  double _progress = 0.0;
+  String _downloaded = "0 MB";
+  String _total = "0 MB";
+  bool _isDownloading = true;
 
+  @override
+  void initState() {
+    super.initState();
+    _startDownload();
+  }
 
+  Future<void> _startDownload() async {
+    try {
+      final request = http.Request('GET', Uri.parse(widget.url));
+      final response = await http.Client().send(request);
+      
+      final contentLength = response.contentLength ?? 0;
+      int receivedBytes = 0;
+      
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/AutoRoomzio_update.apk');
+      final sink = file.openWrite();
 
+      response.stream.listen(
+        (List<int> chunk) {
+          receivedBytes += chunk.length;
+          sink.add(chunk);
+          if (mounted) {
+            setState(() {
+              if (contentLength > 0) {
+                _progress = receivedBytes / contentLength;
+                _total = (contentLength / (1024 * 1024)).toStringAsFixed(1);
+              }
+              _downloaded = (receivedBytes / (1024 * 1024)).toStringAsFixed(1);
+            });
+          }
+        },
+        onDone: () async {
+          await sink.close();
+          if (!mounted) return;
+          setState(() { _isDownloading = false; });
+          Navigator.pop(context);
+          
+          final result = await OpenFilex.open(file.path);
+          if (result.type != ResultType.done) {
+            // handle error if needed, but context might be dead.
+          }
+        },
+        onError: (e) async {
+          await sink.close();
+          if (mounted) Navigator.pop(context);
+        },
+      );
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+    }
+  }
 
-
-
-
-
-
-
-
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('Téléchargement'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinearProgressIndicator(
+            value: _progress > 0 ? _progress : null,
+            backgroundColor: Colors.grey.withValues(alpha: 0.2),
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('$_downloaded MB / $_total MB', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${(_progress * 100).toInt()}%', style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
