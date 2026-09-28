@@ -188,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _vacations = vacs.map((v) => DateTimeRange(
           start: DateTime.parse(v['start']!),
           end: DateTime.parse(v['end']!),
-        )).toList();
+        )).toList()..sort((a, b) => a.start.compareTo(b.start));
         _compactMode = comp;
         _statsFirstUse = firstUse;
         _statsMap = stats;
@@ -828,7 +828,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                     messenger.showSnackBar(const SnackBar(content: Text('Journées libérées avec succès.')));
                                   }
                                   
-                                  setState(() => _vacations.add(picked!));
+                                  setState(() {
+                                _vacations.add(picked!);
+                                _vacations.sort((a, b) => a.start.compareTo(b.start));
+                              });
                                   _storage.saveVacations(_vacations.map((v) => {'start': v.start.toIso8601String(), 'end': v.end.toIso8601String()}).toList());
                                 }
                               },
