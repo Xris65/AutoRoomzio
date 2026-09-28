@@ -23,11 +23,24 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        getByName("debug") {
+            keyAlias = "autoroomzio"
+            keyPassword = "autoroomzio"
+            storeFile = file("autoroomzio.jks")
+            storePassword = "autoroomzio"
+        }
+        create("release") {
+            keyAlias = "autoroomzio"
+            keyPassword = "autoroomzio"
+            storeFile = file("autoroomzio.jks")
+            storePassword = "autoroomzio"
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
