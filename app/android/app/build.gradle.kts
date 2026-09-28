@@ -21,6 +21,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["appName"] = "AutoRoomzio"
     }
 
     signingConfigs {
@@ -39,6 +40,10 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["appName"] = "AutoRoomzio (Debug)"
+        }
         release {
             signingConfig = signingConfigs.getByName("release")
         }
