@@ -8,6 +8,17 @@ class StorageService {
 
   // === UI Settings ===
 
+  Future<void> savePullToRefresh(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('pull_to_refresh', enabled);
+  }
+
+  Future<bool> getPullToRefresh() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('pull_to_refresh') ?? true;
+  }
+
+
   
 
   Future<void> saveShowAutomation(bool show) async {

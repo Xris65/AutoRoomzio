@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
@@ -61,7 +61,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _notifySuccess = true;
   bool _notifyFailure = true;
   int _projectionsCount = 4;
-  bool _hideWeekends = true; // Actif par défaut
+  bool _hideWeekends = true;
+  bool _pullToRefreshEnabled = true; // Actif par défaut
   List<DateTimeRange> _vacations = [];
 
   bool _compactMode = false;
@@ -401,33 +402,23 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         body: Builder(
           builder: (context) {
-            // All tabs always exist in the PageView to prevent layout shifts/flickers
-            final List<Widget> allPages = [
-              _buildHomeTab(),       // 0
-              _buildCalendarTab(),   // 1
-              _buildAutomationTab(), // 2
-              _buildStatsTab(),      // 3
-              _buildSettingsTab(),   // 4
-            ];
-
-            // Only visible tabs are shown in the BottomNavigationBar
-            final List<Map<String, dynamic>> visibleTabs = [
-              {'pageIndex': 0, 'icon': Icons.home_rounded, 'label': 'Accueil'},
-              {'pageIndex': 1, 'icon': Icons.calendar_month_rounded, 'label': 'Calendrier'},
-              if (_showAutomation) {'pageIndex': 2, 'icon': Icons.auto_awesome, 'label': 'Automate'},
-              if (_showStats) {'pageIndex': 3, 'icon': Icons.insights_rounded, 'label': 'Stats'},
-              {'pageIndex': 4, 'icon': Icons.settings_rounded, 'label': 'Paramètres'},
+            final List<Map<String, dynamic>> tabs = [
+              {'id': 'home', 'icon': Icons.home_rounded, 'label': 'Accueil', 'widget': _buildHomeTab()},
+              {'id': 'calendar', 'icon': Icons.calendar_month_rounded, 'label': 'Calendrier', 'widget': _buildCalendarTab()},
+              if (_showAutomation) {'id': 'auto', 'icon': Icons.auto_awesome, 'label': 'Automate', 'widget': _buildAutomationTab()},
+              if (_showStats) {'id': 'stats', 'icon': Icons.insights_rounded, 'label': 'Stats', 'widget': _buildStatsTab()},
+              {'id': 'settings', 'icon': Icons.settings_rounded, 'label': 'Paramètres', 'widget': _buildSettingsTab()},
             ];
 
             return Scaffold(
               backgroundColor: Colors.transparent,
               body: PageView(
+                key: ValueKey(tabs.length),
                 controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(),
                 onPageChanged: (index) {
                   setState(() => _currentIndex = index);
                 },
-                children: allPages,
+                children: tabs.map((t) => KeyedSubtree(key: ValueKey(t['id']), child: t['widget'] as Widget)).toList(),
               ),
               bottomNavigationBar: Container(
                 decoration: BoxDecoration(
@@ -438,9 +429,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: SizedBox(
                     height: 60,
                     child: Row(
-                      children: visibleTabs.map((tab) {
-                        return _buildNavItem(tab['pageIndex'] as int, tab['icon'] as IconData, tab['label'] as String);
-                      }).toList(),
+                      children: List.generate(tabs.length, (index) {
+                        return _buildNavItem(index, tabs[index]['icon'] as IconData, tabs[index]['label'] as String);
+                      }),
                     ),
                   ),
                 ),
@@ -520,6 +511,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _wrapWithPtr(Widget child) {
+    if (_pullToRefreshEnabled) {
+      return RefreshIndicator(
+        onRefresh: _syncCalendar,
+        child: child,
+      );
+    }
+    return child;
+  }
+
   Widget _buildHomeTab() {
     return Stack(
       children: [
@@ -527,11 +528,17 @@ class _HomeScreenState extends State<HomeScreen> {
           absorbing: _isCalendarBusy,
           child: Opacity(
             opacity: _isCalendarBusy ? 0.5 : 1.0,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return _wrapWithPtr(
+                  SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: constraints.maxHeight - 32), // -32 for padding (16*2)
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                   if (_showAutomation && _vacations.any((v) => DateTime.now().isAfter(v.start.subtract(const Duration(days: 1))) && DateTime.now().isBefore(v.end.add(const Duration(days: 1)))))
                       Container(
                         margin: const EdgeInsets.only(bottom: 16),
@@ -667,6 +674,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+        );
+        },
+        ),
+        ),
         ),
         if (_isCalendarBusy)
           const Positioned(
@@ -1044,9 +1055,15 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return SingleChildScrollView(
-      child: Column(
-        children: [
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return _wrapWithPtr(
+          SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Column(
+            children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Row(
@@ -1078,6 +1095,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Opacity(
                   opacity: _isCalendarBusy ? 0.5 : 1.0,
                   child: TableCalendar(
+                      availableGestures: AvailableGestures.horizontalSwipe,
                     enabledDayPredicate: (day) {
                       final normDay = DateTime(day.year, day.month, day.day);
                       if (_hideWeekends && (normDay.weekday == DateTime.saturday || normDay.weekday == DateTime.sunday)) {
@@ -1150,6 +1168,10 @@ class _HomeScreenState extends State<HomeScreen> {
           )
         ],
       ),
+      ),
+      ),
+    );
+    },
     );
   }
 
@@ -1889,6 +1911,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSettingsTab() {
     return ListView(
+      key: const PageStorageKey('settings_scroll'),
       padding: const EdgeInsets.all(16),
       children: [
         const Text('Général', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
@@ -2030,10 +2053,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   value: _showAutomation,
                   onChanged: (val) {
                     setState(() {
+                      if (val) _currentIndex++; else _currentIndex--;
                       _showAutomation = val;
                       if (!val) {
                         if (_automationEnabled) _toggleAutomation(false);
                       }
+                      
+                      final oldController = _pageController;
+                      _pageController = PageController(initialPage: _currentIndex);
+                      oldController.dispose();
                     });
                     _storage.saveShowAutomation(val);
                   },
@@ -2045,9 +2073,23 @@ class _HomeScreenState extends State<HomeScreen> {
                   value: _showStats,
                   onChanged: (val) {
                     setState(() {
+                      if (val) _currentIndex++; else _currentIndex--;
                       _showStats = val;
+                      
+                      final oldController = _pageController;
+                      _pageController = PageController(initialPage: _currentIndex);
+                      oldController.dispose();
                     });
                     _storage.saveShowStats(val);
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text("Tirer pour rafraîchir"),
+                  subtitle: const Text("Actualiser en glissant vers le bas (Accueil, Calendrier)"),
+                  value: _pullToRefreshEnabled,
+                  onChanged: (val) {
+                    setState(() => _pullToRefreshEnabled = val);
+                    _storage.savePullToRefresh(val);
                   },
                 ),
               ],
