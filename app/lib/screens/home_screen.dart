@@ -1,6 +1,10 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shimmer/shimmer.dart';
 import '../widgets/fun_loading_widget.dart';
@@ -1935,6 +1939,125 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  bool _isNewer(String latest, String current) {
+    final l = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    final c = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    for (int i = 0; i < 3; i++) {
+      final lv = i < l.length ? l[i] : 0;
+      final cv = i < c.length ? c[i] : 0;
+      if (lv > cv) return true;
+      if (lv < cv) return false;
+    }
+    return false;
+  }
+
+  Future<void> _downloadAndInstallApk(String url) async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Colors.blue),
+              SizedBox(height: 16),
+              Text('Téléchargement en cours...\nVeuillez patienter.'),
+            ],
+          ),
+        ),
+      );
+
+      final response = await http.get(Uri.parse(url));
+      
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      if (response.statusCode == 200) {
+        final tempDir = await getTemporaryDirectory();
+        final file = File('${tempDir.path}/AutoRoomzio_update.apk');
+        await file.writeAsBytes(response.bodyBytes);
+        
+        final result = await OpenFilex.open(file.path);
+        if (result.type != ResultType.done) {
+          if (mounted) _showTopToast('Erreur lors du lancement de l\'installation.', isError: true);
+        }
+      } else {
+        _showTopToast('Échec du téléchargement.', isError: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showTopToast('Erreur de connexion.', isError: true);
+      }
+    }
+  }
+
+  Future<void> _checkForUpdates() async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.blue)),
+      );
+
+      final response = await http.get(Uri.parse('https://api.github.com/repos/Xris65/AutoRoomzio/releases/latest'));
+      if (!mounted) return;
+      Navigator.pop(context); // close loading
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final latestTag = data['tag_name'] as String; // e.g. "v1.3.1"
+        
+        String? apkUrl;
+        if (data['assets'] != null && data['assets'].isNotEmpty) {
+          apkUrl = data['assets'][0]['browser_download_url'] as String?;
+        }
+
+        final packageInfo = await PackageInfo.fromPlatform();
+        final currentVersion = packageInfo.version;
+        
+        final latestVersion = latestTag.replaceAll('v', '');
+        
+        if (latestVersion != currentVersion && _isNewer(latestVersion, currentVersion)) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Mise à jour disponible 🎉'),
+              content: Text('Une nouvelle version (v$latestVersion) de AutoRoomzio est disponible !\n\nVoulez-vous la télécharger et l\'installer maintenant ?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Plus tard', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    if (apkUrl != null) {
+                      _downloadAndInstallApk(apkUrl);
+                    } else {
+                      launchUrl(Uri.parse(data['html_url']), mode: LaunchMode.externalApplication);
+                    }
+                  },
+                  child: const Text('Installer'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          _showTopToast('Votre application est déjà à jour ! (v$currentVersion)', isSuccess: true);
+        }
+      } else {
+        _showTopToast('Erreur serveur lors de la vérification.', isError: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showTopToast('Impossible de vérifier les mises à jour (Pas de connexion)', isError: true);
+      }
+    }
+  }
+
   Widget _buildSettingsTab() {
     return ListView(
       key: const PageStorageKey('settings_scroll'),
@@ -2245,6 +2368,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   final url = Uri.parse('https://github.com/Xris65/AutoRoomzio');
                   await launchUrl(url, mode: LaunchMode.externalApplication);
                 },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.system_update_rounded, color: Colors.green),
+                title: const Text('Rechercher des mises à jour', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Vérifier si une nouvelle version est disponible', style: TextStyle(fontSize: 12)),
+                trailing: const Icon(Icons.download_rounded, size: 16, color: Colors.green),
+                onTap: _checkForUpdates,
               ),
             ],
           ),
