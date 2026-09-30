@@ -166,6 +166,21 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('booked_elsewhere_dates', dates);
   }
+  
+  Future<Map<String, String>> getDelegatedBookingsMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('delegated_bookings_map');
+    if (jsonStr != null) {
+      final Map<String, dynamic> decoded = jsonDecode(jsonStr);
+      return decoded.map((k, v) => MapEntry(k, v.toString()));
+    }
+    return {};
+  }
+  
+  Future<void> saveDelegatedBookingsMap(Map<String, String> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('delegated_bookings_map', jsonEncode(map));
+  }
 
   Future<List<String>> getBookedElsewhereDates() async {
     final prefs = await SharedPreferences.getInstance();
