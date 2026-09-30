@@ -8,6 +8,35 @@ class StorageService {
 
   // === UI Settings ===
 
+  Future<void> saveIgnoredUpdateVersion(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('ignored_update_version', version);
+  }
+
+  Future<String?> getIgnoredUpdateVersion() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('ignored_update_version');
+  }
+
+  Future<void> saveShowDelegatedBookings(bool show) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_delegated_bookings', show);
+  }
+
+  Future<bool> getShowDelegatedBookings() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('show_delegated_bookings') ?? true;
+  }
+
+  Future<void> saveDelegatedDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('delegated_dates', dates);
+  }
+
+  Future<List<String>> getDelegatedDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('delegated_dates') ?? [];
+  }
   Future<void> savePullToRefresh(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('pull_to_refresh', enabled);

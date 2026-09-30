@@ -73,6 +73,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _compactMode = false;
   bool _showAllReservations = true;
+  bool _showDelegatedReservations = true;
+  Map<String, String> _delegatedBookingsMap = {};
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
 
@@ -690,6 +692,20 @@ class _HomeScreenState extends State<HomeScreen> {
                             selected: _showAllReservations,
                             onSelected: (val) => setState(() => _showAllReservations = val),
                           ),
+                            const SizedBox(width: 8),
+                            FilterChip(
+                              label: const Text("Délégations", style: TextStyle(fontSize: 11)),
+                              visualDensity: VisualDensity.compact,
+                              selected: _showDelegatedReservations,
+                              onSelected: (val) { setState(() => _showDelegatedReservations = val); _storage.saveShowDelegatedBookings(val); },
+                            ),
+                            const SizedBox(width: 8),
+                            FilterChip(
+                              label: const Text("Délégations", style: TextStyle(fontSize: 11)),
+                              visualDensity: VisualDensity.compact,
+                              selected: _showDelegatedReservations,
+                              onSelected: (val) { setState(() => _showDelegatedReservations = val); _storage.saveShowDelegatedBookings(val); },
+                            ),
                         ],
                       ),
                       const SizedBox(height: 8),
@@ -986,7 +1002,8 @@ class _HomeScreenState extends State<HomeScreen> {
       bool isBooked = _bookedDates.contains(dateStr);
       bool isRequested = _requestedDates.contains(dateStr);
       bool isElsewhere = _bookedElsewhereMap.containsKey(dateStr);
-      bool isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.containsKey(dateStr);
+        bool isDelegated = _delegatedBookingsMap.containsKey(dateStr);
+        bool isOccupiedByOthers = !isBooked && !isElsewhere && !isDelegated && _occupiedByOthers.containsKey(dateStr);
       bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday);
       if (_isVacation(date)) isRecurring = false;
 
@@ -1042,13 +1059,13 @@ class _HomeScreenState extends State<HomeScreen> {
             visualDensity: _compactMode ? VisualDensity.compact : null,
             contentPadding: _compactMode ? const EdgeInsets.symmetric(horizontal: 8, vertical: 0) : null,
             leading: Icon(
-              source == 'Ailleurs' ? Icons.person : (source == 'Occupé' ? Icons.person_off : (isBooked ? Icons.check_circle : Icons.pending)),
-              color: source == 'Ailleurs' ? Colors.orange.shade900 : (source == 'Occupé' ? Colors.grey.shade700 : (isBooked ? Colors.green : Colors.blue)),
+              source == 'Ailleurs' ? Icons.person : (source == 'Délégué' ? Icons.group : (source == 'Occupé' ? Icons.person_off : (isBooked ? Icons.check_circle : Icons.pending))),
+              color: source == 'Ailleurs' ? Colors.orange.shade900 : (source == 'Délégué' ? Colors.purple.shade900 : (source == 'Occupé' ? Colors.grey.shade700 : (isBooked ? Colors.green : Colors.blue))),
             ),
             title: Text('$weekDayName ${date.day}/${date.month}'),
             subtitle: Text(
-              source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Occupé' ? 'Indisponible (réservé par ${item["name"] ?? "qqn d\'autre"})' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)')),
-              style: TextStyle(color: source == 'Ailleurs' ? Colors.orange.shade900 : (source == 'Occupé' ? Colors.grey.shade700 : (isBooked ? Colors.green : Colors.blue)), fontSize: _compactMode ? 10 : 12),
+              source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Délégué' ? 'Réservé pour ${item["name"]}' : (source == 'Occupé' ? 'Indisponible (réservé par ${item["name"] ?? "qqn d\'autre"})' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)'))),
+              style: TextStyle(color: source == 'Ailleurs' ? Colors.orange.shade900 : (source == 'Délégué' ? Colors.purple.shade900 : (source == 'Occupé' ? Colors.grey.shade700 : (isBooked ? Colors.green : Colors.blue))), fontSize: _compactMode ? 10 : 12),
             ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
@@ -1057,7 +1074,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   label: Text(source, style: const TextStyle(fontSize: 10)),
                   backgroundColor: source == 'Calendrier' 
                     ? Colors.purple.withValues(alpha: 0.1) 
-                    : (source == 'Ailleurs' ? Colors.orange.withValues(alpha: 0.3) : (source == 'Occupé' ? Colors.grey.withValues(alpha: 0.2) : Colors.orange.withValues(alpha: 0.1))),
+                    : (source == 'Ailleurs' ? Colors.orange.withValues(alpha: 0.3) : (source == 'Délégué' ? Colors.purple.withValues(alpha: 0.3) : (source == 'Occupé' ? Colors.grey.withValues(alpha: 0.2) : Colors.orange.withValues(alpha: 0.1)))),
                   visualDensity: VisualDensity.compact,
                 ),
                 if (source != 'Occupé')
@@ -1111,6 +1128,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       selected: _showAllReservations,
                       onSelected: (val) => setState(() => _showAllReservations = val),
                     ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text("Délégations"),
+                        selected: _showDelegatedReservations,
+                        onSelected: (val) { setState(() => _showDelegatedReservations = val); _storage.saveShowDelegatedBookings(val); },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text("Délégations"),
+                        selected: _showDelegatedReservations,
+                        onSelected: (val) { setState(() => _showDelegatedReservations = val); _storage.saveShowDelegatedBookings(val); },
+                      ),
                     IconButton(
                       icon: const Icon(Icons.sync),
                       tooltip: 'Synchroniser avec MyRoomz',
@@ -1215,7 +1244,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final isRequested = _requestedDates.contains(dateStr);
     final isIgnored = _ignoredDates.contains(dateStr);
     final isElsewhere = !isBooked && _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
-    final isOccupiedByOthers = !isBooked && !isElsewhere && _occupiedByOthers.containsKey(dateStr);
+      final isDelegated = !isBooked && !isElsewhere && _delegatedBookingsMap.containsKey(dateStr) && _showDelegatedReservations;
+      final isOccupiedByOthers = !isBooked && !isElsewhere && !isDelegated && _occupiedByOthers.containsKey(dateStr);
 
     Color? bgColor;
     Color textColor = isOutside ? Colors.grey : Theme.of(context).colorScheme.onSurface;
@@ -1231,10 +1261,14 @@ class _HomeScreenState extends State<HomeScreen> {
       bgColor = Colors.red.withValues(alpha: 0.8);
       textColor = Colors.white;
     } else if (isElsewhere) {
-      bgColor = Colors.orange.shade200;
-      textColor = Colors.orange.shade900;
-      strikeThrough = false;
-    } else if (isOccupiedByOthers) {
+        bgColor = Colors.orange.shade200;
+        textColor = Colors.orange.shade900;
+        strikeThrough = false;
+      } else if (isDelegated) {
+        bgColor = Colors.purple.shade200;
+        textColor = Colors.purple.shade900;
+        strikeThrough = false;
+      } else if (isOccupiedByOthers) {
       bgColor = Colors.grey.shade400;
       textColor = Colors.white;
     } else if (isToday) {
@@ -2008,6 +2042,13 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               actions: [
                 TextButton(
+                  onPressed: () {
+                    _storage.saveIgnoredUpdateVersion(latestVersion);
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Ignorer cette version', style: TextStyle(color: Colors.grey)),
+                ),
+                TextButton(
                   onPressed: () => Navigator.pop(ctx),
                   child: const Text('Plus tard', style: TextStyle(color: Colors.grey)),
                 ),
@@ -2065,6 +2106,13 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Mise à jour disponible 🎉'),
               content: Text('Une nouvelle version (v$latestVersion) de AutoRoomzio est disponible !\n\nVoulez-vous la télécharger et l\'installer maintenant ?'),
               actions: [
+                TextButton(
+                  onPressed: () {
+                    _storage.saveIgnoredUpdateVersion(latestVersion);
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Ignorer cette version', style: TextStyle(color: Colors.grey)),
+                ),
                 TextButton(
                   onPressed: () => Navigator.pop(ctx),
                   child: const Text('Plus tard', style: TextStyle(color: Colors.grey)),
