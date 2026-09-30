@@ -8,6 +8,35 @@ class StorageService {
 
   // === UI Settings ===
 
+  Future<void> saveIgnoredUpdateVersion(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('ignored_update_version', version);
+  }
+
+  Future<String?> getIgnoredUpdateVersion() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('ignored_update_version');
+  }
+
+  Future<void> saveShowDelegatedBookings(bool show) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_delegated_bookings', show);
+  }
+
+  Future<bool> getShowDelegatedBookings() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('show_delegated_bookings') ?? true;
+  }
+
+  Future<void> saveDelegatedDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('delegated_dates', dates);
+  }
+
+  Future<List<String>> getDelegatedDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('delegated_dates') ?? [];
+  }
   Future<void> savePullToRefresh(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('pull_to_refresh', enabled);
@@ -136,6 +165,43 @@ class StorageService {
   Future<void> saveBookedElsewhereDates(List<String> dates) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('booked_elsewhere_dates', dates);
+  }
+
+  // --- ALL-TIME STATS TRACKING ---
+  Future<void> saveAllTimeBookedDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('all_time_booked_dates', dates);
+  }
+
+  Future<List<String>> getAllTimeBookedDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('all_time_booked_dates') ?? [];
+  }
+
+  Future<void> saveAllTimeElsewhereDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('all_time_elsewhere_dates', dates);
+  }
+
+  Future<List<String>> getAllTimeElsewhereDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('all_time_elsewhere_dates') ?? [];
+  }
+  // -------------------------------
+  
+  Future<Map<String, String>> getDelegatedBookingsMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('delegated_bookings_map');
+    if (jsonStr != null) {
+      final Map<String, dynamic> decoded = jsonDecode(jsonStr);
+      return decoded.map((k, v) => MapEntry(k, v.toString()));
+    }
+    return {};
+  }
+  
+  Future<void> saveDelegatedBookingsMap(Map<String, String> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('delegated_bookings_map', jsonEncode(map));
   }
 
   Future<List<String>> getBookedElsewhereDates() async {
