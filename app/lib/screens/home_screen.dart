@@ -55,6 +55,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Set<String> _ignoredDates = {};
   Map<String, String> _bookedElsewhereMap = {};
   Map<String, String> _occupiedByOthers = {};
+  Map<String, String> _delegatedBookingsMap = {};
+
+  // All-time historical bookings for stats
+  Set<String> _allTimeBookedDates = {};
+  Set<String> _allTimeElsewhereDates = {};
 
   final Map<int, String> _weekDays = {
     1: 'Lundi',
@@ -76,7 +81,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _compactMode = false;
   bool _showAllReservations = true;
   bool _showDelegatedReservations = true;
-  Map<String, String> _delegatedBookingsMap = {};
   final ValueNotifier<String> _loadingTextNotifier = ValueNotifier("Démarrage d'AutoRoomzio...");
   int _currentIndex = 0;
 
@@ -174,10 +178,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final hideWe = await _storage.getHideWeekends();
     final vacs = await _storage.getVacations();
     final comp = await _storage.getCompactMode();
-    
-    await _storage.recordFirstUse();
-    final firstUse = await _storage.getFirstUse();
-    final stats = await _storage.getBookingStats();
+    final allTimeBooked = await _storage.getAllTimeBookedDates();
+    final allTimeElsewhere = await _storage.getAllTimeElsewhereDates();
     
     if (mounted) {
       setState(() {
@@ -187,6 +189,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _bookedDates = booked.toSet();
         _ignoredDates = ignored.toSet();
         _bookedElsewhereMap = {for (var d in elsewhere) d: "Ailleurs"};
+        _allTimeBookedDates = allTimeBooked.toSet();
+        _allTimeElsewhereDates = allTimeElsewhere.toSet();
         _automationEnabled = autoEnabled;
       _showAutomation = showAuto;
       _showStats = showStats;
@@ -200,13 +204,14 @@ class _HomeScreenState extends State<HomeScreen> {
           end: DateTime.parse(v['end']!),
         )).toList()..sort((a, b) => a.start.compareTo(b.start));
         _compactMode = comp;
-        _statsFirstUse = firstUse;
-        _statsMap = stats;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
                     }
       });
     }
+
+    // Load stats lazily in background
+    _refreshStats();
 
     // Fetch latest bookings from API every time
     await _syncCalendar();
@@ -1495,9 +1500,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   Future<void> _refreshStats() async {
+    await _storage.recordFirstUse();
+    final firstUse = await _storage.getFirstUse();
     final stats = await _storage.getBookingStats();
     if (mounted) {
       setState(() {
+        _statsFirstUse = firstUse;
         _statsMap = stats;
       });
     }
@@ -1566,6 +1574,11 @@ class _HomeScreenState extends State<HomeScreen> {
         for (final d in occResult.delegatedElsewhere) {
            bookedElsewhere.remove(d);
         }
+
+        _allTimeBookedDates.addAll(bookedHere);
+        _allTimeElsewhereDates.addAll(bookedElsewhere.keys);
+        await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
+        await _storage.saveAllTimeElsewhereDates(_allTimeElsewhereDates.toList());
 
       Set<String> newBookedDates = {};
       Set<String> newRequestedDates = Set.from(_requestedDates);
@@ -1789,8 +1802,12 @@ class _HomeScreenState extends State<HomeScreen> {
             if (success) {
               await _storage.recordBookingStat(false);
               await _refreshStats();
-              setState(() => _bookedDates.add(dateStr));
+              setState(() {
+                _bookedDates.add(dateStr);
+                _allTimeBookedDates.add(dateStr);
+              });
               _storage.saveBookedDates(_bookedDates.toList());
+              _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
               if (mounted) _showTopToast('Place réservée pour le $dateStr', isSuccess: true);
             } else {
               if (mounted) _showTopToast('Ce bureau n\'est plus disponible à cette date', isError: true);
@@ -1808,13 +1825,15 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _requestedDates.remove(dateStr);
           _bookedDates.remove(dateStr);
-            _occupiedByOthers.remove(dateStr);
+          _allTimeBookedDates.remove(dateStr);
+          _occupiedByOthers.remove(dateStr);
           if (action == 'block') {
             _ignoredDates.add(dateStr);
           }
         });
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveBookedDates(_bookedDates.toList());
+        _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
       } else if (action == 'cancel_delegation') {
         await _cancelDelegationAction(dateStr);
@@ -1825,8 +1844,10 @@ class _HomeScreenState extends State<HomeScreen> {
           if (success) {
             setState(() {
                _bookedElsewhereMap.remove(dateStr);
+               _allTimeElsewhereDates.remove(dateStr);
             });
             _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
+            _storage.saveAllTimeElsewhereDates(_allTimeElsewhereDates.toList());
             if (mounted) _showTopToast('Votre réservation a été annulée.', isSuccess: true);
           } else {
             if (mounted) _showTopToast('Impossible d\'annuler la réservation.', isError: true);
@@ -1872,10 +1893,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final manualCount = _statsMap['manual'] ?? 0;
     final autoCount = _statsMap['auto'] ?? 0;
     
-    // Combine upcoming from MyRoomz
+    // Combine historical upcoming + past from MyRoomz
     final Set<String> allBookingsSet = {};
-    allBookingsSet.addAll(_bookedDates.map((d) => d.split('T')[0]));
-    allBookingsSet.addAll(_bookedElsewhereMap.keys.map((d) => d.split('T')[0]));
+    allBookingsSet.addAll(_allTimeBookedDates.map((d) => d.split('T')[0]));
+    allBookingsSet.addAll(_allTimeElsewhereDates.map((d) => d.split('T')[0]));
     
     final List<String> allBookings = allBookingsSet.toList();
     
@@ -1907,8 +1928,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     // 5. Taux de fidélité à la place
-    final bookedCount = _bookedDates.length;
-    final elsewhereCount = _bookedElsewhereMap.length;
+    final bookedCount = _allTimeBookedDates.length;
+    final elsewhereCount = _allTimeElsewhereDates.length;
     final fidelity = (bookedCount + elsewhereCount) > 0 
         ? ((bookedCount / (bookedCount + elsewhereCount)) * 100).round()
         : 100;

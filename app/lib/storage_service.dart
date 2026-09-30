@@ -166,6 +166,28 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('booked_elsewhere_dates', dates);
   }
+
+  // --- ALL-TIME STATS TRACKING ---
+  Future<void> saveAllTimeBookedDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('all_time_booked_dates', dates);
+  }
+
+  Future<List<String>> getAllTimeBookedDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('all_time_booked_dates') ?? [];
+  }
+
+  Future<void> saveAllTimeElsewhereDates(List<String> dates) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('all_time_elsewhere_dates', dates);
+  }
+
+  Future<List<String>> getAllTimeElsewhereDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('all_time_elsewhere_dates') ?? [];
+  }
+  // -------------------------------
   
   Future<Map<String, String>> getDelegatedBookingsMap() async {
     final prefs = await SharedPreferences.getInstance();
