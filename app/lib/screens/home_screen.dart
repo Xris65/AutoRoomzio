@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -128,6 +129,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _checkUpdatesOnStartup();
     _checkAuthAndLoad();
   }
 
@@ -1959,6 +1961,75 @@ class _HomeScreenState extends State<HomeScreen> {
       barrierDismissible: false,
       builder: (_) => DownloadDialog(url: url),
     );
+  }
+
+  Future<void> _checkUpdatesOnStartup() async {
+    try {
+      final response = await http.get(Uri.parse('https://api.github.com/repos/Xris65/AutoRoomzio/releases/latest'));
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final latestTag = data['tag_name'] as String;
+        
+        String? apkUrl;
+        if (data['assets'] != null && data['assets'].isNotEmpty) {
+          apkUrl = data['assets'][0]['browser_download_url'] as String?;
+        }
+
+        final packageInfo = await PackageInfo.fromPlatform();
+        final currentVersion = packageInfo.version;
+        final latestVersion = latestTag.replaceAll('v', '');
+        
+        // TODO: REMOVE FORCE TEST
+        if (true || (latestVersion != currentVersion && _isNewer(latestVersion, currentVersion))) {
+          
+          String releaseNotes = data['body'] ?? '';
+          
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Mise à jour disponible 🎉'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Une nouvelle version (v$latestVersion) est prête !', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.maxFinite,
+                      child: MarkdownBody(data: releaseNotes),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Voulez-vous l\'installer maintenant ?'),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Plus tard', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    if (apkUrl != null) {
+                      _downloadAndInstallApk(apkUrl);
+                    } else {
+                      launchUrl(Uri.parse(data['html_url']), mode: LaunchMode.externalApplication);
+                    }
+                  },
+                  child: const Text('Installer'),
+                ),
+              ],
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // Échec silencieux
+    }
   }
 
   Future<void> _checkForUpdates() async {
