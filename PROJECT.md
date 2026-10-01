@@ -26,7 +26,7 @@ AutoRoomzio is a Flutter mobile application (Android / iOS) for automated and ma
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M0 | Git Branch Setup & Baseline Sanity | Create & checkout `version-1.4.0`, fix obsolete default `widget_test.dart`, verify baseline build | none | PLANNED |
+| M0 | Git Branch Setup & Baseline Sanity | Create & checkout `version-1.4.0`, fix obsolete default `widget_test.dart`, verify baseline build | none | DONE |
 | M1 | R1 Statistics Spike & Clean UI | Automated API spike test (`spike_api_history_test.dart`) + clean coherent stats tab in `home_screen.dart` | M0 | PLANNED |
 | M2 | R2 Colleague Reservation Flow | Colleague model, API reservation delegation, error handling (409 conflict), Calendar day popup & search | M0 | PLANNED |
 | M3 | R3 "Où est mon équipe ?" (2D Plan) | Occupancy data fetching, visual markings on 2D map, click identity popup, room filtering chips | M0, M2 | PLANNED |
