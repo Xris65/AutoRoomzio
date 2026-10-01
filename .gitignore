@@ -36,3 +36,6 @@ AutoRoomzio.apk
 .idea/
 .vscode/
 *.iml
+
+# ── Teamwork Agent Metadata ───────────────────────────────────────────────────
+.agents/
