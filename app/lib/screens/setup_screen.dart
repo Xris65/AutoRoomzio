@@ -353,6 +353,8 @@ class _SetupScreenState extends State<SetupScreen> {
       return r.toLowerCase().contains(_roomSearch.toLowerCase());
     }).toList();
 
+    final bool isMapActive = _currentStep == 2 && _showMap;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Configuration')),
       body: _loadingSites
@@ -365,8 +367,8 @@ class _SetupScreenState extends State<SetupScreen> {
                   ),
                 )
               : Stepper(
-                    physics: _showMap ? const NeverScrollableScrollPhysics() : null,
-                    key: ValueKey(_showMap),
+                    physics: isMapActive ? const NeverScrollableScrollPhysics() : null,
+                    key: ValueKey('stepper_${_currentStep}_$isMapActive'),
                   currentStep: _showMap && _currentStep > 2 ? 2 : _currentStep,
                   onStepTapped: (step) {
                     if (step == 0) setState(() => _currentStep = 0);

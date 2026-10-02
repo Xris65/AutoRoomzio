@@ -82,6 +82,17 @@ class StorageService {
     return prefs.getString('refresh_token');
   }
 
+  Future<void> clearAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('refresh_token');
+    await prefs.remove('access_token');
+    await prefs.remove('token_expiry');
+  }
+
+  Future<void> clearTokens() async {
+    await clearAuthToken();
+  }
+
   // ── Workspace settings ────────────────────────────────────────────────────
 
   Future<void> saveSiteId(String id) async {

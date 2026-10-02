@@ -18,9 +18,11 @@ import '../storage_service.dart';
 import 'login_screen.dart';
 import 'setup_screen.dart';
 import 'optimization_screen.dart';
+import 'team_map_screen.dart';
 import '../main.dart'; // for themeNotifier
 import '../notification_service.dart';
 import '../models/colleague.dart';
+import '../models/booking_result.dart';
 import '../widgets/colleague_selection_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -164,6 +166,31 @@ class _HomeScreenState extends State<HomeScreen> {
     
     // Authenticated -> load data
     await _loadData();
+  }
+
+  void _openTeamMap({DateTime? date}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TeamMapScreen(
+          initialDate: date ?? _focusedDay,
+          storageService: _storage,
+          apiService: _api,
+        ),
+      ),
+    );
+  }
+
+  void _openFavoritesManager() {
+    final todayStr = DateTime.now().toIso8601String().split('T').first;
+    showDialog(
+      context: context,
+      builder: (_) => ColleagueSelectionDialog(
+        date: todayStr,
+        storageService: _storage,
+        apiService: _api,
+        isManagementMode: true,
+      ),
+    );
   }
 
   Future<void> _loadData() async {
@@ -375,10 +402,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _logout() async {
-    await _storage.clearAll();
+    await _storage.clearTokens();
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
+    Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
     );
   }
 
@@ -692,6 +720,70 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           );
                         }
+                      ),
+                      const SizedBox(height: 12),
+                      Card(
+                        elevation: 0,
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => _openTeamMap(date: DateTime.now()),
+                          child: const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                Icon(Icons.people_outline, color: Colors.amber, size: 24),
+                                SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Plan d\'équipe', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      Text('Voir où sont assis vos collègues aujourd\'hui', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                    ],
+                                  ),
+                                ),
+                                Icon(Icons.chevron_right, color: Colors.grey),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Card(
+                        elevation: 0,
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: _openFavoritesManager,
+                          child: const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                Icon(Icons.star_rounded, color: Colors.amber, size: 24),
+                                SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Mes collègues favoris', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      Text('Rechercher et gérer vos collègues favoris', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                    ],
+                                  ),
+                                ),
+                                Icon(Icons.chevron_right, color: Colors.grey),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 24),
                       Column(
@@ -1151,10 +1243,25 @@ class _HomeScreenState extends State<HomeScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text('Mon Calendrier', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      IconButton(
-                        icon: const Icon(Icons.sync),
-                        tooltip: 'Synchroniser avec MyRoomz',
-                        onPressed: _syncCalendar,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.star_rounded, color: Colors.amber),
+                            tooltip: 'Mes collègues favoris',
+                            onPressed: _openFavoritesManager,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.map_outlined),
+                            tooltip: 'Plan d\'équipe (Où sont mes collègues ?)',
+                            onPressed: () => _openTeamMap(date: _focusedDay),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.sync),
+                            tooltip: 'Synchroniser avec MyRoomz',
+                            onPressed: _syncCalendar,
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1305,6 +1412,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (isIgnored) {
       bgColor = Colors.red.withValues(alpha: isDark ? 0.6 : 0.8);
       textColor = Colors.white;
+      strikeThrough = true;
     } else if (isOccupiedByOthers) {
       bgColor = isDark ? Colors.grey.shade700 : Colors.grey.shade400;
       textColor = isDark ? Colors.grey.shade200 : Colors.white;
@@ -1411,9 +1519,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isCalendarBusy = true);
     try {
       if (source == 'Délégué') {
-         final success = await _cancelDelegationAction(dateStr);
-         setState(() => _isCalendarBusy = false);
-         return;
+        await _cancelDelegationAction(dateStr);
+        setState(() => _isCalendarBusy = false);
+        return;
       }
       
       final token = await _api.refreshMyToken();
@@ -1475,6 +1583,19 @@ class _HomeScreenState extends State<HomeScreen> {
         final dateStr = targetDate.toIso8601String().split('T').first;
 
         if (_ignoredDates.contains(dateStr) || _bookedDates.contains(dateStr)) continue;
+
+        // Hotfix 6 Pre-flight Conflict Guards:
+        // 1. Skip if user already has an active reservation elsewhere on that date
+        if (_bookedElsewhereMap.containsKey(dateStr)) {
+          debugPrint("📍 User already booked elsewhere on $dateStr, skipping automation.");
+          continue;
+        }
+
+        // 2. Skip if user's target desk is already occupied by someone else on that date
+        if (_occupiedByOthers.containsKey(dateStr)) {
+          debugPrint("🔒 Target desk occupied by ${_occupiedByOthers[dateStr]} on $dateStr, skipping automation.");
+          continue;
+        }
 
         // If not ignored/booked and it's either already requested or a valid automation day
         if (_requestedDates.contains(dateStr) || _selectedDays.contains(targetDate.weekday)) {
@@ -1691,7 +1812,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final isIgnored = _ignoredDates.contains(dateStr) && _showAllReservations;
       final isElsewhere = _bookedElsewhereMap.containsKey(dateStr) && _showAllReservations;
       final isDelegated = _delegatedBookingsMap.containsKey(dateStr) && _showDelegatedReservations;
-      final isOccupiedByOthers = !isBooked && !isElsewhere && !isDelegated && _occupiedByOthers.containsKey(dateStr);
+      final bool deskOccupiedByThirdParty = _occupiedByOthers.containsKey(dateStr);
       final differenceInDays = day.difference(today).inDays;
     final isBookableNow = differenceInDays <= 13;
 
@@ -1724,7 +1845,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       onTap: () => Navigator.pop(context, 'cancel_delegation'),
                       ),
               if (!isBooked && !isRequested)
-                if (isWeekendAndHidden)
+                if (deskOccupiedByThirdParty)
+                  ListTile(
+                    leading: const Icon(Icons.person_off, color: Colors.grey),
+                    title: const Text('Place indisponible', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
+                    subtitle: Text("Réservé par ${_occupiedByOthers[dateStr]}.", style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                  )
+                else if (isWeekendAndHidden)
                   const ListTile(
                     leading: Icon(Icons.weekend, color: Colors.grey),
                     title: Text('Les nouvelles réservations le week-end sont désactivées.', style: TextStyle(color: Colors.grey, fontSize: 12)),
@@ -1735,12 +1862,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: Text('Libérer mon autre bureau (${_bookedElsewhereMap[dateStr] ?? "Ailleurs"})', style: TextStyle(color: Colors.orange.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
                     subtitle: const Text("Annule la réservation que vous avez faite sur cet autre bureau ce jour-là.", style: TextStyle(fontSize: 11)),
                     onTap: () => Navigator.pop(context, 'cancel_elsewhere'),
-                  )
-                else if (isOccupiedByOthers)
-                  ListTile(
-                    leading: const Icon(Icons.person_off, color: Colors.grey),
-                    title: const Text('Place indisponible', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
-                    subtitle: Text("Réservé par ${_occupiedByOthers[dateStr]}.", style: const TextStyle(color: Colors.grey, fontSize: 11)),
                   )
                 else if (isDelegatedOnMyDesk)
                   const SizedBox.shrink()
@@ -1754,7 +1875,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: Text(isBookableNow ? 'Réserver ce jour' : 'Programmer (En attente)'),
                     onTap: () => Navigator.pop(context, 'reserve'),
                   ),
-              if (!isBooked && !isDelegated && !isOccupiedByOthers && !isWeekendAndHidden && isBookableNow)
+              if (!isBooked && !isDelegated && !deskOccupiedByThirdParty && !isWeekendAndHidden && isBookableNow)
                 ListTile(
                   leading: Container(
                     padding: const EdgeInsets.all(8),
@@ -1833,7 +1954,12 @@ class _HomeScreenState extends State<HomeScreen> {
               colleagueEmail: colleague.email,
             );
 
-            if (result.isSuccess) {
+            if (result.status == BookingStatus.unauthorized) {
+              if (mounted) {
+                _showTopToast('Session expirée. Veuillez vous reconnecter.', isError: true);
+                _logout();
+              }
+            } else if (result.isSuccess) {
               final eventId = result.eventId ?? '';
               _delegatedBookingsMap[dateStr] =
                   '$workspaceId|${colleague.name}|${_workspaceName ?? ""}|$eventId|${colleague.id}';
@@ -1851,7 +1977,8 @@ class _HomeScreenState extends State<HomeScreen> {
             }
           } else {
             if (mounted) {
-              _showTopToast('Impossible de récupérer vos identifiants.', isError: true);
+              _showTopToast('Session expirée. Veuillez vous reconnecter.', isError: true);
+              _logout();
             }
           }
         } catch (e) {
@@ -1900,6 +2027,11 @@ class _HomeScreenState extends State<HomeScreen> {
               if (mounted) _showTopToast('Place réservée pour le $dateStr', isSuccess: true);
             } else {
               if (mounted) _showTopToast('Ce bureau n\'est plus disponible à cette date', isError: true);
+            }
+          } else if (accessToken == null) {
+            if (mounted) {
+              _showTopToast('Session expirée. Veuillez vous reconnecter.', isError: true);
+              _logout();
             }
           }
         }
@@ -2716,7 +2848,6 @@ class _DownloadDialogState extends State<DownloadDialog> {
   double _progress = 0.0;
   String _downloaded = "0 MB";
   String _total = "0 MB";
-  bool _isDownloading = true;
 
   @override
   void initState() {
@@ -2753,7 +2884,6 @@ class _DownloadDialogState extends State<DownloadDialog> {
         onDone: () async {
           await sink.close();
           if (!mounted) return;
-          setState(() { _isDownloading = false; });
           Navigator.pop(context);
           
           final result = await OpenFilex.open(file.path);

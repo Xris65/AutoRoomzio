@@ -82,12 +82,20 @@ class BookingResult {
       case BookingStatus.success:
         return name != null ? 'Bureau réservé pour $name !' : 'Bureau réservé avec succès !';
       case BookingStatus.conflictColleague:
+        if (message.isNotEmpty &&
+            !message.contains('a déjà une réservation') &&
+            message != 'Ce collègue a déjà une réservation ce jour-là.') {
+          return message;
+        }
         return name != null
             ? '$name a déjà une réservation ce jour-là.'
             : 'Ce collègue a déjà une réservation ce jour-là.';
       case BookingStatus.conflictDesk:
         return 'Ce bureau est déjà réservé par quelqu\'un d\'autre.';
       case BookingStatus.invalidDate:
+        if (message.isNotEmpty && message != 'Invalid date' && !message.contains('13 jours')) {
+          return message;
+        }
         return "La réservation manuelle est limitée à 13 jours à l'avance.";
       case BookingStatus.unauthorized:
         return 'Session expirée. Reconnexion requise.';

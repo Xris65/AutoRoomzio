@@ -13,6 +13,7 @@ class ColleagueSelectionDialog extends StatefulWidget {
   final StorageService? storageService;
   final RoomzApiService? apiService;
   final ValueChanged<Colleague>? onColleagueSelected;
+  final bool isManagementMode;
 
   const ColleagueSelectionDialog({
     super.key,
@@ -21,6 +22,7 @@ class ColleagueSelectionDialog extends StatefulWidget {
     this.storageService,
     this.apiService,
     this.onColleagueSelected,
+    this.isManagementMode = false,
   });
 
   @override
@@ -152,15 +154,8 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
       if (token != null && token.isNotEmpty) {
         final results = await _api.searchColleagues(token, query);
         if (mounted && _searchController.text.trim() == query) {
-          final favIds = _favorites.map((f) => f.id).where((id) => id.isNotEmpty).toSet();
-          final favEmails = _favorites.map((f) => f.email.toLowerCase()).where((e) => e.isNotEmpty).toSet();
-          final remoteOnly = results.where((c) {
-            if (c.id.isNotEmpty && favIds.contains(c.id)) return false;
-            if (c.email.isNotEmpty && favEmails.contains(c.email.toLowerCase())) return false;
-            return true;
-          }).toList();
           setState(() {
-            _remoteResults = remoteOnly;
+            _remoteResults = results;
             _isRemoteSearching = false;
           });
           return;
@@ -180,18 +175,44 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
 
   Future<void> _toggleFavorite(Colleague colleague) async {
     final isFav = _isColleagueFavorite(colleague);
+    String? token = await _api.refreshMyToken();
+    token ??= await _storage.getRefreshToken();
+
+    // Find existing favorite record if present to retrieve its favoriteId
+    final existingFav = _favorites.cast<Colleague?>().firstWhere(
+      (c) =>
+          c != null &&
+          ((colleague.id.isNotEmpty && c.id == colleague.id) ||
+           (colleague.email.isNotEmpty && c.email.isNotEmpty && c.email.toLowerCase() == colleague.email.toLowerCase()) ||
+           (colleague.name.isNotEmpty && c.name.isNotEmpty && c.name.toLowerCase() == colleague.name.toLowerCase())),
+      orElse: () => null,
+    );
+
     if (isFav) {
+      final deleteTargetId = existingFav?.favoriteId ?? colleague.favoriteId ?? colleague.id;
+      if (token != null && token.isNotEmpty && deleteTargetId.isNotEmpty) {
+        await _api.deleteFavorite(token, deleteTargetId);
+      }
       if (colleague.id.isNotEmpty) {
         await _storage.removeFavoriteColleague(colleague.id);
+      }
+      if (existingFav != null && existingFav.id.isNotEmpty && existingFav.id != colleague.id) {
+        await _storage.removeFavoriteColleague(existingFav.id);
       }
       if (colleague.email.isNotEmpty) {
         await _storage.removeFavoriteColleague(colleague.email);
       }
+      await _storage.removeFavoriteColleague(colleague.name);
       _favorites.removeWhere((c) =>
           (colleague.id.isNotEmpty && c.id == colleague.id) ||
+          (existingFav != null && existingFav.id.isNotEmpty && c.id == existingFav.id) ||
           (colleague.email.isNotEmpty && c.email.isNotEmpty && c.email.toLowerCase() == colleague.email.toLowerCase()) ||
           (colleague.name.isNotEmpty && c.name.isNotEmpty && c.name.toLowerCase() == colleague.name.toLowerCase()));
     } else {
+      String? newFavId;
+      if (token != null && token.isNotEmpty && colleague.id.isNotEmpty) {
+        newFavId = await _api.addFavoriteWithId(token, colleague.id);
+      }
       final updated = Colleague(
         id: colleague.id,
         name: colleague.name,
@@ -200,6 +221,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
         deskName: colleague.deskName,
         roomName: colleague.roomName,
         avatarUrl: colleague.avatarUrl,
+        favoriteId: newFavId ?? colleague.favoriteId,
       );
       await _storage.addFavoriteColleague(updated);
       _favorites.add(updated);
@@ -341,17 +363,20 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
 
     if (created != null && mounted) {
       if (created.isFavorite) {
-        await _storage.addFavoriteColleague(created);
-        setState(() {
-          _favorites.add(created);
-          _filteredFavorites.add(created);
-        });
+        await _toggleFavorite(created);
       }
-      _onColleagueTapped(created);
+      if (!widget.isManagementMode) {
+        _onColleagueTapped(created);
+      }
     }
   }
 
   Future<void> _onColleagueTapped(Colleague colleague) async {
+    if (widget.isManagementMode) {
+      await _toggleFavorite(colleague);
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -458,10 +483,10 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       elevation: 6,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
+        constraints: BoxConstraints(
           maxWidth: 480,
-          maxHeight: 620,
-          minWidth: 320,
+          maxHeight: (MediaQuery.of(context).size.height * 0.85).clamp(300.0, 620.0),
+          minWidth: 280,
         ),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -475,21 +500,33 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: isDark ? Colors.purple.shade900.withValues(alpha: 0.4) : Colors.purple.shade50,
+                      color: widget.isManagementMode
+                          ? (isDark ? Colors.amber.shade900.withValues(alpha: 0.4) : Colors.amber.shade50)
+                          : (isDark ? Colors.purple.shade900.withValues(alpha: 0.4) : Colors.purple.shade50),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(Icons.group_add_outlined,
-                        color: isDark ? Colors.purple.shade300 : Colors.purple.shade800),
+                    child: Icon(
+                      widget.isManagementMode ? Icons.star_rounded : Icons.group_add_outlined,
+                      color: widget.isManagementMode
+                          ? (isDark ? Colors.amber.shade300 : Colors.amber.shade800)
+                          : (isDark ? Colors.purple.shade300 : Colors.purple.shade800),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Réserver pour un collègue',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        Text('${widget.date}${widget.deskName != null ? ' • ${widget.deskName}' : ''}',
-                            style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                        Text(
+                          widget.isManagementMode ? 'Mes collègues favoris' : 'Réserver pour un collègue',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          widget.isManagementMode
+                              ? 'Recherchez et gérez vos collègues favoris'
+                              : '${widget.date}${widget.deskName != null ? ' • ${widget.deskName}' : ''}',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                        ),
                       ],
                     ),
                   ),
@@ -538,7 +575,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
               // Button to add outside colleague (Requirement Bug 2 & 3 Fix)
               OutlinedButton.icon(
                 icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
-                label: const Text('Nouveau collègue (hors liste)'),
+                label: Text(widget.isManagementMode ? 'Ajouter un collègue' : 'Nouveau collègue (hors liste)'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),

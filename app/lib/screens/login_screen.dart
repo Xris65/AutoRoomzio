@@ -5,6 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_windows/webview_windows.dart';
 import '../storage_service.dart';
 import 'setup_screen.dart';
+import 'home_screen.dart';
 
 /// Shows the real MyRoomz login page.
 /// - Android: webview_flutter
@@ -150,9 +151,17 @@ class _LoginScreenState extends State<LoginScreen> {
         await _storage.saveRefreshToken(refreshToken);
 
         if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => SetupScreen(accessToken: accessToken)),
-        );
+        final currentWsId = await _storage.getWorkspaceId();
+        if (!mounted) return;
+        if (currentWsId != null && currentWsId.isNotEmpty) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => SetupScreen(accessToken: accessToken)),
+          );
+        }
         return; // success
       } catch (_) {
         continue;

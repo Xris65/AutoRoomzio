@@ -6,8 +6,13 @@ import 'background_task.dart';
 import 'storage_service.dart';
 import 'notification_service.dart';
 import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
+import 'api_service.dart';
 
 import 'package:google_fonts/google_fonts.dart';
+
+// Global root navigator key for global redirection (e.g. session expiration)
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 // Global theme notifiers
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
@@ -16,6 +21,14 @@ final ValueNotifier<int> fontNotifier = ValueNotifier(0);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Register global session expiration handler
+  RoomzApiService.onSessionExpired = () {
+    rootNavigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  };
   
   await NotificationService().init();
 
@@ -84,6 +97,7 @@ class MyApp extends StatelessWidget {
                 }
 
                 return MaterialApp(
+                  navigatorKey: rootNavigatorKey,
                   title: 'AutoRoomzio',
                   themeMode: mode,
                   scrollBehavior: const MaterialScrollBehavior().copyWith(

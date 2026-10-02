@@ -226,7 +226,6 @@ class _PermissionTile extends StatelessWidget {
   final String? infoImage;
 
   const _PermissionTile({
-    super.key,
     required this.title,
     required this.description,
     this.isOk,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/desk_occupant.dart';
 
 class _RoomBounds {
   double minX = double.infinity;
@@ -21,6 +22,14 @@ class WorkspaceMapViewer extends StatefulWidget {
   final double? containerHeight;
   final Function(Map<String, dynamic> workspace) onSelected;
 
+  // Milestone M3 Extensions
+  final Map<String, DeskOccupant> occupants;
+  final Set<String> favoriteIds;
+  final Set<String> favoriteNamesNormalized;
+  final Set<String> favoriteWorkspaceIds;
+  final Function(Map<String, dynamic> workspace, DeskOccupant occupant)? onOccupantTapped;
+  final String? focusedRoom;
+
   const WorkspaceMapViewer({
     super.key,
     required this.features,
@@ -29,6 +38,12 @@ class WorkspaceMapViewer extends StatefulWidget {
     this.selectedWorkspaceId,
     this.containerHeight,
     required this.onSelected,
+    this.occupants = const {},
+    this.favoriteIds = const {},
+    this.favoriteNamesNormalized = const {},
+    this.favoriteWorkspaceIds = const {},
+    this.onOccupantTapped,
+    this.focusedRoom,
   });
 
   @override
@@ -39,6 +54,10 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
   final TransformationController _controller = TransformationController();
   // Track the last viewport size we initialized for — reinit if size changes
   Size? _lastViewportSize;
+  double _lastMapWidth = 0.0;
+  double _lastMapHeight = 0.0;
+  Map<String, _RoomBounds> _savedRoomBounds = {};
+  bool _isInitialTransformSet = false;
 
   @override
   void dispose() {
@@ -46,15 +65,56 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant WorkspaceMapViewer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusedRoom != widget.focusedRoom) {
+      _handleFocusedRoomChanged();
+    }
+  }
+
+  void _handleFocusedRoomChanged() {
+    if (_lastViewportSize == null) return;
+    final viewW = _lastViewportSize!.width;
+    final viewH = _lastViewportSize!.height;
+
+    if (widget.focusedRoom == null || widget.focusedRoom!.isEmpty) {
+      if (_lastMapWidth > 0 && _lastMapHeight > 0) {
+        _initTransform(viewW, viewH, _lastMapWidth, _lastMapHeight, null);
+      }
+      return;
+    }
+
+    _RoomBounds? bounds = _savedRoomBounds[widget.focusedRoom];
+    if (bounds == null) {
+      for (final entry in _savedRoomBounds.entries) {
+        if (entry.key.toLowerCase() == widget.focusedRoom!.toLowerCase()) {
+          bounds = entry.value;
+          break;
+        }
+      }
+    }
+
+    if (bounds != null && bounds.minX != double.infinity) {
+      final targetRect = Rect.fromLTRB(
+        bounds.minX - 28,
+        bounds.minY - 36,
+        bounds.maxX + 28,
+        bounds.maxY + 36,
+      );
+      _frameTargetRect(viewW, viewH, targetRect);
+    }
+  }
+
   void _zoomIn() {
     final matrix = _controller.value.clone();
-    matrix.scale(1.5, 1.5);
+    matrix.scaleByDouble(1.3, 1.3, 1.0, 1.0);
     _controller.value = matrix;
   }
 
   void _zoomOut() {
     final matrix = _controller.value.clone();
-    matrix.scale(0.666, 0.666);
+    matrix.scaleByDouble(0.77, 0.77, 1.0, 1.0);
     _controller.value = matrix;
   }
 
@@ -76,135 +136,121 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
 
   void _initTransform(double viewW, double viewH, double mapW, double mapH, Rect? targetRect) {
     if (mapW <= 0 || mapH <= 0 || viewW <= 0 || viewH <= 0) return;
-    
-    final scaleX = viewW / mapW;
-    final scaleY = viewH / mapH;
-    final fitScale = (scaleX < scaleY ? scaleX : scaleY) * 0.92;
-    
-    double scale;
-    double dx, dy;
-    
-    if (targetRect != null) {
-      // Focus on the selected workspace: zoom in more so it's clearly visible
-      scale = fitScale * 4.5;
-      
-      // But don't zoom in so much that the desk fills the entire screen
-      final maxTargetScale = viewW / (targetRect.width * 2); 
-      if (scale > maxTargetScale && maxTargetScale > fitScale) {
-          scale = maxTargetScale;
-      }
-      
-      scale = scale.clamp(0.001, 100.0);
-      
-      final targetCx = targetRect.left + targetRect.width / 2;
-      final targetCy = targetRect.top + targetRect.height / 2;
-      dx = (viewW / 2) - (targetCx * scale);
-      dy = (viewH / 2) - (targetCy * scale);
+
+    // Use a comfortable, legible scale so desks (~72px) and occupant names are immediately readable.
+    // Scale 1.0 represents the exact architectural design scale with clear legible text.
+    final double scale;
+    double targetCx;
+    double targetCy;
+
+    if (targetRect != null && targetRect.width > 0 && targetRect.height > 0) {
+      scale = 1.15;
+      targetCx = targetRect.left + targetRect.width / 2;
+      targetCy = targetRect.top + targetRect.height / 2;
     } else {
-      // Fit map to screen by default
-      scale = fitScale;
-      
-      // Enforce a minimum scale just in case the map is ridiculously wide
-      final minReadableScale = fitScale * 2.5; 
-      if (scale < minReadableScale) scale = minReadableScale;
-      scale = scale.clamp(0.001, 100.0);
-      
-      dx = (viewW - mapW * scale) / 2;
-      dy = (viewH - mapH * scale) / 2;
+      scale = (viewW / 420.0).clamp(0.85, 1.25);
+      targetCx = mapW / 2;
+      targetCy = mapH / 2;
     }
 
-    final m = Matrix4.identity();
-    m.setTranslationRaw(dx, dy, 0.0);
-    m.setEntry(0, 0, scale);
-    m.setEntry(1, 1, scale);
-    m.setEntry(2, 2, scale);
+    final dx = (viewW / 2) - (targetCx * scale);
+    final dy = (viewH / 2) - (targetCy * scale);
+
+    final m = Matrix4.identity()
+      ..setTranslationRaw(dx, dy, 0.0)
+      ..setEntry(0, 0, scale)
+      ..setEntry(1, 1, scale)
+      ..setEntry(2, 2, scale);
+
+    _controller.value = m;
+  }
+
+  void _frameTargetRect(double viewW, double viewH, Rect targetRect) {
+    if (targetRect.width <= 0 || targetRect.height <= 0 || viewW <= 0 || viewH <= 0) return;
+    final scaleX = viewW / targetRect.width;
+    final scaleY = viewH / targetRect.height;
+    final scale = (scaleX < scaleY ? scaleX : scaleY).clamp(0.5, 2.5) * 0.90;
+
+    final targetCx = targetRect.left + targetRect.width / 2;
+    final targetCy = targetRect.top + targetRect.height / 2;
+    final dx = (viewW / 2) - (targetCx * scale);
+    final dy = (viewH / 2) - (targetCy * scale);
+
+    final m = Matrix4.identity()
+      ..setTranslationRaw(dx, dy, 0.0)
+      ..setEntry(0, 0, scale)
+      ..setEntry(1, 1, scale)
+      ..setEntry(2, 2, scale);
+
     _controller.value = m;
   }
 
   @override
   Widget build(BuildContext context) {
     if (widget.features.isEmpty) {
-      return const Center(child: Text('Plan non disponible'));
+      return const Center(child: Text("Aucun plan disponible"));
     }
 
-    // ── 1. Compute bounding box of all GeoJSON features ──────────────────────
-    double minX = double.infinity, minY = double.infinity;
-    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
-    
-    Rect? selectedRect;
-
-    for (final feature in widget.features) {
-      final props = feature['properties'] ?? {};
-      final coords = feature['geometry']?['coordinates'] as List?;
-      if (coords == null) continue;
-      
-      double fMinX = double.infinity, fMinY = double.infinity;
-      double fMaxX = double.negativeInfinity, fMaxY = double.negativeInfinity;
-      
-      _extractBounds(coords, (x, y) {
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-        
-        if (x < fMinX) fMinX = x;
-        if (y < fMinY) fMinY = y;
-        if (x > fMaxX) fMaxX = x;
-        if (y > fMaxY) fMaxY = y;
-      });
-      
-      if (fMinX == double.infinity) continue;
-      
-      final wsId = (props['workspaceId']?.toString() ?? props['roomId']?.toString() ?? props['id']?.toString())?.toLowerCase();
-      if (widget.selectedWorkspaceId != null && wsId == widget.selectedWorkspaceId?.toLowerCase()) {
-        selectedRect = Rect.fromLTRB(fMinX, fMinY, fMaxX, fMaxY);
-      }
-    }
-
-    if (minX == double.infinity) {
-      return const Center(child: Text('Erreur de plan'));
-    }
-
-    const padding = 40.0;
-    final mapWidth = maxX - minX + padding * 2;
-    final mapHeight = maxY - minY + padding * 2;
-    
-    if (selectedRect != null) {
-      // Offset selectedRect by global minX/minY and padding so it matches the canvas coordinates
-      selectedRect = Rect.fromLTRB(
-        selectedRect.left - minX + padding, 
-        selectedRect.top - minY + padding, 
-        selectedRect.right - minX + padding, 
-        selectedRect.bottom - minY + padding
-      );
-    }
-
-    final wsMap = {
-      for (var w in widget.workspaces) w['id']?.toString().toLowerCase(): w
-    };
-    final allWsMap = {
-      for (var w in widget.allWorkspaces) w['id']?.toString().toLowerCase(): w
-    };
-
-    // ── 2. LayoutBuilder knows the REAL available size synchronously ─────────
     return LayoutBuilder(
       builder: (context, constraints) {
         final viewW = constraints.maxWidth;
-        final viewH = constraints.maxHeight.isInfinite
-            ? (widget.containerHeight ?? 400.0)
-            : constraints.maxHeight;
+        // If containerHeight is provided, use it; otherwise fill available height
+        final viewH = widget.containerHeight ??
+            (constraints.maxHeight.isFinite ? constraints.maxHeight : 450.0);
 
-        final viewportSize = Size(viewW, viewH);
-        if (_lastViewportSize != viewportSize) {
-          _lastViewportSize = viewportSize;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _initTransform(viewW, viewH, mapWidth, mapHeight, selectedRect);
+        // ── 1. Compute overall bounding box & coordinate scaling factor ───────
+        double minX = double.infinity, minY = double.infinity;
+        double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+        double totalDeskWidth = 0.0;
+        int deskCount = 0;
+
+        for (final feature in widget.features) {
+          final coords = feature['geometry']?['coordinates'] as List?;
+          if (coords == null || coords.isEmpty) continue;
+          double fMinX = double.infinity, fMinY = double.infinity;
+          double fMaxX = double.negativeInfinity, fMaxY = double.negativeInfinity;
+          _extractBounds(coords, (x, y) {
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+            if (x < fMinX) fMinX = x;
+            if (y < fMinY) fMinY = y;
+            if (x > fMaxX) fMaxX = x;
+            if (y > fMaxY) fMaxY = y;
           });
+          final props = feature['properties'] ?? {};
+          final isDesk = props['workspaceType'] == 'Desk';
+          if (isDesk && fMinX != double.infinity && (fMaxX - fMinX) > 0) {
+            totalDeskWidth += (fMaxX - fMinX);
+            deskCount++;
+          }
         }
+
+        if (minX == double.infinity) {
+          return const Center(child: Text("Coordonnées de la carte invalides"));
+        }
+
+        // Target desk width is ~72.0px. Scale coordinates proportionally so desks are large
+        // and spacious (~68-76px wide, ~44-52px high) and never collide with neighbors.
+        final avgDeskWidth = deskCount > 0 ? (totalDeskWidth / deskCount) : 32.0;
+        final coordScale = avgDeskWidth > 0 ? (72.0 / avgDeskWidth).clamp(1.0, 3.5) : 2.0;
+
+        const padding = 40.0;
 
         // ── 3. Build the feature widgets ─────────────────────────────────────
         final Map<String, _RoomBounds> roomBounds = {};
         final List<Widget> featureWidgets = [];
+
+        // Build quick lookup maps
+        final wsMap = {
+          for (var w in widget.workspaces)
+            if (w['id'] != null) w['id'].toString().toLowerCase(): w
+        };
+        final allWsMap = {
+          for (var w in widget.allWorkspaces)
+            if (w['id'] != null) w['id'].toString().toLowerCase(): w
+        };
 
         for (final feature in widget.features) {
           final props = feature['properties'] ?? {};
@@ -231,12 +277,32 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
           });
           if (fMinX == double.infinity) continue;
 
-          final left = fMinX - minX + padding;
-          final top = fMinY - minY + padding;
-          final width = fMaxX - fMinX;
-          final height = fMaxY - fMinY;
+          final left = (fMinX - minX) * coordScale + padding;
+          final top = (fMinY - minY) * coordScale + padding;
+          final width = (fMaxX - fMinX) * coordScale;
+          final height = (fMaxY - fMinY) * coordScale;
 
-          // Label
+          // Check occupant and favorite status (Milestone M3)
+          final occupant = widget.occupants[wsId] ??
+              (wsId != null ? widget.occupants[wsId.toLowerCase()] : null);
+
+          // For desks: ensure positive padding/gap between neighboring desks so they never collide
+          double renderWidth = width;
+          double renderHeight = height;
+          double renderLeft = left;
+          double renderTop = top;
+
+          if (isDesk || isBookable || occupant != null) {
+            const deskGap = 1.5;
+            if (width > deskGap * 2 && height > deskGap * 2) {
+              renderWidth = width - deskGap * 2;
+              renderHeight = height - deskGap * 2;
+              renderLeft = left + deskGap;
+              renderTop = top + deskGap;
+            }
+          }
+
+          // Label & room determination
           String label = '';
           String? roomName;
           final propName = props['name']?.toString() ??
@@ -262,7 +328,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
             if (roomName.isNotEmpty) {
               roomBounds
                   .putIfAbsent(roomName, () => _RoomBounds())
-                  .addRect(left, top, width, height);
+                  .addRect(renderLeft, renderTop, renderWidth, renderHeight);
             }
           } else if (!isDesk) {
             final roomWs = wsId != null ? allWsMap[wsId] : null;
@@ -291,126 +357,351 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
             continue;
           }
 
-          final bgColor = isSelected
-              ? Theme.of(context).colorScheme.primary
-              : isBookable
-                  ? Theme.of(context).colorScheme.primaryContainer
-                  : Theme.of(context).colorScheme.surfaceContainerHigh;
+          final isMe = occupant != null && occupant.isMe;
 
-          final textColor = isSelected
-              ? Theme.of(context).colorScheme.onPrimary
-              : isBookable
-                  ? Theme.of(context).colorScheme.onPrimaryContainer
-                  : Theme.of(context).colorScheme.onSurfaceVariant;
+          final isFavorite = (occupant != null && !isMe) &&
+              ((occupant.occupantId != null &&
+                      (widget.favoriteIds.contains(occupant.occupantId) ||
+                       widget.favoriteIds.contains(occupant.occupantId!.toLowerCase()))) ||
+               widget.favoriteNamesNormalized.contains(occupant.occupantName.trim().toLowerCase()) ||
+               (wsId != null &&
+                   (widget.favoriteWorkspaceIds.contains(wsId) ||
+                    widget.favoriteWorkspaceIds.contains(wsId.toLowerCase()))));
 
-          featureWidgets.add(Positioned(
-            left: left,
-            top: top,
-            width: width,
-            height: height,
-            child: GestureDetector(
-              onTap: () {
-                if (isBookable) widget.onSelected(workspace);
-              },
-              child: Container(
-                decoration: BoxDecoration(
-                  color: bgColor,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: isSelected
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.outlineVariant,
-                    width: isSelected ? 2 : 1,
-                  ),
-                ),
-                alignment: Alignment.center,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                  child: FittedBox(
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+
+          Color bgColor;
+          Color textColor;
+          Color borderColor;
+          double borderWidth;
+          List<BoxShadow>? boxShadow;
+
+          if (isSelected) {
+            bgColor = Theme.of(context).colorScheme.primary;
+            textColor = Theme.of(context).colorScheme.onPrimary;
+            borderColor = Theme.of(context).colorScheme.onPrimary;
+            borderWidth = 2.5;
+            boxShadow = [
+              BoxShadow(
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
+                blurRadius: 6.0,
+                spreadRadius: 1.0,
+              ),
+            ];
+          } else if (isFavorite) {
+            // Frank / Bold Gold/Amber for favorite colleague
+            bgColor = isDark ? const Color(0xFFD97706) : const Color(0xFFFBBF24);
+            textColor = isDark ? Colors.white : const Color(0xFF78350F);
+            borderColor = isDark ? const Color(0xFFFDE68A) : const Color(0xFFB45309);
+            borderWidth = 2.5;
+            boxShadow = [
+              BoxShadow(
+                color: const Color(0xFFF59E0B).withValues(alpha: isDark ? 0.45 : 0.55),
+                blurRadius: 6.0,
+                spreadRadius: 1.5,
+              ),
+            ];
+          } else if (isMe) {
+            // Frank / Bold Green for personal desk
+            bgColor = isDark ? const Color(0xFF15803D) : const Color(0xFF22C55E);
+            textColor = Colors.white;
+            borderColor = isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534);
+            borderWidth = 2.5;
+            boxShadow = [
+              BoxShadow(
+                color: const Color(0xFF22C55E).withValues(alpha: isDark ? 0.4 : 0.5),
+                blurRadius: 6.0,
+                spreadRadius: 1.5,
+              ),
+            ];
+          } else if (occupant != null) {
+            // Frank / Bold Gray for other occupied desks
+            bgColor = isDark ? const Color(0xFF4B5563) : const Color(0xFFCBD5E1);
+            textColor = isDark ? const Color(0xFFF3F4F6) : const Color(0xFF1E293B);
+            borderColor = isDark ? const Color(0xFF6B7280) : const Color(0xFF94A3B8);
+            borderWidth = 1.5;
+          } else if (isBookable) {
+            // Frank / Clear Blue for available/bookable desks
+            bgColor = isDark ? const Color(0xFF1E3A8A) : const Color(0xFFDBEAFE);
+            textColor = isDark ? const Color(0xFFBFDBFE) : const Color(0xFF1E40AF);
+            borderColor = isDark ? const Color(0xFF3B82F6) : const Color(0xFF93C5FD);
+            borderWidth = 1.5;
+          } else {
+            bgColor = isDark ? Colors.grey.shade800 : Colors.grey.shade200;
+            textColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+            borderColor = isDark ? Colors.grey.shade700 : Colors.grey.shade300;
+            borderWidth = 1.0;
+          }
+
+          // Room dimming when a room filter is active
+          final isRoomDimmed = widget.focusedRoom != null &&
+              widget.focusedRoom!.isNotEmpty &&
+              roomName != null &&
+              roomName.toLowerCase() != widget.focusedRoom!.toLowerCase();
+
+          // Build clean desk content: prominent occupant name in "LASTNAME F." format (no icons)
+          Widget deskContent;
+          if (occupant != null) {
+            final displayName = occupant.formattedDisplayName.isNotEmpty
+                ? occupant.formattedDisplayName
+                : occupant.occupantName.toUpperCase();
+            deskContent = Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      label,
+                      displayName,
                       maxLines: 1,
-                      softWrap: false,
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 11,
                         color: textColor,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.2,
                       ),
                     ),
                   ),
+                  if (label.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2.0),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: textColor.withValues(alpha: 0.85),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
+
+          } else {
+            deskContent = Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: textColor,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                  ),
                 ),
               ),
+            );
+          }
+
+          Widget deskWidget = GestureDetector(
+            onTap: () {
+              if (occupant != null && widget.onOccupantTapped != null) {
+                final wsData = workspace ?? {
+                  'id': wsId,
+                  'name': label,
+                  'roomName': ?roomName,
+                };
+                widget.onOccupantTapped!(wsData, occupant);
+              } else if (isBookable) {
+                widget.onSelected(workspace);
+              }
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: borderColor, width: borderWidth),
+                boxShadow: boxShadow,
+              ),
+              alignment: Alignment.center,
+              child: deskContent,
             ),
+          );
+
+          if (isRoomDimmed) {
+            deskWidget = Opacity(opacity: 0.25, child: deskWidget);
+          }
+
+          featureWidgets.add(Positioned(
+            left: renderLeft,
+            top: renderTop,
+            width: renderWidth,
+            height: renderHeight,
+            child: deskWidget,
           ));
         }
+
+        _savedRoomBounds = roomBounds;
 
         // ── 4. Room group outlines ────────────────────────────────────────────
         final List<Widget> roomWidgets = [];
         roomBounds.forEach((name, bounds) {
           if (bounds.minX == double.infinity) return;
-          roomWidgets.add(Positioned(
-            left: bounds.minX - 16,
-            top: bounds.minY - 24,
-            width: bounds.maxX - bounds.minX + 32,
-            height: bounds.maxY - bounds.minY + 40,
-            child: Container(
-              decoration: BoxDecoration(
-                border: Border.all(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                    width: 2),
-                borderRadius: BorderRadius.circular(8),
-                color: Theme.of(context)
-                    .colorScheme
-                    .surface
-                    .withValues(alpha: 0.6),
-              ),
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: Padding(
-                  padding:
-                      const EdgeInsets.only(top: 2, left: 4, right: 4),
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      name,
-                      maxLines: 1,
-                      softWrap: false,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
+          final isRoomDimmed = widget.focusedRoom != null &&
+              widget.focusedRoom!.isNotEmpty &&
+              name.toLowerCase() != widget.focusedRoom!.toLowerCase();
+
+          Widget roomBox = Container(
+            decoration: BoxDecoration(
+              border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  width: 1.5),
+              borderRadius: BorderRadius.circular(8),
+              color: Theme.of(context)
+                  .colorScheme
+                  .surface
+                  .withValues(alpha: 0.55),
+            ),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Container(
+                margin: const EdgeInsets.only(top: 2, left: 4, right: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
               ),
             ),
+          );
+
+          if (isRoomDimmed) {
+            roomBox = Opacity(opacity: 0.25, child: roomBox);
+          }
+
+          final rLeft = bounds.minX - 16.0;
+          final rTop = bounds.minY - 28.0; // room header space
+          final rWidth = (bounds.maxX - bounds.minX) + 32.0;
+          final rHeight = (bounds.maxY - bounds.minY) + 44.0;
+
+          roomWidgets.add(Positioned(
+            left: rLeft,
+            top: rTop,
+            width: rWidth,
+            height: rHeight,
+            child: roomBox,
           ));
         });
 
-        // ── 5. InteractiveViewer wrapping the positioned stack ────────────────
+        // ── 5. Dynamically expand total bounding box across ALL rooms and desks
+        double calculatedMaxX = (maxX - minX) * coordScale + padding * 2;
+        double calculatedMaxY = (maxY - minY) * coordScale + padding * 2;
+
+        for (final bounds in roomBounds.values) {
+          if (bounds.minX == double.infinity) continue;
+          final rightEdge = bounds.maxX + 16.0 + padding;
+          final bottomEdge = bounds.maxY + 16.0 + padding;
+          if (rightEdge > calculatedMaxX) calculatedMaxX = rightEdge;
+          if (bottomEdge > calculatedMaxY) calculatedMaxY = bottomEdge;
+        }
+
+        // Strictly equal to the canvas bounds without inflating height to the entire screen
+        final mapWidth = calculatedMaxX + 24.0;
+        final mapHeight = calculatedMaxY + 24.0;
+        _lastMapWidth = mapWidth;
+        _lastMapHeight = mapHeight;
+
+        // Locate selected workspace rect (if any)
+        Rect? selectedRect;
+        if (widget.selectedWorkspaceId != null) {
+          final selId = widget.selectedWorkspaceId!.toLowerCase();
+          for (final feature in widget.features) {
+            final props = feature['properties'] ?? {};
+            final wsId = (props['workspaceId']?.toString() ??
+                    props['roomId']?.toString() ??
+                    props['id']?.toString())
+                ?.toLowerCase();
+            if (wsId == selId) {
+              final coords = feature['geometry']?['coordinates'] as List?;
+              if (coords != null && coords.isNotEmpty) {
+                double fMinX = double.infinity, fMinY = double.infinity;
+                double fMaxX = double.negativeInfinity, fMaxY = double.negativeInfinity;
+                _extractBounds(coords, (x, y) {
+                  if (x < fMinX) fMinX = x;
+                  if (y < fMinY) fMinY = y;
+                  if (x > fMaxX) fMaxX = x;
+                  if (y > fMaxY) fMaxY = y;
+                });
+                if (fMinX != double.infinity) {
+                  selectedRect = Rect.fromLTWH(
+                    (fMinX - minX) * coordScale + padding,
+                    (fMinY - minY) * coordScale + padding,
+                    (fMaxX - fMinX) * coordScale,
+                    (fMaxY - fMinY) * coordScale,
+                  );
+                }
+              }
+              break;
+            }
+          }
+        }
+
+        // Initialize transformation controller immediately on first layout
+        final currentSize = Size(viewW, viewH);
+        if (!_isInitialTransformSet) {
+          _isInitialTransformSet = true;
+          _lastViewportSize = currentSize;
+          if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
+            _handleFocusedRoomChanged();
+          } else {
+            _initTransform(viewW, viewH, mapWidth, mapHeight, selectedRect);
+          }
+        } else if (_lastViewportSize != currentSize) {
+          _lastViewportSize = currentSize;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
+              _handleFocusedRoomChanged();
+            } else {
+              _initTransform(viewW, viewH, mapWidth, mapHeight, selectedRect);
+            }
+          });
+        }
+
+        // ── 6. InteractiveViewer wrapping the positioned stack ────────────────
         return Stack(
           children: [
             Positioned.fill(
               child: InteractiveViewer(
-          transformationController: _controller,
-          constrained: false,
-          boundaryMargin: const EdgeInsets.all(double.infinity),
-          minScale: 0.01,
-          maxScale: 50.0,
+                transformationController: _controller,
+                constrained: false,
+                boundaryMargin: const EdgeInsets.all(double.infinity),
+                minScale: 0.1,
+                maxScale: 5.0,
                 child: SizedBox(
-            width: mapWidth,
-            height: mapHeight,
+                  width: mapWidth,
+                  height: mapHeight,
                   child: ColoredBox(
-              color: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
-                  .withValues(alpha: 0.3),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.3),
                     child: Stack(
-                children: [...roomWidgets, ...featureWidgets],
-              ),
+                      children: [...roomWidgets, ...featureWidgets],
+                    ),
                   ),
                 ),
               ),

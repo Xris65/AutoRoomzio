@@ -37,5 +37,8 @@ AutoRoomzio.apk
 .vscode/
 *.iml
 
+# ── Temporary Analysis / Exploration Scripts ──────────────────────────────────
+app/test/*.py
+
 # ── Teamwork Agent Metadata ───────────────────────────────────────────────────
 .agents/

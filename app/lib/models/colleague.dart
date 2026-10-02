@@ -11,6 +11,7 @@ class Colleague {
   final String? deskName;
   final String? roomName;
   final String? avatarUrl;
+  final String? favoriteId;
 
   const Colleague({
     required this.id,
@@ -20,6 +21,7 @@ class Colleague {
     this.deskName,
     this.roomName,
     this.avatarUrl,
+    this.favoriteId,
   });
 
   /// Calculates two-letter initials (e.g. "Jean Dupont" -> "JD", "Alice" -> "A").
@@ -37,19 +39,32 @@ class Colleague {
   /// Deserializes a Colleague from JSON, supporting standard formats and
   /// MyRoomz API variations (e.g. displayName, photo, mail).
   factory Colleague.fromJson(Map<String, dynamic> json) {
+    final rawUserId = json['userId']?.toString() ??
+        json['user']?['id']?.toString() ??
+        json['targetUserId']?.toString();
+
+    final resolvedId = rawUserId ?? json['id']?.toString() ?? '';
+    final favId = json['favoriteId']?.toString();
+
     return Colleague(
-      id: json['id']?.toString() ?? json['userId']?.toString() ?? '',
+      id: resolvedId,
       name: json['name']?.toString() ??
           json['displayName']?.toString() ??
           json['fullName']?.toString() ??
+          json['user']?['name']?.toString() ??
+          json['user']?['displayName']?.toString() ??
           'Collègue',
-      email: json['email']?.toString() ?? json['mail']?.toString() ?? '',
+      email: json['email']?.toString() ??
+          json['mail']?.toString() ??
+          json['user']?['email']?.toString() ??
+          '',
       isFavorite: json['isFavorite'] == true ||
           json['favorite'] == true ||
           (json['favoriteId'] != null && json['favoriteId'].toString().isNotEmpty),
       deskName: json['deskName']?.toString() ?? json['workspaceName']?.toString(),
       roomName: json['roomName']?.toString(),
       avatarUrl: json['avatarUrl']?.toString() ?? json['photo']?.toString(),
+      favoriteId: favId,
     );
   }
 
@@ -62,6 +77,7 @@ class Colleague {
         if (deskName != null) 'deskName': deskName,
         if (roomName != null) 'roomName': roomName,
         if (avatarUrl != null) 'avatarUrl': avatarUrl,
+        if (favoriteId != null) 'favoriteId': favoriteId,
       };
 
   /// Returns a copy of this Colleague with the given fields replaced by new values.
@@ -73,6 +89,7 @@ class Colleague {
     String? deskName,
     String? roomName,
     String? avatarUrl,
+    String? favoriteId,
   }) {
     return Colleague(
       id: id ?? this.id,
@@ -82,6 +99,7 @@ class Colleague {
       deskName: deskName ?? this.deskName,
       roomName: roomName ?? this.roomName,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      favoriteId: favoriteId ?? this.favoriteId,
     );
   }
 
@@ -96,7 +114,8 @@ class Colleague {
           isFavorite == other.isFavorite &&
           deskName == other.deskName &&
           roomName == other.roomName &&
-          avatarUrl == other.avatarUrl;
+          avatarUrl == other.avatarUrl &&
+          favoriteId == other.favoriteId;
 
   @override
   int get hashCode => Object.hash(
@@ -107,9 +126,10 @@ class Colleague {
         deskName,
         roomName,
         avatarUrl,
+        favoriteId,
       );
 
   @override
   String toString() =>
-      'Colleague(id: $id, name: $name, email: $email, isFavorite: $isFavorite, deskName: $deskName, roomName: $roomName)';
+      'Colleague(id: $id, name: $name, email: $email, isFavorite: $isFavorite, deskName: $deskName, roomName: $roomName, favoriteId: $favoriteId)';
 }
