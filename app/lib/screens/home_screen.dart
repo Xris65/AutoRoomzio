@@ -2,8 +2,6 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' as flutter_services;
-import 'package:http/http.dart' as http;
 import 'package:http/http.dart' as http;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path_provider/path_provider.dart';
@@ -22,17 +20,26 @@ import 'setup_screen.dart';
 import 'optimization_screen.dart';
 import '../main.dart'; // for themeNotifier
 import '../notification_service.dart';
+import '../models/colleague.dart';
+import '../widgets/colleague_selection_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final StorageService? storageService;
+  final RoomzApiService? apiService;
+
+  const HomeScreen({
+    super.key,
+    this.storageService,
+    this.apiService,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _storage = StorageService();
-  final _api = RoomzApiService();
+  late final StorageService _storage = widget.storageService ?? StorageService();
+  late final RoomzApiService _api = widget.apiService ?? RoomzApiService();
 
   List<int> _selectedDays = [];
   String? _workspaceName;
@@ -179,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final comp = await _storage.getCompactMode();
     final allTimeBooked = await _storage.getAllTimeBookedDates();
     final allTimeElsewhere = await _storage.getAllTimeElsewhereDates();
+    final delegated = await _storage.getDelegatedBookingsMap();
     
     if (mounted) {
       setState(() {
@@ -188,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _bookedDates = booked.toSet();
         _ignoredDates = ignored.toSet();
         _bookedElsewhereMap = {for (var d in elsewhere) d: "Ailleurs"};
+        _delegatedBookingsMap = delegated;
         _allTimeBookedDates = allTimeBooked.toSet();
         _allTimeElsewhereDates = allTimeElsewhere.toSet();
         _automationEnabled = autoEnabled;
@@ -1745,6 +1754,27 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: Text(isBookableNow ? 'Réserver ce jour' : 'Programmer (En attente)'),
                     onTap: () => Navigator.pop(context, 'reserve'),
                   ),
+              if (!isBooked && !isDelegated && !isOccupiedByOthers && !isWeekendAndHidden && isBookableNow)
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.purple.shade900.withValues(alpha: 0.4)
+                          : Colors.purple.shade50,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.group_add_outlined,
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.purple.shade300
+                          : Colors.purple.shade800,
+                    ),
+                  ),
+                  title: const Text('Réserver pour un collègue', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Sélectionner parmi vos favoris ou rechercher'),
+                  onTap: () => Navigator.pop(context, 'reserve_for_colleague'),
+                ),
               if (isBooked || isRequested)
                 ListTile(
                   leading: const Icon(Icons.cancel_outlined, color: Colors.red),
@@ -1771,6 +1801,69 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (action == null) return;
+
+    if (action == 'reserve_for_colleague') {
+      if (!mounted) return;
+      final colleague = await showDialog<Colleague>(
+        context: context,
+        builder: (context) => ColleagueSelectionDialog(
+          date: dateStr,
+          deskName: _workspaceName,
+          apiService: _api,
+          storageService: _storage,
+        ),
+      );
+
+      if (colleague != null) {
+        setState(() {
+          _isCalendarBusy = true;
+          _focusedDay = day;
+        });
+
+        try {
+          final token = await _api.refreshMyToken();
+          final workspaceId = await _storage.getWorkspaceId();
+          if (token != null && workspaceId != null) {
+            final result = await _api.reserveWorkspaceForColleague(
+              date: dateStr,
+              token: token,
+              workspaceId: workspaceId,
+              colleagueId: colleague.id,
+              colleagueName: colleague.name,
+              colleagueEmail: colleague.email,
+            );
+
+            if (result.isSuccess) {
+              final eventId = result.eventId ?? '';
+              _delegatedBookingsMap[dateStr] =
+                  '$workspaceId|${colleague.name}|${_workspaceName ?? ""}|$eventId|${colleague.id}';
+              await _storage.saveDelegatedBookingsMap(_delegatedBookingsMap);
+              _requestedDates.remove(dateStr);
+              await _storage.saveRequestedDates(_requestedDates.toList());
+              setState(() {});
+              if (mounted) {
+                _showTopToast(result.getLocalizedMessage(colleague.name), isSuccess: true);
+              }
+            } else {
+              if (mounted) {
+                _showTopToast(result.getLocalizedMessage(colleague.name), isError: true);
+              }
+            }
+          } else {
+            if (mounted) {
+              _showTopToast('Impossible de récupérer vos identifiants.', isError: true);
+            }
+          }
+        } catch (e) {
+          if (mounted) {
+            _showTopToast('Erreur lors de la réservation : $e', isError: true);
+          }
+        } finally {
+          if (mounted) setState(() => _isCalendarBusy = false);
+        }
+      }
+      return;
+    }
 
     setState(() {
       _isCalendarBusy = true;

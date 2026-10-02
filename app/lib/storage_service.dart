@@ -1,5 +1,6 @@
 import 'dart:convert'; // used by saveVacations/getVacations
 import 'package:shared_preferences/shared_preferences.dart';
+import 'models/colleague.dart';
 
 /// Uses shared_preferences for all platforms.
 /// On Android, SharedPreferences data is stored in the app's private sandbox,
@@ -503,6 +504,62 @@ class StorageService {
       'manual': prefs.getInt('stats_manual_count') ?? 0,
       'auto': prefs.getInt('stats_auto_count') ?? 0,
     };
+  }
+
+  // ── Favorite Colleagues (Milestone M2 - Requirement R2) ───────────────────
+
+  /// Retrieves the list of favorite colleagues stored in SharedPreferences.
+  /// Returns an empty list if no favorites exist or if the stored JSON is malformed.
+  Future<List<Colleague>> getFavoriteColleagues() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('favorite_colleagues');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final List<dynamic> decoded = jsonDecode(jsonStr);
+        return decoded
+            .map((item) => Colleague.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList();
+      } catch (_) {
+        return [];
+      }
+    }
+    return [];
+  }
+
+  /// Persists the complete list of favorite colleagues in SharedPreferences.
+  Future<void> saveFavoriteColleagues(List<Colleague> colleagues) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = jsonEncode(colleagues.map((c) => c.toJson()).toList());
+    await prefs.setString('favorite_colleagues', jsonStr);
+  }
+
+  /// Adds a colleague to favorites or updates them if their id is already present.
+  /// Automatically ensures [isFavorite] is true.
+  Future<void> addFavoriteColleague(Colleague colleague) async {
+    final current = await getFavoriteColleagues();
+    final updatedColleague = colleague.copyWith(isFavorite: true);
+    final index = current.indexWhere((c) => c.id == colleague.id);
+    if (index >= 0) {
+      current[index] = updatedColleague;
+    } else {
+      current.add(updatedColleague);
+    }
+    await saveFavoriteColleagues(current);
+  }
+
+  /// Removes a colleague from favorites by their unique id.
+  Future<void> removeFavoriteColleague(String colleagueId) async {
+    final current = await getFavoriteColleagues();
+    current.removeWhere((c) =>
+        c.id == colleagueId ||
+        (colleagueId.isNotEmpty && c.email.isNotEmpty && c.email.toLowerCase() == colleagueId.toLowerCase()));
+    await saveFavoriteColleagues(current);
+  }
+
+  /// Checks if a colleague with [colleagueId] is in the favorite list.
+  Future<bool> isFavoriteColleague(String colleagueId) async {
+    final current = await getFavoriteColleagues();
+    return current.any((c) => c.id == colleagueId);
   }
 
 }

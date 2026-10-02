@@ -1,10 +1,18 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'models/colleague.dart';
+import 'models/booking_result.dart';
 import 'storage_service.dart';
 
 class RoomzApiService {
-  final StorageService _storage = StorageService();
+  final StorageService _storage;
+  final http.Client _client;
+
+  RoomzApiService({StorageService? storage, http.Client? client})
+      : _storage = storage ?? StorageService(),
+        _client = client ?? http.Client();
 
   static const String _loginUrl = "https://login.roomz.io/connect/token";
   static const String _apiBase = "https://api.my.roomz.io";
@@ -16,7 +24,7 @@ class RoomzApiService {
 
   /// Initial login with email + password. Returns access token or null.
   Future<String?> login(String email, String password) async {
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse(_loginUrl),
       body: {
         "grant_type": "password",
@@ -39,27 +47,35 @@ class RoomzApiService {
 
   /// Refresh access token using stored refresh token.
   Future<String?> refreshMyToken() async {
-    final oldRefreshToken = await _storage.getRefreshToken();
-    if (oldRefreshToken == null || oldRefreshToken.isEmpty) return null;
+    try {
+      final oldRefreshToken = await _storage.getRefreshToken();
+      if (oldRefreshToken == null || oldRefreshToken.isEmpty) return null;
 
-    final response = await http.post(
-      Uri.parse(_loginUrl),
-      body: {
-        "grant_type": "refresh_token",
-        "refresh_token": oldRefreshToken,
-        "client_id": _clientId,
-        "scope": _scope,
-      },
-    );
+      final response = await _client.post(
+        Uri.parse(_loginUrl),
+        body: {
+          "grant_type": "refresh_token",
+          "refresh_token": oldRefreshToken,
+          "client_id": _clientId,
+          "scope": _scope,
+        },
+      );
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      await _storage.saveRefreshToken(data['refresh_token']);
-      return data['access_token'];
-    } else {
-      debugPrint("❌ Token refresh failed ${response.statusCode}");
-      return null;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map<String, dynamic>) {
+          if (data['refresh_token'] != null) {
+            await _storage.saveRefreshToken(data['refresh_token']);
+          }
+          return data['access_token']?.toString();
+        }
+      } else {
+        debugPrint("❌ Token refresh failed ${response.statusCode}");
+      }
+    } catch (e) {
+      debugPrint("❌ Exception in refreshMyToken: $e");
     }
+    return null;
   }
 
   // ── Discovery ────────────────────────────────────────────────────────────
@@ -382,14 +398,17 @@ class RoomzApiService {
                               final location = isMyDesk ? 'Mon bureau' : (elsewhereMap[date] ?? item['workspaceName']?.toString() ?? item['name']?.toString() ?? 'Autre bureau');
                               final evId = bookedTimeSlot['eventId']?.toString() ?? bookedTimeSlot['id']?.toString() ?? '';
                               final orgId = organizer['id']?.toString() ?? "";
-                              delegateName = "${wsId}|${organizerName}|${location}|${evId}|${orgId}";
+                              delegateName = "$wsId|$organizerName|$location|$evId|$orgId";
                            }
                         }
                         
                         if (isDelegated) {
                            delegated[date] = delegateName;
-                           if (isMyDesk) delegatedHere.add(date);
-                           else delegatedElsewhere.add(date);
+                           if (isMyDesk) {
+                             delegatedHere.add(date);
+                           } else {
+                             delegatedElsewhere.add(date);
+                           }
                         } else if (isMyDesk) {
                            String name = "Quelqu'un d'autre";
                            if (bookedTimeSlot['owner'] != null && bookedTimeSlot['owner']['name'] != null) {
@@ -479,7 +498,9 @@ class RoomzApiService {
           }
 
           foundBookingId = b['eventId']?.toString() ?? b['id']?.toString();
-          if (foundBookingId != null && foundBookingId!.contains('/')) foundBookingId = foundBookingId!.split('/')[1];
+          if (foundBookingId != null && foundBookingId.contains('/')) {
+            foundBookingId = foundBookingId.split('/')[1];
+          }
           if (foundBookingId != null) {
             debugPrint("⚠️ Try 1: DELETE /bookings/$foundBookingId (delegated=$isDelegatedBooking)");
             final delResp = await http.delete(
@@ -564,4 +585,401 @@ class RoomzApiService {
         "Origin": "https://my.roomz.io",
         "Referer": "https://my.roomz.io/",
       };
+
+  // ── Colleague Reservation Flow (Milestone M2 - Requirement R2) ───────────
+
+  /// Reserves a workspace for a colleague using `forUserId`.
+  /// Returns a typed [BookingResult] with the extracted event UUID,
+  /// or specialized conflict/error statuses and user-friendly messages.
+  Future<BookingResult> reserveWorkspaceForColleague({
+    required String date,
+    required String token,
+    required String workspaceId,
+    required String colleagueId,
+    String? colleagueName,
+    String? colleagueEmail,
+  }) async {
+    try {
+      final bool isExternal = colleagueId.isEmpty || colleagueId.startsWith('ext_');
+      final payload = <String, dynamic>{
+        "workspaceId": workspaceId,
+        "localDate": date,
+        "timeSlot": "FullDay",
+      };
+
+      if (!isExternal) {
+        payload["bookAsUserId"] = colleagueId;
+      } else if (colleagueEmail != null && colleagueEmail.isNotEmpty) {
+        payload["bookAsExternalOrganizer"] = <String, dynamic>{
+          "email": colleagueEmail,
+          if (colleagueName != null && colleagueName.isNotEmpty)
+            "displayName": colleagueName,
+        };
+      } else if (colleagueId.isNotEmpty) {
+        payload["bookAsUserId"] = colleagueId;
+      }
+
+      final response = await _client.post(
+        Uri.parse("$_apiBase/bookings"),
+        headers: {
+          ..._authHeaders(token),
+          "roomz-source-type": "1",
+          "x-roomz-source-type": "1",
+        },
+        body: jsonEncode(payload),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        String? eventId;
+        try {
+          if (response.body.isNotEmpty) {
+            final data = jsonDecode(response.body);
+            if (data is Map<String, dynamic>) {
+              final rawId = data['eventId']?.toString() ??
+                  data['id']?.toString() ??
+                  data['bookingId']?.toString() ??
+                  data['data']?['eventId']?.toString() ??
+                  data['data']?['id']?.toString();
+              if (rawId != null && rawId.isNotEmpty) {
+                eventId = rawId.contains('/') ? rawId.split('/')[1] : rawId;
+              }
+            }
+          }
+        } catch (_) {}
+
+        final msg = colleagueName != null
+            ? 'Bureau réservé pour $colleagueName !'
+            : 'Bureau réservé avec succès !';
+        return BookingResult.success(
+          eventId: eventId,
+          colleagueId: colleagueId,
+          colleagueName: colleagueName,
+          colleagueEmail: colleagueEmail,
+          message: msg,
+        );
+      } else if (response.statusCode == 409) {
+        final bodyLower = response.body.toLowerCase();
+        final hasExplicitColleagueConflict =
+            bodyLower.contains('already has a reservation') ||
+            bodyLower.contains('already has a booking') ||
+            bodyLower.contains('déjà une réservation') ||
+            bodyLower.contains('user_already_booked') ||
+            bodyLower.contains('colleague_already_booked') ||
+            (bodyLower.contains('colleague') && !bodyLower.contains('workspace') && !bodyLower.contains('desk'));
+
+        final isColleagueConflict = hasExplicitColleagueConflict ||
+            ((bodyLower.contains('user') || bodyLower.contains('person') || bodyLower.contains('utilisateur')) &&
+             !bodyLower.contains('workspace') &&
+             !bodyLower.contains('desk') &&
+             !bodyLower.contains('bureau') &&
+             !bodyLower.contains('seat'));
+
+        if (isColleagueConflict) {
+          final msg = colleagueName != null
+              ? '$colleagueName a déjà une réservation ce jour-là.'
+              : 'Ce collègue a déjà une réservation ce jour-là.';
+          return BookingResult.conflictColleague(
+            message: msg,
+            colleagueId: colleagueId,
+            colleagueName: colleagueName,
+            colleagueEmail: colleagueEmail,
+          );
+        } else {
+          return BookingResult.conflictDesk(
+            message: 'Ce bureau est déjà réservé par quelqu\'un d\'autre.',
+            colleagueId: colleagueId,
+            colleagueName: colleagueName,
+            colleagueEmail: colleagueEmail,
+          );
+        }
+      } else if (response.statusCode == 400) {
+        return const BookingResult(
+          status: BookingStatus.invalidDate,
+          message: "La réservation manuelle est limitée à 13 jours à l'avance.",
+        );
+      } else if (response.statusCode == 401) {
+        return const BookingResult(
+          status: BookingStatus.unauthorized,
+          message: 'Session expirée. Reconnexion requise.',
+        );
+      } else if (response.statusCode == 403) {
+        return const BookingResult(
+          status: BookingStatus.forbidden,
+          message: 'Votre profil n\'a pas les droits pour réserver pour un tiers.',
+        );
+      } else if (response.statusCode >= 500) {
+        return BookingResult(
+          status: BookingStatus.serverError,
+          message: 'Erreur serveur MyRoomz (${response.statusCode}).',
+        );
+      } else {
+        return BookingResult(
+          status: BookingStatus.serverError,
+          message: 'Erreur inattendue (${response.statusCode}) : ${response.body}',
+        );
+      }
+    } on SocketException catch (_) {
+      return const BookingResult(
+        status: BookingStatus.networkError,
+        message: 'Impossible de joindre les serveurs MyRoomz (réseau inaccessible).',
+      );
+    } catch (e) {
+      return BookingResult(
+        status: BookingStatus.networkError,
+        message: 'Erreur de connexion : $e',
+      );
+    }
+  }
+
+  // ── Favorites & Colleague Directory (Milestone M2 - Requirement R2) ───────
+
+  List<Colleague> _cachedHarvestedColleagues = [];
+
+  /// Harvests recent colleagues/occupants from bookings and floor data.
+  /// Ensures directory and favorites discovery even when /users or /favorites
+  /// endpoints are restricted or empty.
+  Future<List<Colleague>> harvestColleagues(String token, {String? floorId, String? date}) async {
+    final Map<String, Colleague> colleagueMap = {};
+    String? currentUserId;
+
+    // 1. Harvest from current user's bookings (/users/current/bookings)
+    try {
+      final response = await _client.get(
+        Uri.parse("$_apiBase/users/current/bookings"),
+        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final bookings = data['bookings'] as List? ?? (data is List ? data : []);
+        for (final b in bookings) {
+          if (b is! Map) continue;
+          if (currentUserId == null && b['creator'] != null && b['creator']['id'] != null) {
+            currentUserId = b['creator']['id']?.toString();
+          }
+
+          final candidates = [
+            b['organizer'],
+            b['bookedFor'],
+            b['owner'],
+            b['user'],
+            b['creator'],
+          ];
+
+          for (final c in candidates) {
+            if (c != null && c is Map) {
+              final id = c['id']?.toString() ?? '';
+              final name = c['name']?.toString() ?? c['displayName']?.toString() ?? '';
+              final email = c['email']?.toString() ?? c['mail']?.toString() ?? '';
+              if (name.isNotEmpty && (currentUserId == null || id != currentUserId)) {
+                final key = id.isNotEmpty ? id : (email.isNotEmpty ? email : name);
+                colleagueMap[key] = Colleague(
+                  id: id.isNotEmpty ? id : 'harv_${email.isNotEmpty ? email : name}',
+                  name: name,
+                  email: email,
+                  isFavorite: false,
+                );
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Exception harvesting colleagues from bookings: $e");
+    }
+
+    // 2. Harvest from floor workspaces (/floors/{floorId}/workspaces/calendars)
+    try {
+      final effectiveFloorId = floorId ?? await _storage.getFloorId();
+      if (effectiveFloorId != null && effectiveFloorId.isNotEmpty) {
+        final effectiveDate = date ?? DateTime.now().toIso8601String().split('T').first;
+        final payload = {
+          "availableWorkspaceOnly": false,
+          "date": effectiveDate,
+          "timeSlot": "FullDay",
+          "tagIds": [],
+          "workspaceType": "Desk"
+        };
+        final response = await _client.post(
+          Uri.parse("$_apiBase/floors/$effectiveFloorId/workspaces/calendars?length=100&offset=0"),
+          headers: _authHeaders(token)..addAll({
+            "roomz-source-type": "MyRoomzWeb",
+            "Content-Type": "application/json"
+          }),
+          body: jsonEncode(payload),
+        );
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final items = data['data'] ?? data['items'] ?? data['workspaces'] ?? (data is List ? data : []);
+          if (items is List) {
+            for (final item in items) {
+              if (item is! Map) continue;
+              final wsName = item['workspaceName']?.toString() ?? item['name']?.toString();
+              final bookedTimeSlot = item['bookedTimeSlot'];
+              if (bookedTimeSlot != null && bookedTimeSlot is Map) {
+                final candidates = [
+                  bookedTimeSlot['organizer'],
+                  bookedTimeSlot['bookedFor'],
+                  bookedTimeSlot['owner'],
+                  bookedTimeSlot['user'],
+                  bookedTimeSlot['creator'],
+                ];
+                for (final c in candidates) {
+                  if (c != null && c is Map) {
+                    final id = c['id']?.toString() ?? '';
+                    final name = c['name']?.toString() ?? c['displayName']?.toString() ?? '';
+                    final email = c['email']?.toString() ?? c['mail']?.toString() ?? '';
+                    if (name.isNotEmpty && (currentUserId == null || id != currentUserId)) {
+                      final key = id.isNotEmpty ? id : (email.isNotEmpty ? email : name);
+                      final existing = colleagueMap[key];
+                      colleagueMap[key] = Colleague(
+                        id: id.isNotEmpty ? id : (existing?.id ?? 'harv_${email.isNotEmpty ? email : name}'),
+                        name: name,
+                        email: email,
+                        deskName: wsName ?? existing?.deskName,
+                        isFavorite: false,
+                      );
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Exception harvesting colleagues from floor: $e");
+    }
+
+    final harvested = colleagueMap.values.toList();
+    if (harvested.isNotEmpty) {
+      _cachedHarvestedColleagues = harvested;
+    }
+    return harvested;
+  }
+
+  /// Fetches favorite colleagues from MyRoomz API.
+  /// Tries `/users/current/favorites`, `/favorites`, and as a reliable fallback,
+  /// harvests recent colleagues/occupants so favorites are NEVER empty if colleagues exist.
+  Future<List<Colleague>> getFavorites(String token) async {
+    // 1. Try /users/current/favorites
+    try {
+      final response = await _client.get(
+        Uri.parse("$_apiBase/users/current/favorites"),
+        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final list = data is List
+            ? data
+            : (data['favorites'] ?? data['data'] ?? data['users'] ?? data['items'] ?? []);
+        if (list is List && list.isNotEmpty) {
+          return list
+              .whereType<Map<String, dynamic>>()
+              .map((j) => Colleague.fromJson({...j, 'isFavorite': true}))
+              .toList();
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Exception in getFavorites (/users/current/favorites): $e");
+    }
+
+    // 2. Try /favorites
+    try {
+      final response = await _client.get(
+        Uri.parse("$_apiBase/favorites"),
+        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final list = data is List
+            ? data
+            : (data['favorites'] ?? data['data'] ?? data['users'] ?? data['items'] ?? []);
+        if (list is List && list.isNotEmpty) {
+          return list
+              .whereType<Map<String, dynamic>>()
+              .map((j) => Colleague.fromJson({...j, 'isFavorite': true}))
+              .toList();
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Exception in getFavorites (/favorites): $e");
+    }
+
+    // 3. Fallback: harvest recent colleagues/occupants from floor data or bookings
+    try {
+      final harvested = await harvestColleagues(token);
+      if (harvested.isNotEmpty) {
+        return harvested.map((c) => c.copyWith(isFavorite: true)).toList();
+      }
+    } catch (e) {
+      debugPrint("⚠️ Exception in getFavorites fallback harvesting: $e");
+    }
+
+    return [];
+  }
+
+  /// Searches for colleagues across the MyRoomz directory.
+  /// Gracefully returns empty list on empty query or API error.
+  Future<List<Colleague>> searchColleagues(String token, String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return [];
+
+    try {
+      final response = await _client.post(
+        Uri.parse("$_apiBase/search?offset=0&length=30"),
+        headers: {
+          ..._authHeaders(token),
+          "roomz-source-type": "MyRoomzWeb",
+        },
+        body: jsonEncode({
+          "text": trimmed,
+        }),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final list = data is List
+            ? data
+            : (data['users'] ?? data['data'] ?? data['items'] ?? data['results'] ?? []);
+        if (list is List) {
+          final results = list
+              .whereType<Map<String, dynamic>>()
+              .map((j) => Colleague.fromJson(j))
+              .toList();
+          if (results.isNotEmpty) return results;
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Exception in searchColleagues: $e");
+    }
+
+    // 2. Fallback: search across harvested colleagues and cached contacts
+    try {
+      final qLower = trimmed.toLowerCase();
+      List<Colleague> pool = List.from(_cachedHarvestedColleagues);
+      if (pool.isEmpty) {
+        pool = await harvestColleagues(token);
+      }
+      final localFavs = await _storage.getFavoriteColleagues();
+      final Map<String, Colleague> allCandidates = {};
+      for (final c in pool) {
+        final key = c.id.isNotEmpty ? c.id : (c.email.isNotEmpty ? c.email : c.name);
+        allCandidates[key] = c;
+      }
+      for (final c in localFavs) {
+        final key = c.id.isNotEmpty ? c.id : (c.email.isNotEmpty ? c.email : c.name);
+        allCandidates[key] = c;
+      }
+
+      final matches = allCandidates.values.where((c) {
+        return c.name.toLowerCase().contains(qLower) ||
+            c.email.toLowerCase().contains(qLower);
+      }).toList();
+
+      return matches;
+    } catch (e) {
+      debugPrint("⚠️ Exception in searchColleagues fallback: $e");
+    }
+
+    return [];
+  }
 }
