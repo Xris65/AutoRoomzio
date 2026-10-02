@@ -1892,49 +1892,31 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildStatsTab() {
     final manualCount = _statsMap['manual'] ?? 0;
     final autoCount = _statsMap['auto'] ?? 0;
-    
-    // Combine historical upcoming + past from MyRoomz
-    final Set<String> allBookingsSet = {};
-    allBookingsSet.addAll(_allTimeBookedDates.map((d) => d.split('T')[0]));
-    allBookingsSet.addAll(_allTimeElsewhereDates.map((d) => d.split('T')[0]));
-    
-    final List<String> allBookings = allBookingsSet.toList();
-    
-    // 3. Jour Favori
-    final Map<int, int> dayCounts = {};
-    for (var dateStr in allBookings) {
-      try {
-        final d = DateTime.parse(dateStr);
-        dayCounts[d.weekday] = (dayCounts[d.weekday] ?? 0) + 1;
-      } catch (_) {}
-    }
-    
-    String favDayStr = "Aucun";
-    String favDayPct = "0%";
-    if (dayCounts.isNotEmpty) {
-      final favDay = dayCounts.entries.reduce((a, b) => a.value > b.value ? a : b);
-      final weekdays = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
-      favDayStr = weekdays[favDay.key - 1];
-      final pct = (favDay.value / allBookings.length * 100).round();
-      favDayPct = "$pct%";
-    }
 
-    // 4. Moyenne de Présentiel
-    int avgPerMonth = 0;
-    if (_statsFirstUse != null && allBookings.isNotEmpty) {
-      final daysDiff = DateTime.now().difference(_statsFirstUse!).inDays;
-      final months = (daysDiff / 30).ceil() < 1 ? 1 : (daysDiff / 30).ceil();
-      avgPerMonth = (allBookings.length / months).round();
-    }
+    // Real upcoming bookings from active API state (today and future)
+    final todayStr = DateTime.now().toIso8601String().split('T').first;
+    final upcomingHere = _bookedDates.where((d) => d.compareTo(todayStr) >= 0).toSet();
+    final upcomingElsewhere = _bookedElsewhereMap.keys.where((d) => d.compareTo(todayStr) >= 0).toSet();
+    final totalUpcoming = upcomingHere.length + upcomingElsewhere.length;
 
-    // 5. Taux de fidélité à la place
-    final bookedCount = _allTimeBookedDates.length;
-    final elsewhereCount = _allTimeElsewhereDates.length;
-    final fidelity = (bookedCount + elsewhereCount) > 0 
-        ? ((bookedCount / (bookedCount + elsewhereCount)) * 100).round()
+    // Favorite desk loyalty ratio based on active upcoming bookings
+    final int favLoyaltyRatio = totalUpcoming > 0
+        ? ((upcomingHere.length / totalUpcoming) * 100).round()
         : 100;
-        
-    
+
+    // Configured attendance rhythm (selected days per week)
+    final sortedDays = List<int>.from(_selectedDays)..sort();
+    final rhythmDaysStr = sortedDays
+        .map((d) => _weekDays[d] ?? '')
+        .where((s) => s.isNotEmpty)
+        .join(', ');
+    final rhythmValue = _selectedDays.isEmpty
+        ? 'Non configuré'
+        : '${_selectedDays.length} jour${_selectedDays.length > 1 ? 's' : ''} / sem.';
+    final rhythmSubtitle = _selectedDays.isEmpty
+        ? 'Définissez vos jours dans l\'onglet Automate'
+        : rhythmDaysStr;
+
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
@@ -1945,15 +1927,22 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 8),
         Text(
           'L\'impact de l\'automatisation sur votre quotidien',
-          style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+          style: TextStyle(
+            fontSize: 14,
+            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+          ),
         ),
         const SizedBox(height: 24),
-        
+
         // Grid de stats
         Center(
           child: Text(
             'Cliquez sur une carte pour plus de détails',
-            style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+            style: TextStyle(
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
           ),
         ),
         const SizedBox(height: 12),
@@ -1965,44 +1954,57 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisSpacing: 16,
           childAspectRatio: 1.0,
           children: [
+            // Card 1: Upcoming bookings count
             _buildStatCard(
-              title: 'Réservations Automatiques',
+              title: 'Réservations à venir',
+              value: '$totalUpcoming',
+              subtitle: totalUpcoming > 0
+                  ? '${upcomingHere.length} sur bureau favori'
+                  : 'Aucune réservation',
+              icon: Icons.event_available_rounded,
+              color: Colors.blue,
+              tooltip: 'Nombre total de réservations confirmées à venir (aujourd\'hui et 14 prochains jours) issues de MyRoomz.',
+            ),
+            // Card 2: Favorite desk loyalty ratio
+            _buildStatCard(
+              title: 'Taux Bureau Favori',
+              value: totalUpcoming > 0 ? '$favLoyaltyRatio%' : '-',
+              subtitle: totalUpcoming > 0
+                  ? '${upcomingHere.length} sur $totalUpcoming à venir'
+                  : 'Aucune réservation',
+              icon: Icons.star_rounded,
+              color: Colors.green,
+              tooltip: 'Pourcentage de vos réservations à venir effectuées sur votre bureau habituel${_workspaceName != null ? ' ($_workspaceName)' : ''}.',
+            ),
+            // Card 3: Automated bookings count
+            _buildStatCard(
+              title: 'Automatisées',
               value: '$autoCount',
+              subtitle: autoCount > 0 ? '$autoCount via automate' : 'Par AutoRoomzio',
               icon: Icons.auto_awesome,
               color: Theme.of(context).colorScheme.primary,
-              tooltip: 'Réservations réalisées automatiquement par l\'application via l\'automate.',
+              tooltip: 'Nombre total de réservations créées automatiquement par l\'automate en tâche de fond sur cet appareil.',
             ),
+            // Card 4: Manual bookings count
             _buildStatCard(
-              title: 'Réservations Manuelles',
+              title: 'Manuelles',
               value: '$manualCount',
+              subtitle: manualCount > 0 ? '$manualCount en un clic' : 'En un clic',
               icon: Icons.touch_app_rounded,
               color: Colors.orange,
-              tooltip: 'Réservations effectuées en un clic depuis l\'application.',
-            ),
-            _buildStatCard(
-              title: 'Moyenne de Présentiel',
-              value: '$avgPerMonth jrs/mois',
-              icon: Icons.business_center_rounded,
-              color: Colors.blue,
-              tooltip: 'Moyenne calculée sur vos réservations actuelles et historiques.',
-            ),
-            _buildStatCard(
-              title: 'Fidélité au bureau sélectionné',
-              value: '$fidelity%',
-              icon: Icons.location_on_rounded,
-              color: Colors.green,
-              tooltip: 'Pourcentage de fois où vous réservez votre place favorite plutôt qu\'une autre place.',
+              tooltip: 'Nombre total de réservations créées manuellement en un clic depuis l\'application sur cet appareil.',
             ),
           ],
         ),
         const SizedBox(height: 16),
+        // Bottom Summary Banner: Configured attendance rhythm
         _buildStatCard(
-          title: 'Jour Favori',
-          value: favDayStr,
-          subtitle: '($favDayPct de tes venues)',
-          icon: Icons.today_rounded,
-          color: Colors.deepPurple,
-          tooltip: 'Le jour de la semaine où vous venez le plus souvent.',
+          title: 'Rythme de Présence Paramétré',
+          value: rhythmValue,
+          subtitle: rhythmSubtitle,
+          icon: Icons.schedule_rounded,
+          color: Colors.indigo,
+          tooltip: 'Rythme de présence configuré dans l\'application pour la réservation automatique de votre bureau.',
         ),
       ],
     );
