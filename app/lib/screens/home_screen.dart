@@ -45,7 +45,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _canExit = false;
 
   Map<String, int> _statsMap = {'manual': 0, 'auto': 0};
-  DateTime? _statsFirstUse;
 
 
   // Calendar State
@@ -1500,12 +1499,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   Future<void> _refreshStats() async {
-    await _storage.recordFirstUse();
-    final firstUse = await _storage.getFirstUse();
     final stats = await _storage.getBookingStats();
     if (mounted) {
       setState(() {
-        _statsFirstUse = firstUse;
         _statsMap = stats;
       });
     }
@@ -1952,7 +1948,7 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisCount: 2,
           mainAxisSpacing: 16,
           crossAxisSpacing: 16,
-          childAspectRatio: 1.0,
+          childAspectRatio: 0.80,
           children: [
             // Card 1: Upcoming bookings count
             _buildStatCard(
@@ -2015,7 +2011,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return GestureDetector(
       onTap: tooltip != null ? () => _showStatInfo(context, title, tooltip, icon, color) : null,
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(20),
@@ -2023,22 +2019,26 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: color, size: 32),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
+            Icon(icon, color: color, size: 28),
             const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                value,
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 2),
             Text(
               title,
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8)),
             ),
             if (subtitle != null) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
               Text(
                 subtitle,
                 textAlign: TextAlign.center,

@@ -200,5 +200,53 @@ void main() {
       // Stats tab must NOT be present in bottom navigation
       expect(find.text('Stats'), findsNothing);
     });
+
+    testWidgets('renders cleanly on mobile screen dimensions without RenderFlex overflow', (WidgetTester tester) async {
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      for (final size in [
+        const Size(360, 640), // Standard Android compact
+        const Size(375, 667), // iPhone SE / 8
+        const Size(390, 844), // iPhone 12/13/14
+        const Size(412, 915), // Pixel 7
+      ]) {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1.0;
+
+        final now = DateTime.now();
+        final day1 = formatDate(now.add(const Duration(days: 1)));
+        final day2 = formatDate(now.add(const Duration(days: 3)));
+
+        SharedPreferences.setMockInitialValues({
+          'refresh_token': 'mock_refresh_token',
+          'workspace_name': 'Desk A-42',
+          'show_stats_card': true,
+          'show_automation_card': true,
+          'stats_auto_count': 15,
+          'stats_manual_count': 7,
+          'booked_dates': [day1, day2],
+          'selected_days': ['1', '2', '3', '4', '5'],
+        });
+
+        await tester.pumpWidget(const MyApp());
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        final statsTabFinder = find.text('Stats');
+        expect(statsTabFinder, findsOneWidget);
+        await tester.tap(statsTabFinder);
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Vos Statistiques'), findsOneWidget);
+        expect(find.text('Réservations à venir'), findsOneWidget);
+        expect(find.text('Taux Bureau Favori'), findsOneWidget);
+        expect(find.text('Automatisées'), findsOneWidget);
+        expect(find.text('Manuelles'), findsOneWidget);
+      }
+    });
   });
 }
