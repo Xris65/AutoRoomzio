@@ -2,6 +2,30 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.4.0] - 2026-10-03
+
+### Nouveautés
+- **Réservation pour un collègue** : Possibilité de réserver manuellement un bureau pour quelqu'un d'autre directement depuis l'application (gère intelligemment les collègues internes et les invités externes).
+- **Plan d'équipe 2D Interactif** : Nouvelle vue "Où est mon équipe ?" permettant de visualiser en direct le placement des collaborateurs sur un plan de l'étage interactif (avec zoom, déplacement et filtrage).
+- **Système de Réservation à l'avance (Automate)** : Possibilité de placer des réservations "En attente" pour les dates lointaines. Un automate en arrière-plan se chargera de valider la réservation dès que la limite des 13 jours de l'API MyRoomz sera levée.
+- **Gestion Avancée des Favoris** : Ajout d'un bouton étoile sur l'écran d'accueil pour gérer ses collègues favoris. Les favoris apparaissent en priorité dans les résultats de recherche et sont mis en évidence sur le plan 2D.
+- **Réglage de l'Accessibilité (UI Scale)** : Ajout d'une option interne permettant de forcer et de choisir la taille globale de l'interface et des textes, indépendamment des réglages parfois trop grands du téléphone.
+
+### Améliorations UX/UI
+- **Cadrage Intelligent (Smart Zoom)** : À l'ouverture de la carte 2D, la caméra se centre automatiquement avec un léger zoom sur votre salle/bureau par défaut. Lors d'un changement d'étage, la caméra effectue un zoom global (Zoom-to-fit) pour afficher tout l'étage sans se perdre dans le vide.
+- **Animations de chargement (Shimmer)** : Remplacement des vieilles roues de chargement par des animations fluides de type "Skeleton/Shimmer". Le plan 2D affiche désormais de faux murs architecturaux bien proportionnés pendant le téléchargement des données.
+- **Lisibilité du plan** : Agrandissement de la surface des bureaux virtuels. Les initiales illisibles sont remplacées par le format clair "Nom + 1ère lettre du prénom" (ex: DUPONT J.).
+- **Filtres intelligents** : Les salles de réunion vides sont désormais masquées par défaut. Le tri des salles se fait intelligemment par densité d'occupation, en plaçant vos favoris en tête de liste.
+
+### Correctifs
+- **Déconnexion intempestive (Critique)** : Résolution du bug agaçant qui déconnectait l'utilisateur et détruisait la session lorsqu'il cliquait trop vite (spam) ou qu'une requête réseau échouait. La déconnexion est désormais strictement restreinte à l'expiration réelle du mot de passe (Erreur 401).
+- **Perte de l'étage par défaut** : Lors d'une expiration de session, l'application mémorise désormais votre choix de bâtiment, d'étage et de bureau par défaut pour votre prochaine reconnexion.
+- **Conflit de défilement (Scroll)** : Correction de la physique de l'écran de configuration initiale. La page scrolle normalement pour les étapes 1 et 2, mais se verrouille lors de l'affichage de la carte 2D pour éviter les conflits tactiles avec le zoom.
+- **Débordements visuels (Overflow)** : Réécriture complète de la géométrie de la carte pour empêcher le chevauchement chaotique des salles et supprimer l'alerte "BOTTOM OVERFLOWED" de Flutter.
+- **Sauts d'image (Glitch)** : Suppression du saut brutal de la caméra lors de la première interaction tactile avec le plan.
+- **Sécurité de Réservation** : L'automate en arrière-plan et la réservation manuelle vérifient désormais si le bureau cible n'est pas déjà occupé par un tiers avant de lancer la requête.
+- **Démasquage des erreurs** : L'application affiche désormais la véritable raison de l'échec d'une réservation (ex: "Vous avez déjà une réservation sur ce créneau") au lieu d'afficher aveuglément l'erreur par défaut des 13 jours.
+
 ## [1.3.1] - 2026-09-28
 
 ### Nouveautés
