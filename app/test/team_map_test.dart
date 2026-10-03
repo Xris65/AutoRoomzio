@@ -1296,7 +1296,7 @@ void main() {
       expect(find.text('Collègue favori'), findsOneWidget);
     });
 
-    testWidgets('Map skeleton contains 5 asymmetrical rounded room containers with subtle borders and inner desk silhouette blocks', (tester) async {
+    testWidgets('Map skeleton renders via LayoutBuilder, fills full canvas, and rooms pairwise NEVER overlap', (tester) async {
       SharedPreferences.setMockInitialValues({
         'refresh_token': 'mock-refresh-token',
         'site_id': 'site-1',
@@ -1318,7 +1318,98 @@ void main() {
       ));
       await tester.pump();
 
-      // Find the 5 Positioned rooms in the Stack
+      // 1. Verify that Shimmer contains a LayoutBuilder for dynamic canvas sizing
+      final layoutBuilderFinder = find.descendant(
+        of: find.byType(Shimmer),
+        matching: find.byType(LayoutBuilder),
+      );
+      expect(layoutBuilderFinder, findsOneWidget,
+          reason: 'Map skeleton must use LayoutBuilder to obtain actual viewport dimensions');
+
+      // 2. Find the 5 Positioned rooms in the Stack
+      final positionedWidgets = tester.widgetList<Positioned>(
+        find.descendant(
+          of: find.byType(Shimmer),
+          matching: find.byType(Positioned),
+        ),
+      ).toList();
+
+      expect(positionedWidgets.length, equals(5),
+          reason: 'Floor plan skeleton must render 5 room containers');
+
+      // 3. Convert all Positioned widgets to Rect bounding boxes
+      final roomRects = positionedWidgets.map((p) {
+        expect(p.left, isNotNull);
+        expect(p.top, isNotNull);
+        expect(p.width, isNotNull);
+        expect(p.height, isNotNull);
+        return Rect.fromLTWH(p.left!, p.top!, p.width!, p.height!);
+      }).toList();
+
+      // 4. Verify all rooms have positive dimensions
+      for (int i = 0; i < roomRects.length; i++) {
+        expect(roomRects[i].width > 0, isTrue, reason: 'Room $i width must be positive');
+        expect(roomRects[i].height > 0, isTrue, reason: 'Room $i height must be positive');
+      }
+
+      // 5. Mathematically verify pairwise zero overlap (rectA.overlaps(rectB) == false)
+      for (int i = 0; i < roomRects.length; i++) {
+        for (int j = i + 1; j < roomRects.length; j++) {
+          final overlaps = roomRects[i].overlaps(roomRects[j]);
+          expect(overlaps, isFalse,
+              reason: 'Room $i (${roomRects[i]}) and Room $j (${roomRects[j]}) must NOT overlap');
+        }
+      }
+
+      // 6. Verify rooms fill the canvas from outer margin (16.0) to full width and height
+      final minLeft = roomRects.map((r) => r.left).reduce((a, b) => a < b ? a : b);
+      final maxRight = roomRects.map((r) => r.right).reduce((a, b) => a > b ? a : b);
+      final minTop = roomRects.map((r) => r.top).reduce((a, b) => a < b ? a : b);
+      final maxBottom = roomRects.map((r) => r.bottom).reduce((a, b) => a > b ? a : b);
+
+      final mapSize = tester.getSize(layoutBuilderFinder);
+
+      expect(minLeft, equals(16.0), reason: 'Skeleton must respect 16px left margin');
+      expect(minTop, equals(16.0), reason: 'Skeleton must respect 16px top margin');
+      expect(maxRight, equals(mapSize.width - 16.0), reason: 'Skeleton must reach full width minus 16px margin');
+      expect(maxBottom, equals(mapSize.height - 16.0), reason: 'Skeleton must fill down to bottom margin');
+
+      completer.complete(http.Response('[]', 200));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Map skeleton LayoutBuilder adapts to tall viewport (1000x1600) with zero pairwise overlap and full coverage', (tester) async {
+      tester.view.physicalSize = const Size(1000, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      SharedPreferences.setMockInitialValues({
+        'refresh_token': 'mock-refresh-token',
+        'site_id': 'site-1',
+        'floor_id': 'fl-1',
+      });
+
+      final completer = Completer<http.Response>();
+      final client = MockClient((req) async {
+        if (req.url.path.contains('/connect/token')) {
+          return http.Response(jsonEncode({'access_token': 'atk-1', 'refresh_token': 'rtk-1'}), 200);
+        }
+        return await completer.future;
+      });
+      final api = RoomzApiService(client: client);
+      final storage = StorageService();
+
+      await tester.pumpWidget(MaterialApp(
+        home: TeamMapScreen(apiService: api, storageService: storage),
+      ));
+      await tester.pump();
+
+      final layoutBuilderFinder = find.descendant(
+        of: find.byType(Shimmer),
+        matching: find.byType(LayoutBuilder),
+      );
+      final mapSize = tester.getSize(layoutBuilderFinder);
+
       final positionedWidgets = tester.widgetList<Positioned>(
         find.descendant(
           of: find.byType(Shimmer),
@@ -1328,12 +1419,26 @@ void main() {
 
       expect(positionedWidgets.length, equals(5));
 
-      // Verify asymmetry in positions/dimensions (combination of squares and rectangles)
-      expect(positionedWidgets[0].height, equals(130)); // Room 1: horizontal rectangle
-      expect(positionedWidgets[1].height, equals(185)); // Room 2: vertical rectangle
-      expect(positionedWidgets[2].height, equals(155)); // Room 3: vertical rectangle
-      expect(positionedWidgets[3].height, equals(140)); // Room 4: square
-      expect(positionedWidgets[4].height, equals(95));  // Room 5: wide horizontal rectangle
+      final rects = positionedWidgets.map((p) => Rect.fromLTWH(p.left!, p.top!, p.width!, p.height!)).toList();
+
+      // Pairwise zero overlap
+      for (int i = 0; i < rects.length; i++) {
+        for (int j = i + 1; j < rects.length; j++) {
+          expect(rects[i].overlaps(rects[j]), isFalse,
+              reason: 'Room $i and $j must not overlap');
+        }
+      }
+
+      // Full canvas occupation
+      final minLeft = rects.map((r) => r.left).reduce((a, b) => a < b ? a : b);
+      final maxRight = rects.map((r) => r.right).reduce((a, b) => a > b ? a : b);
+      final minTop = rects.map((r) => r.top).reduce((a, b) => a < b ? a : b);
+      final maxBottom = rects.map((r) => r.bottom).reduce((a, b) => a > b ? a : b);
+
+      expect(minLeft, equals(16.0));
+      expect(minTop, equals(16.0));
+      expect(maxRight, equals(mapSize.width - 16.0));
+      expect(maxBottom, equals(mapSize.height - 16.0));
 
       completer.complete(http.Response('[]', 200));
       await tester.pumpAndSettle();

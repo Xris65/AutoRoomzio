@@ -788,16 +788,64 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final w = constraints.maxWidth;
+          final h = constraints.maxHeight;
+
+          const double margin = 16.0;
+          const double gap = 14.0;
+
+          if (w <= 0 || h <= 0) return const SizedBox.shrink();
+
+          // Horizontal partition: 2 columns in upper section
+          // Total width = margin + wLeft + gap + wRight + margin = w
+          final double netW = (w - (2 * margin) - gap).clamp(0.0, double.infinity);
+          final double wLeft = (netW * 0.52).roundToDouble();
+          final double wRight = netW - wLeft;
+
+          // Vertical partition: Upper section (Rooms 1..4) and Lower section (Room 5)
+          // Total height = margin + upperH + gap + h5 + margin = h
+          final double netH = (h - (2 * margin) - gap).clamp(0.0, double.infinity);
+          final double h5 = (netH * 0.25).roundToDouble();
+          final double upperH = netH - h5;
+
+          // Left column vertical partition: Room 1 (top) and Room 3 (bottom)
+          // Total left upper height = h1 + gap + h3 = upperH
+          final double netUpperHLeft = (upperH - gap).clamp(0.0, double.infinity);
+          final double h1 = (netUpperHLeft * 0.45).roundToDouble();
+          final double h3 = netUpperHLeft - h1;
+
+          // Right column vertical partition: Room 2 (top) and Room 4 (bottom)
+          // Total right upper height = h2 + gap + h4 = upperH
+          final double netUpperHRight = (upperH - gap).clamp(0.0, double.infinity);
+          final double h2 = (netUpperHRight * 0.55).roundToDouble();
+          final double h4 = netUpperHRight - h2;
+
+          // Coordinates
+          final double left1 = margin;
+          final double top1 = margin;
+
+          final double left2 = margin + wLeft + gap;
+          final double top2 = margin;
+
+          final double left3 = margin;
+          final double top3 = margin + h1 + gap;
+
+          final double left4 = margin + wLeft + gap;
+          final double top4 = margin + h2 + gap;
+
+          final double left5 = margin;
+          final double top5 = margin + upperH + gap;
+          final double w5 = (w - (2 * margin)).clamp(0.0, double.infinity);
+
           return ClipRect(
             child: Stack(
               clipBehavior: Clip.hardEdge,
               children: [
                 // 1. Room 1 (Horizontal rectangle - North-West)
                 Positioned(
-                  top: 16,
-                  left: 16,
-                  width: (w - 44) * 0.52,
-                  height: 130,
+                  left: left1,
+                  top: top1,
+                  width: wLeft,
+                  height: h1,
                   child: _buildRoomSilhouette(
                     titleWidth: 70,
                     deskCount: 4,
@@ -807,10 +855,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                 ),
                 // 2. Room 2 (Vertical rectangle - North-East)
                 Positioned(
-                  top: 16,
-                  right: 16,
-                  width: (w - 44) * 0.44,
-                  height: 185,
+                  left: left2,
+                  top: top2,
+                  width: wRight,
+                  height: h2,
                   child: _buildRoomSilhouette(
                     titleWidth: 55,
                     deskCount: 6,
@@ -820,10 +868,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                 ),
                 // 3. Room 3 (Vertical rectangle - Mid-West)
                 Positioned(
-                  top: 156,
-                  left: 16,
-                  width: (w - 44) * 0.52,
-                  height: 155,
+                  left: left3,
+                  top: top3,
+                  width: wLeft,
+                  height: h3,
                   child: _buildRoomSilhouette(
                     titleWidth: 65,
                     deskCount: 4,
@@ -833,10 +881,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                 ),
                 // 4. Room 4 (Square - Mid-East)
                 Positioned(
-                  top: 211,
-                  right: 16,
-                  width: (w - 44) * 0.44,
-                  height: 140,
+                  left: left4,
+                  top: top4,
+                  width: wRight,
+                  height: h4,
                   child: _buildRoomSilhouette(
                     titleWidth: 50,
                     deskCount: 4,
@@ -846,10 +894,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                 ),
                 // 5. Room 5 (Horizontal rectangle - South)
                 Positioned(
-                  top: 321,
-                  left: 16,
-                  right: 16,
-                  height: 95,
+                  left: left5,
+                  top: top5,
+                  width: w5,
+                  height: h5,
                   child: _buildRoomSilhouette(
                     titleWidth: 90,
                     deskCount: 6,

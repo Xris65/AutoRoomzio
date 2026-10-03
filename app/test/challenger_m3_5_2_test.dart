@@ -361,7 +361,10 @@ void main() {
       expect(find.text('Occupé'), findsOneWidget);
       expect(find.text('Libre'), findsOneWidget);
 
-      // 3. Shimmer contains an architectural floor plan in Stack with 5 positioned room containers
+      // 3. Shimmer contains an architectural floor plan in Stack with 5 positioned room containers via LayoutBuilder
+      final layoutBuilderFinder = find.descendant(of: shimmerFinder, matching: find.byType(LayoutBuilder));
+      expect(layoutBuilderFinder, findsOneWidget, reason: 'Map shimmer must use LayoutBuilder to adapt to available canvas');
+
       final stackFinder = find.descendant(of: shimmerFinder, matching: find.byType(Stack));
       expect(stackFinder, findsOneWidget, reason: 'Map shimmer must render an architectural floor plan in a Stack');
 
@@ -369,10 +372,41 @@ void main() {
       expect(stackWidget.children.length, equals(5),
           reason: 'Architectural floor plan skeleton must have 5 room silhouettes');
 
-      // Verify each room silhouette has title container and desk containers
-      for (final child in stackWidget.children) {
-        expect(child, isA<Positioned>());
+      // 4. Extract all 5 Positioned widgets and bounding boxes
+      final positionedWidgets = tester.widgetList<Positioned>(
+        find.descendant(of: stackFinder, matching: find.byType(Positioned)),
+      ).toList();
+      expect(positionedWidgets.length, equals(5));
+
+      final roomRects = positionedWidgets.map((p) {
+        expect(p.left, isNotNull);
+        expect(p.top, isNotNull);
+        expect(p.width, isNotNull);
+        expect(p.height, isNotNull);
+        return Rect.fromLTWH(p.left!, p.top!, p.width!, p.height!);
+      }).toList();
+
+      // 5. Rigorously guarantee pairwise zero overlap for all room pairs
+      for (int i = 0; i < roomRects.length; i++) {
+        for (int j = i + 1; j < roomRects.length; j++) {
+          final overlaps = roomRects[i].overlaps(roomRects[j]);
+          expect(overlaps, isFalse,
+              reason: 'Room $i (${roomRects[i]}) and Room $j (${roomRects[j]}) must NOT overlap');
+        }
       }
+
+      // 6. Verify that rooms fill the available canvas without overflow
+      final minLeft = roomRects.map((r) => r.left).reduce((a, b) => a < b ? a : b);
+      final maxRight = roomRects.map((r) => r.right).reduce((a, b) => a > b ? a : b);
+      final minTop = roomRects.map((r) => r.top).reduce((a, b) => a < b ? a : b);
+      final maxBottom = roomRects.map((r) => r.bottom).reduce((a, b) => a > b ? a : b);
+
+      expect(minLeft, equals(16.0), reason: 'Skeleton must respect 16px left margin');
+      expect(minTop, equals(16.0), reason: 'Skeleton must respect 16px top margin');
+      expect(maxRight, equals(800.0 - 16.0), reason: 'Skeleton must fill full width minus 16px margin');
+      // On 800x1600 viewport, maxBottom must scale down to fill the tall canvas (> 1000px)
+      expect(maxBottom > 1000.0, isTrue,
+          reason: 'Skeleton must dynamically fill tall canvas (>1000px on 1600px screen), not hardcoded ~416px');
 
       // Complete future and settle
       completer.complete(http.Response('[]', 200));
