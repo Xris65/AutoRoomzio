@@ -26,8 +26,12 @@ class RoomzApiService {
   /// Callback invoked when a session expires (HTTP 401).
   static VoidCallback? onSessionExpired;
 
+  String? _cachedAccessToken;
+  Future<String?>? _inFlightTokenRefresh;
+
   /// Central handler when an HTTP 401 or token refresh failure is encountered.
   Future<void> handleSessionExpired() async {
+    _cachedAccessToken = null;
     try {
       await _storage.clearTokens();
     } catch (_) {}
@@ -36,6 +40,7 @@ class RoomzApiService {
 
   void _checkAuthResponse(http.Response response) {
     if (response.statusCode == 401) {
+      _cachedAccessToken = null;
       handleSessionExpired();
     }
   }
@@ -58,15 +63,32 @@ class RoomzApiService {
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       await _storage.saveRefreshToken(data['refresh_token']);
-      return data['access_token'];
+      final token = data['access_token']?.toString();
+      _cachedAccessToken = token;
+      return token;
     } else {
       debugPrint("❌ Login failed ${response.statusCode}: ${response.body}");
       return null;
     }
   }
 
-  /// Refresh access token using stored refresh token.
-  Future<String?> refreshMyToken() async {
+  /// Refresh access token using stored refresh token with mutex and caching.
+  Future<String?> refreshMyToken({bool force = false}) async {
+    if (!force && _cachedAccessToken != null && _cachedAccessToken!.isNotEmpty) {
+      return _cachedAccessToken;
+    }
+    if (_inFlightTokenRefresh != null) {
+      return _inFlightTokenRefresh;
+    }
+    _inFlightTokenRefresh = _performRefreshMyToken();
+    try {
+      return await _inFlightTokenRefresh;
+    } finally {
+      _inFlightTokenRefresh = null;
+    }
+  }
+
+  Future<String?> _performRefreshMyToken() async {
     try {
       final oldRefreshToken = await _storage.getRefreshToken();
       if (oldRefreshToken == null || oldRefreshToken.isEmpty) return null;
@@ -87,11 +109,14 @@ class RoomzApiService {
           if (data['refresh_token'] != null) {
             await _storage.saveRefreshToken(data['refresh_token']);
           }
-          return data['access_token']?.toString();
+          final newAccessToken = data['access_token']?.toString();
+          _cachedAccessToken = newAccessToken;
+          return newAccessToken;
         }
       } else {
         debugPrint("❌ Token refresh failed ${response.statusCode}");
         if (response.statusCode == 401) {
+          _cachedAccessToken = null;
           await handleSessionExpired();
         }
       }

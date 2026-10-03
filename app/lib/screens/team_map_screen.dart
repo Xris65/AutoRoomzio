@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 import '../models/desk_occupant.dart';
 import '../models/colleague.dart';
 import '../api_service.dart';
@@ -50,6 +51,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   late DateTime _selectedDate;
   String? _siteId;
   String? _floorId;
+  String? _defaultWorkspaceId;
+  String? _cachedAccessToken;
+  int _occupancyRequestId = 0;
 
   List<Map<String, dynamic>> _floors = [];
   List<Map<String, dynamic>> _features = [];
@@ -168,9 +172,11 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
       _siteId = widget.initialSiteId ?? await _storage.getSiteId();
       _floorId = widget.initialFloorId ?? await _storage.getFloorId();
+      _defaultWorkspaceId = await _storage.getWorkspaceId();
 
       String? token = await _api.refreshMyToken();
       token ??= await _storage.getRefreshToken();
+      _cachedAccessToken = token;
 
       if (token == null || token.isEmpty) {
         setState(() {
@@ -269,30 +275,58 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         setState(() {
           _isLoading = false;
           _isOccupancyLoading = false;
-          _errorMessage = "Erreur lors du chargement de l'étage: $e";
+          if (_features.isEmpty) {
+            _errorMessage = "Erreur lors du chargement de l'étage: $e";
+          }
         });
+        if (_features.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("Erreur de mise à jour: $e"),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
     }
   }
 
   Future<void> _loadOccupancyForDate(DateTime date) async {
+    final requestId = ++_occupancyRequestId;
     setState(() => _isOccupancyLoading = true);
     try {
-      String? token = await _api.refreshMyToken();
-      token ??= await _storage.getRefreshToken();
+      String? token = _cachedAccessToken;
+      if (token == null || token.isEmpty) {
+        token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
+        _cachedAccessToken = token;
+      }
 
-      if (token != null && _floorId != null) {
+      if (token != null && token.isNotEmpty && _floorId != null) {
         final dateStr = _formatDateIso(date);
         final occs = await _api.getFloorOccupants(token, _floorId!, dateStr);
-        if (mounted) {
+        if (mounted && requestId == _occupancyRequestId) {
           setState(() {
             _occupants = occs;
             _isOccupancyLoading = false;
           });
         }
+      } else {
+        if (mounted && requestId == _occupancyRequestId) {
+          setState(() => _isOccupancyLoading = false);
+        }
       }
     } catch (e) {
-      if (mounted) setState(() => _isOccupancyLoading = false);
+      if (mounted && requestId == _occupancyRequestId) {
+        setState(() => _isOccupancyLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Impossible de charger les présences : $e"),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
@@ -327,8 +361,11 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       _isLoading = true;
       _focusedRoom = null;
     });
-    String? token = await _api.refreshMyToken();
-    token ??= await _storage.getRefreshToken();
+    String? token = _cachedAccessToken;
+    if (token == null || token.isEmpty) {
+      token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
+      _cachedAccessToken = token;
+    }
     if (token != null && _siteId != null) {
       await _loadFloorMapAndOccupancy(token, _siteId!, newFloorId);
     }
@@ -349,36 +386,54 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   Future<void> _toggleFavorite(DeskOccupant occupant) async {
-    final isFav = _isOccupantFavorite(occupant);
-    String? token = await _api.refreshMyToken();
-    token ??= await _storage.getRefreshToken();
-    final occId = occupant.occupantId ?? '';
+    try {
+      final isFav = _isOccupantFavorite(occupant);
+      String? token = await _api.refreshMyToken();
+      token ??= await _storage.getRefreshToken();
+      final occId = occupant.occupantId ?? '';
 
-    if (isFav) {
-      if (token != null && token.isNotEmpty && occId.isNotEmpty) {
-        await _api.removeFavorite(token, occId);
+      if (isFav) {
+        if (token != null && token.isNotEmpty && occId.isNotEmpty) {
+          await _api.removeFavorite(token, occId);
+        }
+        if (occId.isNotEmpty) {
+          await _storage.removeFavoriteColleague(occId);
+        }
+        if (occupant.occupantEmail != null && occupant.occupantEmail!.isNotEmpty) {
+          await _storage.removeFavoriteColleague(occupant.occupantEmail!);
+        }
+        await _storage.removeFavoriteColleague(occupant.occupantName);
+      } else {
+        if (token != null && token.isNotEmpty && occId.isNotEmpty) {
+          await _api.addFavorite(token, occId);
+        }
+        final newFav = Colleague(
+          id: occId.isNotEmpty ? occId : 'occ_${occupant.workspaceId}',
+          name: occupant.occupantName,
+          email: occupant.occupantEmail ?? '',
+          isFavorite: true,
+          deskName: occupant.workspaceId,
+        );
+        await _storage.addFavoriteColleague(newFav);
       }
-      if (occId.isNotEmpty) {
-        await _storage.removeFavoriteColleague(occId);
+      await _loadFavorites();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isFav
+                ? '${occupant.occupantName} retiré(e) des favoris'
+                : '${occupant.occupantName} ajouté(e) aux favoris'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
       }
-      if (occupant.occupantEmail != null && occupant.occupantEmail!.isNotEmpty) {
-        await _storage.removeFavoriteColleague(occupant.occupantEmail!);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erreur lors de la mise à jour des favoris: $e")),
+        );
       }
-      await _storage.removeFavoriteColleague(occupant.occupantName);
-    } else {
-      if (token != null && token.isNotEmpty && occId.isNotEmpty) {
-        await _api.addFavorite(token, occId);
-      }
-      final newFav = Colleague(
-        id: occId.isNotEmpty ? occId : 'occ_${occupant.workspaceId}',
-        name: occupant.occupantName,
-        email: occupant.occupantEmail ?? '',
-        isFavorite: true,
-        deskName: occupant.workspaceId,
-      );
-      await _storage.addFavoriteColleague(newFav);
     }
-    await _loadFavorites();
   }
 
   void _showOccupantDetails(
@@ -395,11 +450,13 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   List<_RoomSummary> get _roomSummaries {
     final Map<String, List<DeskOccupant>> roomOccupants = {};
+    final Set<String> seenWorkspaceIds = {};
 
     for (final entry in _occupants.entries) {
-      final wsId = entry.key;
       final occ = entry.value;
+      if (!seenWorkspaceIds.add(occ.workspaceId.toLowerCase())) continue;
 
+      final wsId = occ.workspaceId;
       final ws = _allWorkspaces.firstWhere(
         (w) =>
             w['id']?.toString().toLowerCase() == wsId.toLowerCase() ||
@@ -443,52 +500,54 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     return Container(
       height: 48,
       color: Theme.of(context).colorScheme.surface,
-      child: ListView(
+      child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        children: [
-          FilterChip(
-            label: Text(
-                'Tous les bureaux (${_workspaces.isNotEmpty ? _workspaces.length : _allWorkspaces.length})'),
-            selected: _focusedRoom == null,
-            onSelected: (_) => setState(() => _focusedRoom = null),
-          ),
-          const SizedBox(width: 8),
-          ...summaries.map((s) {
-            final isSelected = _focusedRoom == s.roomName;
-            if (s.hasFavorites) {
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: FilterChip(
-                  avatar: const Icon(Icons.star, size: 14, color: Colors.amber),
-                  label: Text('${s.roomName} (${s.favoriteOccupants.length})'),
-                  selected: isSelected,
-                  selectedColor: Colors.amber.withValues(alpha: 0.25),
-                  checkmarkColor: Colors.amber.shade900,
-                  onSelected: (selected) {
-                    setState(() => _focusedRoom = selected ? s.roomName : null);
-                  },
-                ),
-              );
-            } else {
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: FilterChip(
-                  label: Text('${s.roomName} (${s.totalOccupants})'),
-                  selected: isSelected,
-                  onSelected: (selected) {
-                    setState(() => _focusedRoom = selected ? s.roomName : null);
-                  },
-                ),
-              );
-            }
-          }),
-        ],
+        child: Row(
+          children: [
+            FilterChip(
+              label: Text(
+                  'Tous les bureaux (${_workspaces.isNotEmpty ? _workspaces.length : _allWorkspaces.length})'),
+              selected: _focusedRoom == null,
+              onSelected: (_) => setState(() => _focusedRoom = null),
+            ),
+            const SizedBox(width: 8),
+            ...summaries.map((s) {
+              final isSelected = _focusedRoom == s.roomName;
+              if (s.hasFavorites) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    avatar: const Icon(Icons.star, size: 14, color: Colors.amber),
+                    label: Text('${s.roomName} (${s.favoriteOccupants.length})'),
+                    selected: isSelected,
+                    selectedColor: Colors.amber.withValues(alpha: 0.25),
+                    checkmarkColor: Colors.amber.shade900,
+                    onSelected: (selected) {
+                      setState(() => _focusedRoom = selected ? s.roomName : null);
+                    },
+                  ),
+                );
+              } else {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: Text('${s.roomName} (${s.totalOccupants})'),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      setState(() => _focusedRoom = selected ? s.roomName : null);
+                    },
+                  ),
+                );
+              }
+            }),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildLegendBar() {
+  Widget _buildLegend() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
@@ -571,7 +630,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     );
   }
 
-  Widget _buildDateNavBar() {
+  Widget _buildDateNavigationBar() {
     final theme = Theme.of(context);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -639,12 +698,184 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     );
   }
 
+  Widget _buildRoomSilhouette({
+    required double titleWidth,
+    required int deskCount,
+    required double deskWidth,
+    required double deskHeight,
+    bool isRow = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.6),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Room title / identifier silhouette
+          Container(
+            width: titleWidth,
+            height: 12,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.8),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Inner desk silhouette blocks
+          Expanded(
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: isRow
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: List.generate(
+                        deskCount,
+                        (_) => Container(
+                          width: deskWidth,
+                          height: deskHeight,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.5),
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  : Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: List.generate(
+                        deskCount,
+                        (_) => Container(
+                          width: deskWidth,
+                          height: deskHeight,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.5),
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMapSkeleton() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final baseColor = isDark ? const Color(0xFF2C2C2C) : const Color(0xFFE0E0E0);
+    final highlightColor = isDark ? const Color(0xFF424242) : const Color(0xFFF5F5F5);
+
+    return Shimmer.fromColors(
+      baseColor: baseColor,
+      highlightColor: highlightColor,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          return ClipRect(
+            child: Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
+                // 1. Room 1 (Horizontal rectangle - North-West)
+                Positioned(
+                  top: 16,
+                  left: 16,
+                  width: (w - 44) * 0.52,
+                  height: 130,
+                  child: _buildRoomSilhouette(
+                    titleWidth: 70,
+                    deskCount: 4,
+                    deskWidth: 32,
+                    deskHeight: 24,
+                  ),
+                ),
+                // 2. Room 2 (Vertical rectangle - North-East)
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  width: (w - 44) * 0.44,
+                  height: 185,
+                  child: _buildRoomSilhouette(
+                    titleWidth: 55,
+                    deskCount: 6,
+                    deskWidth: 26,
+                    deskHeight: 26,
+                  ),
+                ),
+                // 3. Room 3 (Vertical rectangle - Mid-West)
+                Positioned(
+                  top: 156,
+                  left: 16,
+                  width: (w - 44) * 0.52,
+                  height: 155,
+                  child: _buildRoomSilhouette(
+                    titleWidth: 65,
+                    deskCount: 4,
+                    deskWidth: 32,
+                    deskHeight: 26,
+                  ),
+                ),
+                // 4. Room 4 (Square - Mid-East)
+                Positioned(
+                  top: 211,
+                  right: 16,
+                  width: (w - 44) * 0.44,
+                  height: 140,
+                  child: _buildRoomSilhouette(
+                    titleWidth: 50,
+                    deskCount: 4,
+                    deskWidth: 28,
+                    deskHeight: 28,
+                  ),
+                ),
+                // 5. Room 5 (Horizontal rectangle - South)
+                Positioned(
+                  top: 321,
+                  left: 16,
+                  right: 16,
+                  height: 95,
+                  child: _buildRoomSilhouette(
+                    titleWidth: 90,
+                    deskCount: 6,
+                    deskWidth: 36,
+                    deskHeight: 22,
+                    isRow: true,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    // Compute count of seated favorites
-    final favoritesSeatedCount = _occupants.values.where(_isOccupantFavorite).length;
+    // Compute count of seated favorites deduplicated by workspaceId
+    final Set<String> seenFavWsIds = {};
+    final favoritesSeatedCount = _occupants.values.where((occ) {
+      if (!_isOccupantFavorite(occ)) return false;
+      return seenFavWsIds.add(occ.workspaceId.toLowerCase());
+    }).length;
 
     return Scaffold(
       appBar: AppBar(
@@ -682,14 +913,14 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       ),
       body: Column(
         children: [
-          _buildDateNavBar(),
-          if (!_isLoading && _errorMessage == null) ...[
+          _buildDateNavigationBar(),
+          if (_errorMessage == null) ...[
             _buildRoomFilterBar(),
-            _buildLegendBar(),
+            _buildLegend(),
           ],
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? _buildMapSkeleton()
                 : _errorMessage != null
                     ? Center(
                         child: Padding(
@@ -722,6 +953,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                             favoriteIds: _favoriteIds,
                             favoriteNamesNormalized: _favoriteNamesNormalized,
                             favoriteWorkspaceIds: _favoriteWorkspaceIds,
+                            selectedWorkspaceId: _defaultWorkspaceId,
+                            defaultWorkspaceId: _defaultWorkspaceId,
                             focusedRoom: _focusedRoom,
                             onSelected: (_) {},
                             onOccupantTapped: (ws, occ) {

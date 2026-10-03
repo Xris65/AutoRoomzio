@@ -18,6 +18,7 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
 final ValueNotifier<int> themeColorNotifier = ValueNotifier(0);
 final ValueNotifier<int> fontNotifier = ValueNotifier(0);
+final ValueNotifier<double> uiScaleNotifier = ValueNotifier<double>(1.0);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,6 +70,9 @@ void main() async {
   final fontIndex = await StorageService().getFontFamilyIndex();
   fontNotifier.value = fontIndex;
 
+  final scaleVal = await StorageService().getUiScale();
+  uiScaleNotifier.value = scaleVal;
+
   runApp(const MyApp());
 }
 
@@ -96,13 +100,24 @@ class MyApp extends StatelessWidget {
                   default: getFontTheme = GoogleFonts.robotoTextTheme; break; // Classique
                 }
 
-                return MaterialApp(
-                  navigatorKey: rootNavigatorKey,
-                  title: 'AutoRoomzio',
-                  themeMode: mode,
-                  scrollBehavior: const MaterialScrollBehavior().copyWith(
-                    dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.stylus, PointerDeviceKind.trackpad},
-                  ),
+                return ValueListenableBuilder<double>(
+                  valueListenable: uiScaleNotifier,
+                  builder: (context, uiScale, _) {
+                    return MaterialApp(
+                      navigatorKey: rootNavigatorKey,
+                      title: 'AutoRoomzio',
+                      themeMode: mode,
+                      builder: (context, child) {
+                        final mediaQuery = MediaQuery.of(context);
+                        final targetScale = (mediaQuery.textScaler.scale(1.0) * uiScale).clamp(0.75, 1.35);
+                        return MediaQuery(
+                          data: mediaQuery.copyWith(textScaler: TextScaler.linear(targetScale)),
+                          child: child ?? const SizedBox.shrink(),
+                        );
+                      },
+                      scrollBehavior: const MaterialScrollBehavior().copyWith(
+                        dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.stylus, PointerDeviceKind.trackpad},
+                      ),
                   theme: ThemeData(
                     colorScheme: ColorScheme.fromSeed(seedColor: seedColor),
                     useMaterial3: true,
@@ -141,5 +156,7 @@ class MyApp extends StatelessWidget {
         );
       },
     );
+  },
+);
   }
 }

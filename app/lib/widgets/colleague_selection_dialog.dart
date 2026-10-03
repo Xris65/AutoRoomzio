@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 import '../models/colleague.dart';
 import '../storage_service.dart';
 import '../api_service.dart';
@@ -39,6 +40,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
   List<Colleague> _favorites = [];
   List<Colleague> _filteredFavorites = [];
   List<Colleague> _remoteResults = [];
+  final Set<String> _pendingFavoriteIds = {};
 
   bool _isLoadingFavorites = true;
   bool _isRemoteSearching = false;
@@ -174,71 +176,86 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
   }
 
   Future<void> _toggleFavorite(Colleague colleague) async {
-    final isFav = _isColleagueFavorite(colleague);
-    String? token = await _api.refreshMyToken();
-    token ??= await _storage.getRefreshToken();
+    final key = colleague.id.isNotEmpty
+        ? colleague.id
+        : (colleague.email.isNotEmpty ? colleague.email : colleague.name);
+    if (_pendingFavoriteIds.contains(key)) return;
 
-    // Find existing favorite record if present to retrieve its favoriteId
-    final existingFav = _favorites.cast<Colleague?>().firstWhere(
-      (c) =>
-          c != null &&
-          ((colleague.id.isNotEmpty && c.id == colleague.id) ||
-           (colleague.email.isNotEmpty && c.email.isNotEmpty && c.email.toLowerCase() == colleague.email.toLowerCase()) ||
-           (colleague.name.isNotEmpty && c.name.isNotEmpty && c.name.toLowerCase() == colleague.name.toLowerCase())),
-      orElse: () => null,
-    );
+    setState(() => _pendingFavoriteIds.add(key));
 
-    if (isFav) {
-      final deleteTargetId = existingFav?.favoriteId ?? colleague.favoriteId ?? colleague.id;
-      if (token != null && token.isNotEmpty && deleteTargetId.isNotEmpty) {
-        await _api.deleteFavorite(token, deleteTargetId);
-      }
-      if (colleague.id.isNotEmpty) {
-        await _storage.removeFavoriteColleague(colleague.id);
-      }
-      if (existingFav != null && existingFav.id.isNotEmpty && existingFav.id != colleague.id) {
-        await _storage.removeFavoriteColleague(existingFav.id);
-      }
-      if (colleague.email.isNotEmpty) {
-        await _storage.removeFavoriteColleague(colleague.email);
-      }
-      await _storage.removeFavoriteColleague(colleague.name);
-      _favorites.removeWhere((c) =>
-          (colleague.id.isNotEmpty && c.id == colleague.id) ||
-          (existingFav != null && existingFav.id.isNotEmpty && c.id == existingFav.id) ||
-          (colleague.email.isNotEmpty && c.email.isNotEmpty && c.email.toLowerCase() == colleague.email.toLowerCase()) ||
-          (colleague.name.isNotEmpty && c.name.isNotEmpty && c.name.toLowerCase() == colleague.name.toLowerCase()));
-    } else {
-      String? newFavId;
-      if (token != null && token.isNotEmpty && colleague.id.isNotEmpty) {
-        newFavId = await _api.addFavoriteWithId(token, colleague.id);
-      }
-      final updated = Colleague(
-        id: colleague.id,
-        name: colleague.name,
-        email: colleague.email,
-        isFavorite: true,
-        deskName: colleague.deskName,
-        roomName: colleague.roomName,
-        avatarUrl: colleague.avatarUrl,
-        favoriteId: newFavId ?? colleague.favoriteId,
+    try {
+      final isFav = _isColleagueFavorite(colleague);
+      String? token = await _api.refreshMyToken();
+      token ??= await _storage.getRefreshToken();
+
+      // Find existing favorite record if present to retrieve its favoriteId
+      final existingFav = _favorites.cast<Colleague?>().firstWhere(
+        (c) =>
+            c != null &&
+            ((colleague.id.isNotEmpty && c.id == colleague.id) ||
+             (colleague.email.isNotEmpty && c.email.isNotEmpty && c.email.toLowerCase() == colleague.email.toLowerCase()) ||
+             (colleague.name.isNotEmpty && c.name.isNotEmpty && c.name.toLowerCase() == colleague.name.toLowerCase())),
+        orElse: () => null,
       );
-      await _storage.addFavoriteColleague(updated);
-      _favorites.add(updated);
-    }
 
-    if (_searchQuery.isNotEmpty) {
-      final qLower = _searchQuery.toLowerCase();
-      _filteredFavorites = _favorites.where((c) {
-        return c.name.toLowerCase().contains(qLower) ||
-            c.email.toLowerCase().contains(qLower);
-      }).toList();
-    } else {
-      _filteredFavorites = List.from(_favorites);
-    }
+      if (isFav) {
+        final deleteTargetId = existingFav?.favoriteId ?? colleague.favoriteId ?? colleague.id;
+        if (token != null && token.isNotEmpty && deleteTargetId.isNotEmpty) {
+          await _api.deleteFavorite(token, deleteTargetId);
+        }
+        if (colleague.id.isNotEmpty) {
+          await _storage.removeFavoriteColleague(colleague.id);
+        }
+        if (existingFav != null && existingFav.id.isNotEmpty && existingFav.id != colleague.id) {
+          await _storage.removeFavoriteColleague(existingFav.id);
+        }
+        if (colleague.email.isNotEmpty) {
+          await _storage.removeFavoriteColleague(colleague.email);
+        }
+        await _storage.removeFavoriteColleague(colleague.name);
+        _favorites.removeWhere((c) =>
+            (colleague.id.isNotEmpty && c.id == colleague.id) ||
+            (existingFav != null && existingFav.id.isNotEmpty && c.id == existingFav.id) ||
+            (colleague.email.isNotEmpty && c.email.isNotEmpty && c.email.toLowerCase() == colleague.email.toLowerCase()) ||
+            (colleague.name.isNotEmpty && c.name.isNotEmpty && c.name.toLowerCase() == colleague.name.toLowerCase()));
+      } else {
+        String? newFavId;
+        if (token != null && token.isNotEmpty && colleague.id.isNotEmpty) {
+          newFavId = await _api.addFavoriteWithId(token, colleague.id);
+        }
+        final updated = Colleague(
+          id: colleague.id,
+          name: colleague.name,
+          email: colleague.email,
+          isFavorite: true,
+          deskName: colleague.deskName,
+          roomName: colleague.roomName,
+          avatarUrl: colleague.avatarUrl,
+          favoriteId: newFavId ?? colleague.favoriteId,
+        );
+        await _storage.addFavoriteColleague(updated);
+        _favorites.add(updated);
+      }
 
-    if (mounted) {
-      setState(() {});
+      if (_searchQuery.isNotEmpty) {
+        final qLower = _searchQuery.toLowerCase();
+        _filteredFavorites = _favorites.where((c) {
+          return c.name.toLowerCase().contains(qLower) ||
+              c.email.toLowerCase().contains(qLower);
+        }).toList();
+      } else {
+        _filteredFavorites = List.from(_favorites);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erreur lors de la mise à jour des favoris: $e")),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _pendingFavoriteIds.remove(key));
+      }
     }
   }
 
@@ -595,9 +612,62 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
     );
   }
 
+  Widget _buildColleaguesSkeleton() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final baseColor = isDark ? const Color(0xFF303030) : const Color(0xFFE0E0E0);
+    final highlightColor = isDark ? const Color(0xFF505050) : const Color(0xFFF5F5F5);
+
+    return Shimmer.fromColors(
+      baseColor: baseColor,
+      highlightColor: highlightColor,
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: 5,
+        separatorBuilder: (_, _) => const Divider(height: 1),
+        itemBuilder: (_, _) => ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          leading: Container(
+            width: 40,
+            height: 40,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+          ),
+          title: Container(
+            width: 140,
+            height: 14,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          subtitle: Container(
+            width: 200,
+            height: 10,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          trailing: Container(
+            width: 24,
+            height: 24,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildListContent() {
     if (_isLoadingFavorites) {
-      return const Center(child: CircularProgressIndicator());
+      return _buildColleaguesSkeleton();
     }
 
     final hasQuery = _searchQuery.isNotEmpty;
@@ -643,19 +713,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
     final totalResults = _filteredFavorites.length + _remoteResults.length;
 
     if (totalResults == 0 && _isRemoteSearching) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 12),
-              Text('Recherche dans l\'annuaire...', style: TextStyle(color: Colors.grey)),
-            ],
-          ),
-        ),
-      );
+      return _buildColleaguesSkeleton();
     }
 
     if (totalResults == 0 && !_isRemoteSearching) {
@@ -707,6 +765,12 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
   }
 
   Widget _buildColleagueTile(Colleague colleague, {required bool isFavorite}) {
+    final key = colleague.id.isNotEmpty
+        ? colleague.id
+        : (colleague.email.isNotEmpty ? colleague.email : colleague.name);
+    final isPending = _pendingFavoriteIds.contains(key);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       leading: CircleAvatar(
@@ -723,16 +787,32 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis)
           : null,
-      trailing: IconButton(
-        icon: Icon(
-          isFavorite ? Icons.star_rounded : Icons.star_border_rounded,
-          color: isFavorite ? Colors.amber : Colors.grey,
-        ),
-        tooltip: isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris',
-        onPressed: () => _toggleFavorite(colleague),
-      ),
+      trailing: isPending
+          ? SizedBox(
+              width: 48,
+              height: 48,
+              child: Center(
+                child: Shimmer.fromColors(
+                  baseColor: isDark ? const Color(0xFF424242) : const Color(0xFFD6D6D6),
+                  highlightColor: isDark ? const Color(0xFF757575) : const Color(0xFFF5F5F5),
+                  child: const Icon(
+                    Icons.star_rounded,
+                    size: 26,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            )
+          : IconButton(
+              icon: Icon(
+                isFavorite ? Icons.star_rounded : Icons.star_border_rounded,
+                color: isFavorite ? Colors.amber : Colors.grey,
+              ),
+              tooltip: isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris',
+              onPressed: () => _toggleFavorite(colleague),
+            ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      onTap: () => _onColleagueTapped(colleague),
+      onTap: isPending ? null : () => _onColleagueTapped(colleague),
     );
   }
 }

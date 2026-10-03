@@ -7,15 +7,23 @@ import '../widgets/workspace_map_viewer.dart';
 
 class SetupScreen extends StatefulWidget {
   final String accessToken;
-  const SetupScreen({super.key, required this.accessToken});
+  final RoomzApiService? apiService;
+  final StorageService? storageService;
+
+  const SetupScreen({
+    super.key,
+    required this.accessToken,
+    this.apiService,
+    this.storageService,
+  });
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  final _api = RoomzApiService();
-  final _storage = StorageService();
+  late final _api = widget.apiService ?? RoomzApiService();
+  late final _storage = widget.storageService ?? StorageService();
 
   List<Map<String, dynamic>> _sites = [];
   List<Map<String, dynamic>> _floors = [];
@@ -353,7 +361,7 @@ class _SetupScreenState extends State<SetupScreen> {
       return r.toLowerCase().contains(_roomSearch.toLowerCase());
     }).toList();
 
-    final bool isMapActive = _currentStep == 2 && _showMap;
+    final bool isMapActive = _currentStep >= 2 && _showMap;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Configuration')),
@@ -367,8 +375,10 @@ class _SetupScreenState extends State<SetupScreen> {
                   ),
                 )
               : Stepper(
-                    physics: isMapActive ? const NeverScrollableScrollPhysics() : null,
-                    key: ValueKey('stepper_${_currentStep}_$isMapActive'),
+                  physics: isMapActive
+                      ? const NeverScrollableScrollPhysics()
+                      : const AlwaysScrollableScrollPhysics(),
+                  key: ValueKey('stepper_${_currentStep}_$isMapActive'),
                   currentStep: _showMap && _currentStep > 2 ? 2 : _currentStep,
                   onStepTapped: (step) {
                     if (step == 0) setState(() => _currentStep = 0);
@@ -552,7 +562,7 @@ class _SetupScreenState extends State<SetupScreen> {
                                   selected: _selectedWorkspace?['id'] == ws['id'],
                                   onTap: () => _confirm(ws),
                                 );
-                              }).toList(),
+                              }),
                           ],
                         ),
                       ),

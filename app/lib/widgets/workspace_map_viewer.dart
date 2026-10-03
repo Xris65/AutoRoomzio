@@ -19,6 +19,7 @@ class WorkspaceMapViewer extends StatefulWidget {
   final List<Map<String, dynamic>> workspaces;
   final List<Map<String, dynamic>> allWorkspaces;
   final String? selectedWorkspaceId;
+  final String? defaultWorkspaceId;
   final double? containerHeight;
   final Function(Map<String, dynamic> workspace) onSelected;
 
@@ -36,6 +37,7 @@ class WorkspaceMapViewer extends StatefulWidget {
     required this.workspaces,
     this.allWorkspaces = const [],
     this.selectedWorkspaceId,
+    this.defaultWorkspaceId,
     this.containerHeight,
     required this.onSelected,
     this.occupants = const {},
@@ -144,11 +146,16 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     double targetCy;
 
     if (targetRect != null && targetRect.width > 0 && targetRect.height > 0) {
-      scale = 1.15;
+      final fitScale = (viewW * 0.75) / targetRect.width;
+      scale = fitScale.clamp(0.85, 1.25);
       targetCx = targetRect.left + targetRect.width / 2;
       targetCy = targetRect.top + targetRect.height / 2;
     } else {
-      scale = (viewW / 420.0).clamp(0.85, 1.25);
+      // Smart Zoom-to-Fit fallback when default desk is not on current floor
+      final scaleX = (viewW * 0.90) / mapW;
+      final scaleY = (viewH * 0.85) / mapH;
+      final fitScale = (scaleX < scaleY ? scaleX : scaleY);
+      scale = fitScale.clamp(0.60, 1.25);
       targetCx = mapW / 2;
       targetCy = mapH / 2;
     }
@@ -625,60 +632,118 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
         _lastMapWidth = mapWidth;
         _lastMapHeight = mapHeight;
 
-        // Locate selected workspace rect (if any)
-        Rect? selectedRect;
-        if (widget.selectedWorkspaceId != null) {
-          final selId = widget.selectedWorkspaceId!.toLowerCase();
-          for (final feature in widget.features) {
-            final props = feature['properties'] ?? {};
-            final wsId = (props['workspaceId']?.toString() ??
-                    props['roomId']?.toString() ??
-                    props['id']?.toString())
-                ?.toLowerCase();
-            if (wsId == selId) {
-              final coords = feature['geometry']?['coordinates'] as List?;
-              if (coords != null && coords.isNotEmpty) {
-                double fMinX = double.infinity, fMinY = double.infinity;
-                double fMaxX = double.negativeInfinity, fMaxY = double.negativeInfinity;
-                _extractBounds(coords, (x, y) {
-                  if (x < fMinX) fMinX = x;
-                  if (y < fMinY) fMinY = y;
-                  if (x > fMaxX) fMaxX = x;
-                  if (y > fMaxY) fMaxY = y;
-                });
-                if (fMinX != double.infinity) {
-                  selectedRect = Rect.fromLTWH(
-                    (fMinX - minX) * coordScale + padding,
-                    (fMinY - minY) * coordScale + padding,
-                    (fMaxX - fMinX) * coordScale,
-                    (fMaxY - fMinY) * coordScale,
-                  );
-                }
-              }
+        // Locate selected or default workspace rect, personal desk, or enclosing room
+        Rect? targetRect;
+        String? targetDeskId = (widget.selectedWorkspaceId ?? widget.defaultWorkspaceId)?.toLowerCase();
+        if (targetDeskId == null || targetDeskId.isEmpty) {
+          for (final entry in widget.occupants.entries) {
+            if (entry.value.isMe) {
+              targetDeskId = entry.key.toLowerCase();
               break;
+            }
+          }
+        }
+
+        if (targetDeskId != null && targetDeskId.isNotEmpty) {
+          // 1. Identify desk name and enclosing room
+          final targetWs = wsMap[targetDeskId] ?? allWsMap[targetDeskId];
+          String? deskName = targetWs?['name']?.toString();
+          String? targetRoomName;
+
+          if (deskName == null) {
+            for (final feature in widget.features) {
+              final props = feature['properties'] ?? {};
+              final wsId = (props['workspaceId']?.toString() ??
+                      props['roomId']?.toString() ??
+                      props['id']?.toString())
+                  ?.toLowerCase();
+              if (wsId == targetDeskId) {
+                deskName = props['name']?.toString() ?? props['workspaceName']?.toString();
+                break;
+              }
+            }
+          }
+
+          if (deskName != null) {
+            final lastDash = deskName.lastIndexOf('-');
+            if (lastDash > 0 && lastDash < deskName.length - 1) {
+              final suffix = deskName.substring(lastDash + 1);
+              targetRoomName = (suffix.length <= 4 && !suffix.contains(' '))
+                  ? deskName.substring(0, lastDash)
+                  : deskName;
+            } else {
+              targetRoomName = deskName;
+            }
+          }
+
+          // 2. Prioritize centering directly on the enclosing ROOM bounds
+          if (targetRoomName != null && roomBounds.containsKey(targetRoomName)) {
+            final bounds = roomBounds[targetRoomName]!;
+            if (bounds.minX != double.infinity) {
+              targetRect = Rect.fromLTRB(
+                bounds.minX - 16.0,
+                bounds.minY - 28.0,
+                bounds.maxX + 16.0,
+                bounds.maxY + 16.0,
+              );
+            }
+          }
+
+          // 3. Fallback to individual desk bounds if room bounds not found
+          if (targetRect == null) {
+            for (final feature in widget.features) {
+              final props = feature['properties'] ?? {};
+              final wsId = (props['workspaceId']?.toString() ??
+                      props['roomId']?.toString() ??
+                      props['id']?.toString())
+                  ?.toLowerCase();
+              if (wsId == targetDeskId) {
+                final coords = feature['geometry']?['coordinates'] as List?;
+                if (coords != null && coords.isNotEmpty) {
+                  double fMinX = double.infinity, fMinY = double.infinity;
+                  double fMaxX = double.negativeInfinity, fMaxY = double.negativeInfinity;
+                  _extractBounds(coords, (x, y) {
+                    if (x < fMinX) fMinX = x;
+                    if (y < fMinY) fMinY = y;
+                    if (x > fMaxX) fMaxX = x;
+                    if (y > fMaxY) fMaxY = y;
+                  });
+                  if (fMinX != double.infinity) {
+                    targetRect = Rect.fromLTWH(
+                      (fMinX - minX) * coordScale + padding,
+                      (fMinY - minY) * coordScale + padding,
+                      (fMaxX - fMinX) * coordScale,
+                      (fMaxY - fMinY) * coordScale,
+                    );
+                  }
+                }
+                break;
+              }
             }
           }
         }
 
         // Initialize transformation controller immediately on first layout
         final currentSize = Size(viewW, viewH);
-        if (!_isInitialTransformSet) {
-          _isInitialTransformSet = true;
-          _lastViewportSize = currentSize;
-          if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
-            _handleFocusedRoomChanged();
-          } else {
-            _initTransform(viewW, viewH, mapWidth, mapHeight, selectedRect);
-          }
-        } else if (_lastViewportSize != currentSize) {
-          _lastViewportSize = currentSize;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (viewW > 0 && viewH > 0 && mapWidth > 0 && mapHeight > 0) {
+          if (!_isInitialTransformSet) {
+            _isInitialTransformSet = true;
+            _lastViewportSize = currentSize;
             if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
               _handleFocusedRoomChanged();
             } else {
-              _initTransform(viewW, viewH, mapWidth, mapHeight, selectedRect);
+              _initTransform(viewW, viewH, mapWidth, mapHeight, targetRect);
             }
-          });
+          } else if (_lastViewportSize != currentSize) {
+            _lastViewportSize = currentSize;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
+                _handleFocusedRoomChanged();
+              } else {
+                _initTransform(viewW, viewH, mapWidth, mapHeight, targetRect);
+              }
+            });
+          }
         }
 
         // ── 6. InteractiveViewer wrapping the positioned stack ────────────────

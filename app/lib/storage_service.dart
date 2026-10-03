@@ -428,6 +428,16 @@ class StorageService {
     return prefs.getInt('font_family_index') ?? 0;
   }
 
+  Future<void> saveUiScale(double val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('ui_scale', val);
+  }
+
+  Future<double> getUiScale() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getDouble('ui_scale') ?? 1.0;
+  }
+
 
   // ── Clear all (logout) ────────────────────────────────────────────────────
 

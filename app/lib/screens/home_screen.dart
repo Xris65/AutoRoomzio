@@ -376,7 +376,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final token = await _api.refreshMyToken();
     if (!mounted) return;
     if (token == null) {
-      _logout();
+      _showTopToast('Impossible d\'actualiser la session. Veuillez vérifier votre connexion.', isError: true);
       return;
     }
     final didChange = await Navigator.of(context).push<bool>(
@@ -1977,8 +1977,7 @@ class _HomeScreenState extends State<HomeScreen> {
             }
           } else {
             if (mounted) {
-              _showTopToast('Session expirée. Veuillez vous reconnecter.', isError: true);
-              _logout();
+              _showTopToast('Action impossible : serveur temporairement indisponible.', isError: true);
             }
           }
         } catch (e) {
@@ -2030,8 +2029,7 @@ class _HomeScreenState extends State<HomeScreen> {
             }
           } else if (accessToken == null) {
             if (mounted) {
-              _showTopToast('Session expirée. Veuillez vous reconnecter.', isError: true);
-              _logout();
+              _showTopToast('Action impossible : serveur temporairement indisponible.', isError: true);
             }
           }
         }
@@ -2579,6 +2577,36 @@ class _HomeScreenState extends State<HomeScreen> {
                         DropdownMenuItem(value: 0, child: Text('Classique')),
                         DropdownMenuItem(value: 1, child: Text('Moderne (Poppins)')),
                         DropdownMenuItem(value: 2, child: Text('Code (Fira)')),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ValueListenableBuilder<double>(
+                valueListenable: uiScaleNotifier,
+                builder: (context, currentScale, _) {
+                  double selectedValue = 1.0;
+                  if ((currentScale - 0.85).abs() < 0.01) {
+                    selectedValue = 0.85;
+                  } else if ((currentScale - 1.15).abs() < 0.01) {
+                    selectedValue = 1.15;
+                  }
+                  return ListTile(
+                    title: const Text('Taille de l\'interface'),
+                    leading: const Icon(Icons.format_size_rounded),
+                    trailing: _buildStyledDropdown<double>(
+                      value: selectedValue,
+                      onChanged: (val) {
+                        if (val != null) {
+                          uiScaleNotifier.value = val;
+                          _storage.saveUiScale(val);
+                        }
+                      },
+                      items: const [
+                        DropdownMenuItem(value: 0.85, child: Text('Réduite (85%)')),
+                        DropdownMenuItem(value: 1.0, child: Text('Normale (100%)')),
+                        DropdownMenuItem(value: 1.15, child: Text('Agrandie (115%)')),
                       ],
                     ),
                   );

@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -756,6 +758,52 @@ void main() {
       expect(favs, isEmpty);
       expect(find.text('Marie Curie'), findsNothing);
       expect(find.text('Aucun collègue favori'), findsOneWidget);
+    });
+
+    testWidgets('Toggling star renders Shimmer loading indicator while network call is in flight', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'refresh_token': 'mock-refresh-token',
+        'favorite_colleagues': jsonEncode([
+          {'id': 'u-1', 'name': 'Marie Curie', 'email': 'marie@radium.org', 'isFavorite': true},
+        ]),
+      });
+
+      final completer = Completer<http.Response>();
+      final client = MockClient((req) async {
+        if (req.url.path.contains('/connect/token')) {
+          return http.Response(jsonEncode({'access_token': 'tok', 'refresh_token': 'ref'}), 200);
+        }
+        if (req.method == 'DELETE' || (req.method == 'POST' && req.url.path.contains('favorites'))) {
+          return await completer.future;
+        }
+        return http.Response('[]', 200);
+      });
+      final api = RoomzApiService(client: client);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ColleagueSelectionDialog(date: '2026-10-15', apiService: api),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Tap the star button to unstar
+      await tester.tap(find.byIcon(Icons.star_rounded));
+      // Pump 1 frame to initiate the toggle request and enter pending state
+      await tester.pump();
+
+      // Verify Shimmer is displayed
+      expect(find.byType(Shimmer), findsOneWidget);
+
+      // Complete the network call
+      completer.complete(http.Response('{}', 200));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // After completion, Shimmer is gone
+      expect(find.byType(Shimmer), findsNothing);
     });
 
     testWidgets('Initial loading queries remote favorites and updates UI', (tester) async {
