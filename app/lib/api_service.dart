@@ -41,7 +41,6 @@ class RoomzApiService {
   void _checkAuthResponse(http.Response response) {
     if (response.statusCode == 401) {
       _cachedAccessToken = null;
-      handleSessionExpired();
     }
   }
 
@@ -928,7 +927,7 @@ class RoomzApiService {
           colleagueEmail: colleagueEmail,
         );
       } else if (response.statusCode == 401) {
-        await handleSessionExpired();
+        _cachedAccessToken = null;
         return const BookingResult(
           status: BookingStatus.unauthorized,
           message: 'Session expirée. Reconnexion requise.',
