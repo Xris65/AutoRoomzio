@@ -2,6 +2,11 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.4.1] - 2026-10-04
+
+### Correctifs (Hotfix)
+- **Authentification** : Correction d'un bug critique qui déconnectait brutalement l'utilisateur et effaçait sa session lorsque le jeton d'accès arrivait à expiration naturelle (Erreur HTTP 401). Le jeton est désormais rafraîchi silencieusement en arrière-plan à la prochaine action.
+
 ## [1.4.0] - 2026-10-03
 
 ### Nouveautés
