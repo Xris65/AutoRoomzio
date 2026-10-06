@@ -114,7 +114,7 @@ class RoomzApiService {
         }
       } else {
         debugPrint("❌ Token refresh failed ${response.statusCode}");
-        if (response.statusCode == 401) {
+        if (response.statusCode == 401 || response.statusCode == 400 || response.statusCode == 403) {
           _cachedAccessToken = null;
           await handleSessionExpired();
         }
