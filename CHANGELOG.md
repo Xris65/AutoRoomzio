@@ -2,6 +2,11 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.4.2] - 2026-10-06
+
+### Correctifs (Hotfix)
+- **Authentification Zombie** : L'application forçait les utilisateurs à rester dans une session bugguée ("Action impossible") sans jamais les déconnecter lorsque le serveur d'authentification refusait le jeton de rafraîchissement avec une erreur 400 (Bad Request). L'application gère désormais correctement les rejets OAuth2 complets et redirige vers l'écran de connexion.
+
 ## [1.4.1] - 2026-10-04
 
 ### Correctifs (Hotfix)
