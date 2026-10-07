@@ -1,0 +1,49 @@
+name: Deploy Web to GitHub Pages
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install dependencies
+        working-directory: ./app
+        run: flutter pub get
+
+      - name: Configure Web Build Variables
+        id: config
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "BASE_HREF=/AutoRoomzio/" >> $GITHUB_ENV
+            echo "DEST_DIR=." >> $GITHUB_ENV
+          else
+            echo "BASE_HREF=/AutoRoomzio/recette/" >> $GITHUB_ENV
+            echo "DEST_DIR=recette" >> $GITHUB_ENV
+          fi
+        shell: bash
+
+      - name: Build Web
+        working-directory: ./app
+        run: flutter build web --release --base-href "${{ env.BASE_HREF }}"
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: "${{ secrets.GITHUB_TOKEN }}"
+          publish_dir: ./app/build/web
+          destination_dir: "${{ env.DEST_DIR }}"
+          keep_files: true
