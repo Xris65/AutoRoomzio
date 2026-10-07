@@ -427,8 +427,42 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   void _showWebPairing() async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Attention'),
+        content: const Text(
+          'Le transfert de session vers le Web va déconnecter cette application. '
+          'L\'automate en arrière-plan sera arrêté.\n\n'
+          'Une fois le QR Code généré, la session actuelle sera détruite pour des raisons de sécurité. '
+          'Voulez-vous continuer ?'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Transférer', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
     final token = await _storage.getRefreshToken();
     if (token == null) return;
+    
+    // WIPING THE TOKEN BEFORE SHOWING THE DIALOG
+    await _storage.clearTokens();
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        Workmanager().cancelAll();
+      } catch (_) {}
+    }
     
     final bId = await _storage.getBuildingId() ?? '';
     final fId = await _storage.getFloorId() ?? '';
@@ -444,8 +478,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final url = '$baseUrl?token=$encoded&b=$bId&f=$fId&w=$wId&wn=$wName';
 
     if (!mounted) return;
-    showDialog(
+    await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Connecter un appareil Web'),
         content: Column(
@@ -466,7 +501,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Attention : se connecter sur le Web va interrompre la session de cette application. Vous serez déconnecté ici une fois le jeton utilisé.',
+                      'Attention : la session de cette application vient d\'être détruite. Une fois ce panneau fermé, vous serez redirigé vers l\'écran de connexion.',
                       style: TextStyle(color: Colors.orange, fontSize: 13),
                     ),
                   ),
@@ -512,13 +547,18 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          TextButton(
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Fermer'),
+            child: const Text('Fermer et se déconnecter', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
+
+    if (mounted) {
+      _logout();
+    }
   }
 
   Future<void> _logout() async {
