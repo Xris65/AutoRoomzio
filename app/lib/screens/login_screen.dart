@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -6,13 +7,15 @@ import 'package:webview_windows/webview_windows.dart';
 import '../storage_service.dart';
 import 'setup_screen.dart';
 import 'home_screen.dart';
+import '../token_crypto.dart';
 
 /// Shows the real MyRoomz login page.
 /// - Android: webview_flutter
 /// - Windows:  webview_windows (WebView2 / Edge)
 /// After login, extracts the OIDC tokens from localStorage automatically.
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  final bool ignoreUrlToken;
+  const LoginScreen({super.key, this.ignoreUrlToken = false});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -53,14 +56,64 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    if (Platform.isAndroid) {
+    if (kIsWeb) {
+      if (widget.ignoreUrlToken) {
+        // Prevent infinite loop on invalid tokens
+        _storage.clearAllData();
+      } else {
+        _checkWebToken();
+      }
+    } else if ((!kIsWeb && Platform.isAndroid)) {
       _initAndroid();
-    } else if (Platform.isWindows) {
+    } else if ((!kIsWeb && Platform.isWindows)) {
       _initWindows();
     }
   }
 
   // ── Initialisation ────────────────────────────────────────────────────────
+
+  void _checkWebToken() async {
+    final tokenEncrypted = Uri.base.queryParameters['token'];
+    
+    if (tokenEncrypted != null && tokenEncrypted.isNotEmpty) {
+      // 1. Decrypt token
+      final token = TokenCryptoService.decryptToken(tokenEncrypted);
+      if (token == null) {
+        // Invalid or corrupted token, clear everything
+        await _storage.clearAllData();
+        return;
+      }
+      
+      // 2. Extract workspace context if present
+      final bId = Uri.base.queryParameters['b'];
+      final fId = Uri.base.queryParameters['f'];
+      final wId = Uri.base.queryParameters['w'];
+      
+      if (bId != null && bId.isNotEmpty) await _storage.saveBuildingId(bId);
+      if (fId != null && fId.isNotEmpty) await _storage.saveFloorId(fId);
+      if (wId != null && wId.isNotEmpty) await _storage.saveWorkspaceId(wId);
+      
+      // Also restore workspace display name
+      final wName = Uri.base.queryParameters['wn'];
+      if (wName != null && wName.isNotEmpty) {
+        await _storage.saveWorkspaceName(Uri.decodeComponent(wName));
+      }
+      
+      // 3. Save refresh token
+      await _storage.saveRefreshToken(token);
+      
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => const HomeScreen(),
+          settings: const RouteSettings(name: '/'),
+        ),
+      );
+    } else {
+      // No token in URL: Wipe state clean to force fresh session
+      await _storage.clearAllData();
+    }
+  }
 
   void _initAndroid() async {
     // Clear cookies before instantiating controller to prevent auto-login
@@ -174,7 +227,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    if (Platform.isWindows) _windowsController.dispose();
+    if ((!kIsWeb && Platform.isWindows)) _windowsController.dispose();
     super.dispose();
   }
 
@@ -193,14 +246,34 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildBody() {
-    if (Platform.isAndroid) {
+    if (kIsWeb) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              Icon(Icons.qr_code_scanner, size: 64, color: Colors.blue),
+              SizedBox(height: 16),
+              Text('Connectez-vous via QR Code', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              SizedBox(height: 8),
+              Text('Ouvrez AutoRoomzio sur votre PC, appuyez sur l\'icône QR Code en haut à droite, puis scannez le code avec votre appareil photo.', 
+                   textAlign: TextAlign.center,
+                   style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if ((!kIsWeb && Platform.isAndroid)) {
       if (_androidController == null) {
         return const Center(child: CircularProgressIndicator());
       }
       return WebViewWidget(controller: _androidController!);
     }
 
-    if (Platform.isWindows) {
+    if ((!kIsWeb && Platform.isWindows)) {
       return _windowsReady
           ? Webview(_windowsController)
           : const Center(child: CircularProgressIndicator());

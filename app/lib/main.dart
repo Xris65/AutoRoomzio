@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -26,7 +27,10 @@ void main() async {
   // Register global session expiration handler
   RoomzApiService.onSessionExpired = () {
     rootNavigatorKey.currentState?.pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      MaterialPageRoute(
+        builder: (_) => const LoginScreen(ignoreUrlToken: true),
+        settings: const RouteSettings(name: '/'),
+      ),
       (route) => false,
     );
   };
@@ -34,7 +38,7 @@ void main() async {
   await NotificationService().init();
 
   // Workmanager is Android-only
-  if (Platform.isAndroid) {
+  if ((!kIsWeb && Platform.isAndroid)) {
     Workmanager().initialize(callbackDispatcher);
 
     // Re-register the periodic task on every app launch to survive reboots

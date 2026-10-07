@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import 'dart:io';
@@ -13,7 +14,7 @@ class NotificationService {
   Future<void> init() async {
     if (_initialized) return;
 
-    if (!Platform.isAndroid && !Platform.isIOS) {
+    if (!(!kIsWeb && Platform.isAndroid) && !(!kIsWeb && Platform.isIOS)) {
       _initialized = true;
       return; // Skip unsupported platforms for now
     }
@@ -35,7 +36,7 @@ class NotificationService {
   }
 
   Future<void> showNotification({required String title, required String body}) async {
-    if (!Platform.isAndroid && !Platform.isIOS) return;
+    if (!(!kIsWeb && Platform.isAndroid) && !(!kIsWeb && Platform.isIOS)) return;
     
     await init();
     

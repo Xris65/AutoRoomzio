@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:android_intent_plus/android_intent.dart';
 import 'dart:async';
 import 'dart:io';
@@ -45,7 +46,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
   }
 
   Future<void> _checkPermissions() async {
-    if (!Platform.isAndroid) return;
+    if (!(!kIsWeb && Platform.isAndroid)) return;
 
     final batteryOpt = await Permission.ignoreBatteryOptimizations.isGranted;
     final notif = await Permission.notification.isGranted;
@@ -74,7 +75,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
   }
 
   Future<void> _requestAutoStart() async {
-    if (!Platform.isAndroid) return;
+    if (!(!kIsWeb && Platform.isAndroid)) return;
     
     final intents = [
       {'package': 'com.miui.securitycenter', 'component': 'com.miui.permcenter.autostart.AutoStartManagementActivity'},

@@ -1,103 +1,78 @@
-# Project: AutoRoomzio v1.4.0
+# Project: AutoRoomzio Web QR Pairing & Security Hardening
 
 ## Architecture
-AutoRoomzio is a Flutter mobile application (Android / iOS) for automated and manual workspace desk reservations on MyRoomz (`api.my.roomz.io`).
-- **Presentation**: Flutter Material 3 UI (`lib/screens/`, `lib/widgets/`).
-- **Services**: `RoomzApiService` for HTTP interaction with MyRoomz REST API; `StorageService` for local caching (`SharedPreferences`).
-- **Background Automation**: Android `Workmanager` background task runner.
-- **State & Event Flow**: Service-backed state in StatefulWidget controllers with cached persistence.
+AutoRoomzio is a Flutter application deployed on Android, Windows, and Web (static GitHub Pages).
+- **Core App Root**: Located in `app/`.
+- **State & Storage**: `StorageService` (`app/lib/storage_service.dart`) handles persistent settings and credentials.
+- **Pairing Mechanism**: Mobile generates a QR code URL pointing to the Web application (`https://Xris65.github.io/AutoRoomzio/`). Web app (`login_screen.dart`) extracts credentials and context to seamlessly authenticate and initialize the user environment without manual setup.
+- **Platform Specialization**: Web platform (`kIsWeb`) operates sandboxed without background workers or local notification daemon, requiring complete censorship of dead automation, notification, and update features.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| F0 | Git Branch `version-1.4.0` & Baseline Sanity | Create and checkout branch `version-1.4.0`, fix outdated template test `widget_test.dart`, verify baseline `flutter test` | M0 | ORIGINAL_REQUEST §Contrainte Git |
-| F1 | R1 MyRoomz API Spike Test | Automated test/script querying MyRoomz API for past reservation history, proving lack of historical query support | M1 | ORIGINAL_REQUEST §R1 |
-| F2 | R1 Statistics Clean UI | Cleanly refactor Stats tab to display real, coherent metrics (upcoming bookings, auto/manual counters, desk loyalty rate, rhythm) | M1 | ORIGINAL_REQUEST §R1 |
-| F3 | R2 Colleague Domain Model & Favorites Service | Add `Colleague` model, favorites persistence in `StorageService`, and `getFavorites` / directory search in `RoomzApiService` | M2 | ORIGINAL_REQUEST §R2 |
-| F4 | R2 Colleague Reservation API & Error Handling | `reserveWorkspaceForColleague` with typed `BookingResult`, parsing HTTP 409 conflicts & error reasons | M2 | ORIGINAL_REQUEST §R2 |
-| F5 | R2 Calendar Day Tap Colleague Popup & Search | Modal popup from Calendar day tap with search bar, favorites selector, and purple delegation display on calendar | M2 | ORIGINAL_REQUEST §R2 |
-| F6 | R3 Occupancy & Favorites Cross-Referencing | Fetch floor occupancy via `POST /floors/{floorId}/workspaces/calendars` and match seated users with favorites | M3 | ORIGINAL_REQUEST §R3 |
-| F7 | R3 2D Map Visual Markings | Render distinctive visual markings (amber/gold color, star badge) on desks occupied by favorite colleagues | M3 | ORIGINAL_REQUEST §R3 |
-| F8 | R3 Desk Click Colleague Identity | Click on marked desk displays colleague identity (name, desk name, room) in tooltip or modal bottom sheet | M3 | ORIGINAL_REQUEST §R3 |
-| F9 | R3 Room Focus & Filtering | Room filter chips to focus camera / zoom into rooms where favorite colleagues are seated | M3 | ORIGINAL_REQUEST §R3 |
-| F10 | E2E Opaque-Box Test Suite (Tiers 1-4) | Comprehensive requirement-driven opaque-box test suite published via `TEST_READY.md` | M4 | System Specification |
-| F11 | Adversarial Coverage Hardening (Tier 5) | White-box stress-testing, boundary edge cases, and code coverage audit | M4 | System Specification |
+| 1 | Dependency Setup | Add `encrypt: ^5.0.3` and `flutter_secure_storage: ^11.2.0` to `app/pubspec.yaml` | M1 | ORIGINAL_REQUEST §3 |
+| 2 | Token Cryptography | Implement `TokenCryptoService` (AES-256 CBC, random IV, URL-safe Base64) | M1 | ORIGINAL_REQUEST §3 |
+| 3 | Secure Token Storage | Migrate `refresh_token` in `StorageService` to `FlutterSecureStorage` with legacy fallback | M1 | ORIGINAL_REQUEST §3 |
+| 4 | Web Censorship: Automate Tab | Hide Automate tab on Web (`!kIsWeb`) and clamp navigation indices safely | M2 | ORIGINAL_REQUEST §1 |
+| 5 | Web Censorship: Settings Tab | Hide Automate startup option, Automation switch, Updates tile, startup update check on Web | M2 | ORIGINAL_REQUEST §1 |
+| 6 | Web Censorship: Notifications | Completely hide Notifications settings card and test notifications button on Web (`!kIsWeb`) | M2 | ORIGINAL_REQUEST §1 & Follow-up |
+| 7 | Web Censorship: Calendar Pending | Completely hide "Programmer (En attente)" day action, legend badge, and indicators on Web (`!kIsWeb`) | M2 | ORIGINAL_REQUEST Follow-up 21:11:33Z |
+| 8 | QR Context Generation | Include `buildingId`, `floorId`, `roomId`, `workspaceName` in pairing URL in `home_screen.dart` | M3 | ORIGINAL_REQUEST §2 |
+| 9 | QR Dark Mode Legibility | Provide `backgroundColor: Colors.white` and white container to `QrImageView` for dark mode legibility | M3 | ORIGINAL_REQUEST Follow-up 21:14:07Z |
+| 10 | QR Encrypted Token URL | Encrypt refresh token using `TokenCryptoService` prior to inserting into pairing URL | M3 | ORIGINAL_REQUEST §3 |
+| 11 | Web Context Ingestion & Decrypt | Decrypt token, extract context params in `login_screen.dart`, save to `StorageService`, and navigate | M3 | ORIGINAL_REQUEST §2, §3 |
+| 12 | Web Storage Clear on Direct Access | In `login_screen.dart`, if no token in URL on Web, wipe all local storage (`StorageService`) before showing QR scan prompt | M3 | ORIGINAL_REQUEST Follow-up 21:17:07Z |
+| 13 | Build & Verification | Comprehensive `flutter analyze`, `flutter test`, and `flutter build web` | M4 | ORIGINAL_REQUEST Completion |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M0 | Git Branch Setup & Baseline Sanity | Create & checkout `version-1.4.0`, fix obsolete default `widget_test.dart`, verify baseline build | none | DONE |
-| M1 | R1 Statistics Spike & Clean UI | Automated API spike test (`spike_api_history_test.dart`) + clean coherent stats tab in `home_screen.dart` | M0 | PLANNED |
-| M2 | R2 Colleague Reservation Flow | Colleague model, API reservation delegation, error handling (409 conflict), Calendar day popup & search | M0 | PLANNED |
-| M3 | R3 "Où est mon équipe ?" (2D Plan) | Occupancy data fetching, visual markings on 2D map, click identity popup, room filtering chips | M0, M2 | PLANNED |
-| M4 | Final Milestone: E2E Test Suite & Adversarial Hardening | Phase 1: Pass 100% E2E tests (Tiers 1-4). Phase 2: Adversarial coverage hardening (Tier 5) | M1, M2, M3 | PLANNED |
+| M1 | Core Security & Storage Infrastructure | Dependencies (`encrypt`, `flutter_secure_storage`), `TokenCryptoService`, `StorageService` secure migration (and clear helpers) | none | IN_PROGRESS |
+| M2 | Web Censorship & UI Filtering | Hide Automate tab, settings (notifications, updates, test button), calendar pending booking on Web | none | PLANNED |
+| M3 | Context Sync, QR Dark Mode, Token Decrypt & Web Storage Clear | QR code generation with AES encryption, context query parameters, QR dark mode styling, Web login ingestion & decryption, and Web storage wipe on direct visit | M1, M2 | PLANNED |
+| M4 | Compilation, Test & Quality Assurance | Full test suite execution, static analysis (`flutter analyze`), web build verification (`flutter build web`) | M3 | PLANNED |
 
 ## Interface Contracts
 
-### 1. Colleague Domain Model (`app/lib/models/colleague.dart`)
-```dart
-class Colleague {
-  final String id;
-  final String name;
-  final String email;
-  final bool isFavorite;
-  final String? deskName;
-  final String? roomName;
+### TokenCryptoService
+- File: `app/lib/token_crypto.dart`
+- API:
+  ```dart
+  class TokenCryptoService {
+    static String encryptToken(String plainText);
+    static String? decryptToken(String cipherText);
+  }
+  ```
+- Cipher: AES-256 CBC, PKCS7 padding.
+- IV: 16 bytes cryptographically secure random bytes prepended to the ciphertext.
+- Encoding: RFC 4648 URL-safe Base64 (`base64Url` without unescaped padding or URI-encoded).
+- Key: 32-byte shared symmetric constant.
+- Error handling: Returns `null` on corrupt/invalid ciphertexts or decryption failure without throwing uncaught exceptions.
 
-  Colleague({
-    required this.id,
-    required this.name,
-    required this.email,
-    this.isFavorite = false,
-    this.deskName,
-    this.roomName,
-  });
+### StorageService ↔ QR Synchronization
+- Storage Keys & Methods:
+  - `site_id`: `saveSiteId(String)` / `getSiteId()` (alias: `saveBuildingId`/`getBuildingId`)
+  - `floor_id`: `saveFloorId(String)` / `getFloorId()`
+  - `workspace_id`: `saveWorkspaceId(String)` / `getWorkspaceId()` (alias: `saveRoomId`/`getRoomId`)
+  - `workspace_name`: `saveWorkspaceName(String)` / `getWorkspaceName()`
+  - `refresh_token`: `saveRefreshToken(String)` / `getRefreshToken()` (persisted in `FlutterSecureStorage`)
+  - `clearAll()` / `clearAuthToken()`: clears secure storage and preferences completely
 
-  Map<String, dynamic> toJson();
-  factory Colleague.fromJson(Map<String, dynamic> json);
-}
-```
-
-### 2. Booking Result (`app/lib/models/booking_result.dart`)
-```dart
-enum BookingStatus { success, conflictDesk, conflictColleague, invalidDate, networkError, unauthorized }
-
-class BookingResult {
-  final BookingStatus status;
-  final String message;
-  final String? eventId;
-
-  BookingResult({required this.status, required this.message, this.eventId});
-  bool get isSuccess => status == BookingStatus.success;
-}
-```
-
-### 3. RoomzApiService Extensions (`app/lib/api_service.dart`)
-```dart
-Future<BookingResult> reserveWorkspaceForColleague({
-  required String date,
-  required String token,
-  required String workspaceId,
-  required String colleagueId,
-  String? colleagueName,
-});
-
-Future<List<Colleague>> getFavorites(String token);
-Future<List<Colleague>> searchColleagues(String token, String query);
-Future<Map<String, DeskOccupant>> getFloorOccupants(String token, String floorId, String date);
-```
-
-### 4. 2D Map Workspace Viewer Extensions (`app/lib/widgets/workspace_map_viewer.dart`)
-```dart
-// Additional parameters in WorkspaceMapViewer:
-final Set<String> favoriteWorkspaceIds;
-final Function(Map<String, dynamic> workspace, DeskOccupant occupant)? onOccupantTapped;
-final String? focusedRoomPrefix;
-```
+### QR Pairing URL Query Parameters
+- Base URL: `https://Xris65.github.io/AutoRoomzio/`
+- Parameters:
+  - `token`: URL-safe AES encrypted refresh token
+  - `buildingId`: ID of the building/site
+  - `floorId`: ID of the floor
+  - `roomId`: ID of the room/workspace
+  - `workspaceName`: Name/label of the workspace
+- Example:
+  `https://Xris65.github.io/AutoRoomzio/?token=<encrypted_blob>&buildingId=12&floorId=3&roomId=45&workspaceName=Bureau+45`
 
 ## Code Layout
-- `app/lib/models/`: Domain models (`colleague.dart`, `booking_result.dart`, `desk_occupant.dart`).
-- `app/lib/services/`: Services or extensions to `api_service.dart`, `storage_service.dart`.
-- `app/lib/screens/`: Screen widgets (`home_screen.dart`, `team_map_screen.dart` or enhanced map widgets).
-- `app/lib/widgets/`: Reusable UI (`colleague_selection_dialog.dart`, `workspace_map_viewer.dart`).
-- `app/test/`: Unit, widget, and E2E tests (`spike_api_history_test.dart`, `colleague_reservation_test.dart`, `team_map_test.dart`, `e2e_v140_test.dart`).
+- `app/pubspec.yaml`: Dependencies
+- `app/lib/token_crypto.dart`: Symmetric encryption & decryption logic
+- `app/lib/storage_service.dart`: Credential and context storage (secure storage integration)
+- `app/lib/screens/home_screen.dart`: Main dashboard, tabs, settings, calendar, QR pairing modal
+- `app/lib/screens/login_screen.dart`: Login screen, web URL query param reader and session initialization
+- `app/test/token_crypto_test.dart`: Cryptographic unit tests

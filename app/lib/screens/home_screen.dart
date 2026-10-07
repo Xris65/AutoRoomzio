@@ -1,7 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path_provider/path_provider.dart';
@@ -15,6 +18,7 @@ import 'package:workmanager/workmanager.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
 import '../storage_service.dart';
+import '../token_crypto.dart';
 import 'login_screen.dart';
 import 'setup_screen.dart';
 import 'optimization_screen.dart';
@@ -149,13 +153,33 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkAuthAndLoad();
   }
 
+  static bool _urlTokenProcessed = false;
+
   Future<void> _checkAuthAndLoad() async {
+    if (kIsWeb && !_urlTokenProcessed) {
+      final tokenInUrl = Uri.base.queryParameters['token'];
+      if (tokenInUrl != null && tokenInUrl.isNotEmpty) {
+        _urlTokenProcessed = true;
+        // Force processing the new context from the URL
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => const LoginScreen(),
+              settings: const RouteSettings(name: '/'),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
     final token = await _storage.getRefreshToken();
     if (token == null || token.isEmpty) {
       if (mounted) {
         Navigator.of(context).pushReplacement(
           PageRouteBuilder(
             pageBuilder: (context, animation1, animation2) => const LoginScreen(),
+            settings: const RouteSettings(name: '/'),
             transitionDuration: Duration.zero,
             reverseTransitionDuration: Duration.zero,
           ),
@@ -262,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _permissionStatus = 0;
 
   Future<void> _checkPermissionsStatus() async {
-    if (!Platform.isAndroid) return;
+    if (!(!kIsWeb && Platform.isAndroid)) return;
     final batteryOpt = await Permission.ignoreBatteryOptimizations.isGranted;
     final notif = await Permission.notification.isGranted;
     bool autostart = await _storage.getAutostartVerified();
@@ -314,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _storage.saveAutomationEnabled(val);
 
     if (val) {
-      if (Platform.isAndroid) {
+      if ((!kIsWeb && Platform.isAndroid)) {
         final hasSeen = await _storage.getHasSeenOptimization();
         if (!hasSeen && mounted) {
           await _storage.saveHasSeenOptimization(true);
@@ -345,7 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _showTopToast('Automatisation activée', isSuccess: true);
       }
     } else {
-      if (Platform.isAndroid) {
+      if ((!kIsWeb && Platform.isAndroid)) {
         Workmanager().cancelAll();
       }
       if (mounted) {
@@ -401,11 +425,110 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+
+  void _showWebPairing() async {
+    final token = await _storage.getRefreshToken();
+    if (token == null) return;
+    
+    final bId = await _storage.getBuildingId() ?? '';
+    final fId = await _storage.getFloorId() ?? '';
+    final wId = await _storage.getWorkspaceId() ?? '';
+    
+    final encryptedToken = TokenCryptoService.encryptToken(token);
+    final encoded = Uri.encodeComponent(encryptedToken);
+    final wName = Uri.encodeComponent(await _storage.getWorkspaceName() ?? '');
+    
+    final baseUrl = kReleaseMode 
+        ? 'https://xris65.github.io/AutoRoomzio/' 
+        : 'https://xris65.github.io/AutoRoomzio/recette/';
+    final url = '$baseUrl?token=$encoded&b=$bId&f=$fId&w=$wId&wn=$wName';
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Connecter un appareil Web'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Scannez ce QR Code avec l\'appareil photo de votre smartphone pour vous connecter automatiquement sur la version Web.\n\nVous pouvez aussi l\'ouvrir directement sur ce PC :'),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                border: Border.all(color: Colors.orange.withOpacity(0.5)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Attention : se connecter sur le Web va interrompre la session de cette application. Vous serez déconnecté ici une fois le jeton utilisé.',
+                      style: TextStyle(color: Colors.orange, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: 220,
+              height: 220,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: QrImageView(
+                data: url,
+                version: QrVersions.auto,
+                size: 200.0,
+                backgroundColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Ouvrir le lien'),
+                  onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.copy),
+                  tooltip: 'Copier le lien',
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: url));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lien copié dans le presse-papiers')));
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Fermer'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _logout() async {
     await _storage.clearTokens();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      MaterialPageRoute(
+        builder: (_) => const LoginScreen(ignoreUrlToken: true),
+        settings: const RouteSettings(name: '/'),
+      ),
       (route) => false,
     );
   }
@@ -428,7 +551,7 @@ class _HomeScreenState extends State<HomeScreen> {
         appBar: AppBar(
           title: const Text('AutoRoomzio'),
           actions: [
-            if (Platform.isAndroid && _automationEnabled)
+            if ((!kIsWeb && Platform.isAndroid) && _automationEnabled)
               IconButton(
                 icon: Icon(
                   Icons.shield_rounded, 
@@ -440,6 +563,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     MaterialPageRoute(builder: (_) => const OptimizationScreen()),
                   ).then((_) => _checkPermissionsStatus());
                 },
+              ),
+            if (!kIsWeb)
+              IconButton(
+                icon: const Icon(Icons.qr_code_scanner),
+                tooltip: 'Lier un appareil Web',
+                onPressed: _showWebPairing,
               ),
             IconButton(
               icon: const Icon(Icons.logout),
@@ -453,7 +582,7 @@ class _HomeScreenState extends State<HomeScreen> {
             final List<Map<String, dynamic>> tabs = [
               {'id': 'home', 'icon': Icons.home_rounded, 'label': 'Accueil', 'widget': _buildHomeTab()},
               {'id': 'calendar', 'icon': Icons.calendar_month_rounded, 'label': 'Calendrier', 'widget': _buildCalendarTab()},
-              if (_showAutomation) {'id': 'auto', 'icon': Icons.auto_awesome, 'label': 'Automate', 'widget': _buildAutomationTab()},
+              if (_showAutomation && !kIsWeb) {'id': 'auto', 'icon': Icons.auto_awesome, 'label': 'Automate', 'widget': _buildAutomationTab()},
               if (_showStats) {'id': 'stats', 'icon': Icons.insights_rounded, 'label': 'Stats', 'widget': _buildStatsTab()},
               {'id': 'settings', 'icon': Icons.settings_rounded, 'label': 'Paramètres', 'widget': _buildSettingsTab()},
             ];
@@ -1866,7 +1995,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 else if (isDelegatedOnMyDesk)
                   const SizedBox.shrink()
 
-                else
+                else if (!kIsWeb || isBookableNow)
                   ListTile(
                     leading: Icon(
                       isBookableNow ? Icons.check_circle_outline : Icons.pending_actions,
@@ -1902,13 +2031,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: Text(isBooked ? 'Libérer la place' : 'Annuler la demande'),
                   onTap: () => Navigator.pop(context, 'cancel'),
                 ),
-              if (!isIgnored && !isWeekendAndHidden && !isElsewhere)
+              if (!kIsWeb && !isIgnored && !isWeekendAndHidden && !isElsewhere)
                 ListTile(
                   leading: const Icon(Icons.block, color: Colors.redAccent),
                   title: const Text('Bloquer (Ignorer l\'automatisation)'),
                   onTap: () => Navigator.pop(context, 'block'),
                 ),
-              if (isIgnored && !isWeekendAndHidden)
+              if (!kIsWeb && isIgnored && !isWeekendAndHidden)
                 ListTile(
                   leading: const Icon(Icons.lock_open, color: Colors.green),
                   title: const Text('Débloquer ce jour'),
@@ -2195,24 +2324,25 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.green,
               tooltip: 'Pourcentage de vos réservations à venir effectuées sur votre bureau habituel${_workspaceName != null ? ' ($_workspaceName)' : ''}.',
             ),
-            // Card 3: Automated bookings count
-            _buildStatCard(
-              title: 'Automatisées',
-              value: '$autoCount',
-              subtitle: autoCount > 0 ? '$autoCount via automate' : 'Par AutoRoomzio',
-              icon: Icons.auto_awesome,
-              color: Theme.of(context).colorScheme.primary,
-              tooltip: 'Nombre total de réservations créées automatiquement par l\'automate en tâche de fond sur cet appareil.',
-            ),
-            // Card 4: Manual bookings count
-            _buildStatCard(
-              title: 'Manuelles',
-              value: '$manualCount',
-              subtitle: manualCount > 0 ? '$manualCount en un clic' : 'En un clic',
-              icon: Icons.touch_app_rounded,
-              color: Colors.orange,
-              tooltip: 'Nombre total de réservations créées manuellement en un clic depuis l\'application sur cet appareil.',
-            ),
+            // Card 3 & 4: Background vs Manual bookings count (Desktop/Android only)
+            if (!kIsWeb) ...[
+              _buildStatCard(
+                title: 'Automatisées',
+                value: '$autoCount',
+                subtitle: autoCount > 0 ? '$autoCount via automate' : 'Par AutoRoomzio',
+                icon: Icons.auto_awesome,
+                color: Theme.of(context).colorScheme.primary,
+                tooltip: 'Nombre total de réservations créées automatiquement par l\'automate en tâche de fond sur cet appareil.',
+              ),
+              _buildStatCard(
+                title: 'Manuelles',
+                value: '$manualCount',
+                subtitle: manualCount > 0 ? '$manualCount en un clic' : 'En un clic',
+                icon: Icons.touch_app_rounded,
+                color: Colors.orange,
+                tooltip: 'Nombre total de réservations créées manuellement en un clic depuis l\'application sur cet appareil.',
+              ),
+            ],
           ],
         ),
         const SizedBox(height: 16),
@@ -2642,31 +2772,33 @@ class _HomeScreenState extends State<HomeScreen> {
                           setState(() {}); // refresh FutureBuilder
                         }
                       },
-                      items: const [
-                        DropdownMenuItem(value: 0, child: Text('Accueil (par défaut)')),
-                        DropdownMenuItem(value: 1, child: Text('Calendrier')),
-                        DropdownMenuItem(value: 2, child: Text('Automate')),
+                      items: [
+                        const DropdownMenuItem(value: 0, child: Text('Accueil (par défaut)')),
+                        const DropdownMenuItem(value: 1, child: Text('Calendrier')),
+                        if (!kIsWeb) const DropdownMenuItem(value: 2, child: Text('Automate')),
                       ],
                     ),
                   );
                 }
               ),
-              const Divider(height: 1),
-              SwitchListTile(
-                title: const Text('Afficher l\'onglet Automatisation'),
-                secondary: const Icon(Icons.auto_awesome),
-                value: _showAutomation,
-                onChanged: (val) {
-                  setState(() {
-                    if (val) _currentIndex++; else _currentIndex--;
-                    _showAutomation = val;
-                    if (!val) {
-                      if (_automationEnabled) _toggleAutomation(false);
-                    }
-                  });
-                  _storage.saveShowAutomation(val);
-                },
-              ),
+              if (!kIsWeb) ...[
+                const Divider(height: 1),
+                SwitchListTile(
+                  title: const Text('Afficher l\'onglet Automatisation'),
+                  secondary: const Icon(Icons.auto_awesome),
+                  value: _showAutomation,
+                  onChanged: (val) {
+                    setState(() {
+                      if (val) _currentIndex++; else _currentIndex--;
+                      _showAutomation = val;
+                      if (!val) {
+                        if (_automationEnabled) _toggleAutomation(false);
+                      }
+                    });
+                    _storage.saveShowAutomation(val);
+                  },
+                ),
+              ],
               const Divider(height: 1),
               SwitchListTile(
                 title: const Text('Afficher l\'onglet Statistiques'),
@@ -2766,54 +2898,56 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         
-        const SizedBox(height: 24),
-        const Text('Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
-        const SizedBox(height: 8),
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+        if (!kIsWeb) ...[
+          const SizedBox(height: 24),
+          const Text('Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
+          const SizedBox(height: 8),
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            ),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('Réservations réussies'),
+                  subtitle: const Text('Être notifié quand l\'automatisation réserve', style: TextStyle(fontSize: 12)),
+                  secondary: const Icon(Icons.notifications_active, color: Colors.green),
+                  value: _notifySuccess,
+                  onChanged: (val) {
+                    setState(() => _notifySuccess = val);
+                    _storage.saveNotifySuccess(val);
+                  },
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  title: const Text('Échecs de réservation'),
+                  subtitle: const Text('Être notifié en cas d\'erreur (ex: plus de place)', style: TextStyle(fontSize: 12)),
+                  secondary: const Icon(Icons.error_outline, color: Colors.red),
+                  value: _notifyFailure,
+                  onChanged: (val) {
+                    setState(() => _notifyFailure = val);
+                    _storage.saveNotifyFailure(val);
+                  },
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  title: const Text('Tester les notifications', style: TextStyle(color: Colors.blue)),
+                  subtitle: const Text('Envoyer une notification de test', style: TextStyle(fontSize: 12)),
+                  leading: const Icon(Icons.send_rounded, color: Colors.blue),
+                  onTap: () async {
+                    final notifService = NotificationService();
+                    await notifService.showNotification(
+                      title: 'AutoRoomzio - Test',
+                      body: 'Ceci est une notification de test ! Si tu vois ça, tout fonctionne. 🎉',
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
-          child: Column(
-            children: [
-              SwitchListTile(
-                title: const Text('Réservations réussies'),
-                subtitle: const Text('Être notifié quand l\'automatisation réserve', style: TextStyle(fontSize: 12)),
-                secondary: const Icon(Icons.notifications_active, color: Colors.green),
-                value: _notifySuccess,
-                onChanged: (val) {
-                  setState(() => _notifySuccess = val);
-                  _storage.saveNotifySuccess(val);
-                },
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                title: const Text('Échecs de réservation'),
-                subtitle: const Text('Être notifié en cas d\'erreur (ex: plus de place)', style: TextStyle(fontSize: 12)),
-                secondary: const Icon(Icons.error_outline, color: Colors.red),
-                value: _notifyFailure,
-                onChanged: (val) {
-                  setState(() => _notifyFailure = val);
-                  _storage.saveNotifyFailure(val);
-                },
-              ),
-              const Divider(height: 1),
-              ListTile(
-                title: const Text('Tester les notifications', style: TextStyle(color: Colors.blue)),
-                subtitle: const Text('Envoyer une notification de test', style: TextStyle(fontSize: 12)),
-                leading: const Icon(Icons.send_rounded, color: Colors.blue),
-                onTap: () async {
-                  final notifService = NotificationService();
-                  await notifService.showNotification(
-                    title: 'AutoRoomzio - Test',
-                    body: 'Ceci est une notification de test ! Si tu vois ça, tout fonctionne. 🎉',
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
+        ],
         
         const SizedBox(height: 24),
         const Text('À propos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.lightBlue)),
@@ -2847,14 +2981,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   await launchUrl(url, mode: LaunchMode.externalApplication);
                 },
               ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.system_update_rounded, color: Colors.green),
-                title: const Text('Rechercher des mises à jour', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                subtitle: const Text('Vérifier si une nouvelle version est disponible', style: TextStyle(fontSize: 12)),
-                trailing: const Icon(Icons.download_rounded, size: 16, color: Colors.green),
-                onTap: _checkForUpdates,
-              ),
+              if (!kIsWeb) ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.system_update_rounded, color: Colors.green),
+                  title: const Text('Rechercher des mises à jour', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Vérifier si une nouvelle version est disponible', style: TextStyle(fontSize: 12)),
+                  trailing: const Icon(Icons.download_rounded, size: 16, color: Colors.green),
+                  onTap: _checkForUpdates,
+                ),
+              ],
             ],
           ),
         ),

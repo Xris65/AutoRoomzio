@@ -17,8 +17,8 @@ class RoomzApiService {
       : _storage = storage ?? StorageService(),
         _customClient = client;
 
-  static const String _loginUrl = "https://login.roomz.io/connect/token";
-  static const String _apiBase = "https://api.my.roomz.io";
+  static String get _loginUrl => kIsWeb ? "https://roomzioproxy.krisdhim2.workers.dev/https://login.roomz.io/connect/token" : "https://login.roomz.io/connect/token";
+  static String get _apiBase => kIsWeb ? "https://roomzioproxy.krisdhim2.workers.dev/https://api.my.roomz.io" : "https://api.my.roomz.io";
   static const String _clientId = "my-roomz";
   static const String _scope =
       "openid profile email identityServer-api my-roomz-api offline_access";
