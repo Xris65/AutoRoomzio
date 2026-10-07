@@ -186,6 +186,15 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         return;
       }
 
+      // Sync favorites from API (crucial for Web where local storage is initially empty)
+      try {
+        final apiFavs = await _api.getFavorites(token);
+        if (apiFavs.isNotEmpty) {
+          await _storage.saveFavoriteColleagues(apiFavs);
+          await _loadFavorites();
+        }
+      } catch (_) {}
+
       // If site or floor not stored, fetch from API
       if (_siteId == null || _siteId!.isEmpty) {
         final sites = await _api.getSites(token);

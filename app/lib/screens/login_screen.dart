@@ -8,6 +8,7 @@ import '../storage_service.dart';
 import 'setup_screen.dart';
 import 'home_screen.dart';
 import '../token_crypto.dart';
+import '../utils/html_helper.dart';
 
 /// Shows the real MyRoomz login page.
 /// - Android: webview_flutter
@@ -73,9 +74,19 @@ class _LoginScreenState extends State<LoginScreen> {
   // ── Initialisation ────────────────────────────────────────────────────────
 
   void _checkWebToken() async {
-    final tokenEncrypted = Uri.base.queryParameters['token'];
+    final params = Uri.base.queryParameters;
+    final tokenEncrypted = params['token'];
     
     if (tokenEncrypted != null && tokenEncrypted.isNotEmpty) {
+      // Extract everything BEFORE clearing the URL
+      final bId = params['b'];
+      final fId = params['f'];
+      final wId = params['w'];
+      final wName = params['wn'];
+
+      // Clean URL in browser address bar instantly
+      clearWebUrl();
+      
       // 1. Decrypt token
       final token = TokenCryptoService.decryptToken(tokenEncrypted);
       if (token == null) {
@@ -85,16 +96,11 @@ class _LoginScreenState extends State<LoginScreen> {
       }
       
       // 2. Extract workspace context if present
-      final bId = Uri.base.queryParameters['b'];
-      final fId = Uri.base.queryParameters['f'];
-      final wId = Uri.base.queryParameters['w'];
-      
       if (bId != null && bId.isNotEmpty) await _storage.saveBuildingId(bId);
       if (fId != null && fId.isNotEmpty) await _storage.saveFloorId(fId);
       if (wId != null && wId.isNotEmpty) await _storage.saveWorkspaceId(wId);
       
       // Also restore workspace display name
-      final wName = Uri.base.queryParameters['wn'];
       if (wName != null && wName.isNotEmpty) {
         await _storage.saveWorkspaceName(Uri.decodeComponent(wName));
       }
