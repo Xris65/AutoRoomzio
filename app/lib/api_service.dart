@@ -6,6 +6,7 @@ import 'models/colleague.dart';
 import 'models/booking_result.dart';
 import 'models/desk_occupant.dart';
 import 'storage_service.dart';
+import 'token_crypto.dart';
 
 class RoomzApiService {
   final StorageService _storage;
@@ -46,22 +47,35 @@ class RoomzApiService {
 
   // ── Authentication ──────────────────────────────────────────────────────
 
-  /// Initial login with email + password. Returns access token or null.
-  Future<String?> login(String email, String password) async {
+  static const String defaultAuthWorkerUrl = "https://roomzauth.krisdhim2.workers.dev";
+
+  /// Initial login with email + password via Cloudflare PKCE Worker (AES-256 encrypted payload).
+  /// Returns access token or null.
+  Future<String?> login(String email, String password, {String? workerUrl}) async {
+    final targetUrl = (workerUrl != null && workerUrl.trim().isNotEmpty)
+        ? workerUrl.trim()
+        : defaultAuthWorkerUrl;
+
+    final rawJson = jsonEncode({
+      "email": email.trim(),
+      "password": password,
+      "ts": DateTime.now().millisecondsSinceEpoch,
+    });
+    final encryptedPayload = TokenCryptoService.encryptToken(rawJson);
+
     final response = await _client.post(
-      Uri.parse(_loginUrl),
-      body: {
-        "grant_type": "password",
-        "username": email,
-        "password": password,
-        "client_id": _clientId,
-        "scope": _scope,
-      },
+      Uri.parse(targetUrl),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "payload": encryptedPayload,
+      }),
     );
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      await _storage.saveRefreshToken(data['refresh_token']);
+      if (data['refresh_token'] != null) {
+        await _storage.saveRefreshToken(data['refresh_token'].toString());
+      }
       final token = data['access_token']?.toString();
       _cachedAccessToken = token;
       return token;

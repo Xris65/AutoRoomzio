@@ -1,8 +1,16 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:workmanager/workmanager.dart';
 import '../api_service.dart';
 import '../storage_service.dart';
+import '../token_crypto.dart';
 import 'home_screen.dart';
+import 'login_screen.dart';
 import '../widgets/workspace_map_viewer.dart';
 
 class SetupScreen extends StatefulWidget {
@@ -345,6 +353,159 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
+  Future<void> _logout() async {
+    await _storage.clearTokens();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => const LoginScreen(ignoreUrlToken: true),
+        settings: const RouteSettings(name: '/'),
+      ),
+      (route) => false,
+    );
+  }
+
+  Future<void> _showWebPairing() async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Attention'),
+        content: const Text(
+          'Le transfert de session vers le Web va déconnecter cette application. '
+          'L\'automate en arrière-plan sera arrêté.\n\n'
+          'Une fois le QR Code généré, la session actuelle sera détruite pour des raisons de sécurité. '
+          'Voulez-vous continuer ?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Transférer', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final token = await _storage.getRefreshToken();
+    if (token == null) return;
+
+    await _storage.clearTokens();
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        Workmanager().cancelAll();
+      } catch (_) {}
+    }
+
+    final bId = _selectedSite?['id']?.toString() ?? await _storage.getBuildingId() ?? '';
+    final fId = _selectedFloor?['id']?.toString() ?? await _storage.getFloorId() ?? '';
+    final wId = _selectedWorkspace?['id']?.toString() ?? await _storage.getWorkspaceId() ?? '';
+    final wNameRaw = _selectedWorkspace?['name']?.toString() ?? await _storage.getWorkspaceName() ?? '';
+
+    final encryptedToken = TokenCryptoService.encryptToken(token);
+    final encoded = Uri.encodeComponent(encryptedToken);
+    final wName = Uri.encodeComponent(wNameRaw);
+
+    final isLocalWeb = kIsWeb &&
+        (Uri.base.host == 'localhost' || Uri.base.host == '127.0.0.1');
+    final baseUrl = (kIsWeb && !isLocalWeb)
+        ? '${Uri.base.origin}${Uri.base.path}'
+        : (kReleaseMode
+            ? 'https://xris65.github.io/AutoRoomzio/'
+            : 'https://xris65.github.io/AutoRoomzio/recette/');
+    final url = '$baseUrl?token=$encoded&b=$bId&f=$fId&w=$wId&wn=$wName';
+
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Connecter un appareil Web'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Scannez ce QR Code avec l\'appareil photo de votre smartphone pour vous connecter automatiquement sur la version Web.\n\nVous pouvez aussi l\'ouvrir directement sur ce PC :',
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.5)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Attention : la session de cette application vient d\'être détruite. Une fois ce panneau fermé, vous serez redirigé vers l\'écran de connexion.',
+                      style: TextStyle(color: Colors.orange, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: 220,
+              height: 220,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: QrImageView(
+                data: url,
+                version: QrVersions.auto,
+                size: 200.0,
+                backgroundColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Ouvrir le lien'),
+                  onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.copy),
+                  tooltip: 'Copier le lien',
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: url));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Lien copié dans le presse-papiers')),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _logout();
+            },
+            child: const Text('Fermer et se déconnecter'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredSites = _sites.where((s) {
@@ -364,7 +525,21 @@ class _SetupScreenState extends State<SetupScreen> {
     final bool isMapActive = _currentStep >= 2 && _showMap;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Configuration')),
+      appBar: AppBar(
+        title: const Text('Configuration'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner),
+            tooltip: 'Lier un appareil Web',
+            onPressed: _showWebPairing,
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Se déconnecter',
+            onPressed: _logout,
+          ),
+        ],
+      ),
       body: _loadingSites
           ? _buildFullSkeleton()
           : _errorMessage != null

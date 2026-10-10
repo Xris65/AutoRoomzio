@@ -472,9 +472,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final encoded = Uri.encodeComponent(encryptedToken);
     final wName = Uri.encodeComponent(await _storage.getWorkspaceName() ?? '');
     
-    final baseUrl = kReleaseMode 
-        ? 'https://xris65.github.io/AutoRoomzio/' 
-        : 'https://xris65.github.io/AutoRoomzio/recette/';
+    final isLocalWeb = kIsWeb &&
+        (Uri.base.host == 'localhost' || Uri.base.host == '127.0.0.1');
+    final baseUrl = (kIsWeb && !isLocalWeb)
+        ? '${Uri.base.origin}${Uri.base.path}'
+        : (kReleaseMode 
+            ? 'https://xris65.github.io/AutoRoomzio/' 
+            : 'https://xris65.github.io/AutoRoomzio/recette/');
     final url = '$baseUrl?token=$encoded&b=$bId&f=$fId&w=$wId&wn=$wName';
 
     if (!mounted) return;
@@ -604,12 +608,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   ).then((_) => _checkPermissionsStatus());
                 },
               ),
-            if (!kIsWeb)
-              IconButton(
-                icon: const Icon(Icons.qr_code_scanner),
-                tooltip: 'Lier un appareil Web',
-                onPressed: _showWebPairing,
-              ),
+            IconButton(
+              icon: const Icon(Icons.qr_code_scanner),
+              tooltip: 'Lier un appareil Web',
+              onPressed: _showWebPairing,
+            ),
             IconButton(
               icon: const Icon(Icons.logout),
               tooltip: 'Se déconnecter',

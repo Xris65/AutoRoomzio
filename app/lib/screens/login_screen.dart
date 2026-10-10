@@ -2,8 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_windows/webview_windows.dart';
+import '../api_service.dart';
 import '../storage_service.dart';
 import 'setup_screen.dart';
 import 'home_screen.dart';
@@ -13,7 +15,7 @@ import '../utils/html_helper.dart';
 /// Shows the real MyRoomz login page.
 /// - Android: webview_flutter
 /// - Windows:  webview_windows (WebView2 / Edge)
-/// After login, extracts the OIDC tokens from localStorage automatically.
+/// - Web: Direct Email + Password login via Cloudflare PKCE Worker (or QR Code URL)
 class LoginScreen extends StatefulWidget {
   final bool ignoreUrlToken;
   const LoginScreen({super.key, this.ignoreUrlToken = false});
@@ -24,8 +26,16 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _storage = StorageService();
+  final _api = RoomzApiService();
   bool _extracting = false;
   bool _windowsReady = false;
+
+  // Web login form controllers & state
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _webLoggingIn = false;
+  bool _obscurePassword = true;
+  String? _webError;
 
   static const String _startUrl = 'https://my.roomz.io';
 
@@ -45,8 +55,6 @@ class _LoginScreenState extends State<LoginScreen> {
       return null;
     })()
   """;
-
-
 
   // Android controller
   WebViewController? _androidController;
@@ -107,17 +115,92 @@ class _LoginScreenState extends State<LoginScreen> {
       
       // 3. Save refresh token
       await _storage.saveRefreshToken(token);
-      
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const HomeScreen(),
-          settings: const RouteSettings(name: '/'),
-        ),
-      );
+
+      final currentWsId = await _storage.getWorkspaceId();
+      if (currentWsId != null && currentWsId.isNotEmpty) {
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const HomeScreen(),
+            settings: const RouteSettings(name: '/'),
+          ),
+        );
+      } else {
+        final accessToken = await _api.refreshMyToken(force: true);
+        if (!mounted) return;
+        if (accessToken != null && accessToken.isNotEmpty) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => SetupScreen(accessToken: accessToken),
+              settings: const RouteSettings(name: '/'),
+            ),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => const HomeScreen(),
+              settings: const RouteSettings(name: '/'),
+            ),
+          );
+        }
+      }
     } else {
       // No token in URL: Wipe state clean to force fresh session
       await _storage.clearAllData();
+    }
+  }
+
+  Future<void> _handleWebLogin() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _webError = 'Veuillez renseigner votre email et votre mot de passe.');
+      return;
+    }
+
+    setState(() {
+      _webLoggingIn = true;
+      _webError = null;
+    });
+
+    try {
+      final accessToken = await _api.login(email, password);
+
+      if (!mounted) return;
+
+      if (accessToken == null || accessToken.isEmpty) {
+        setState(() {
+          _webLoggingIn = false;
+          _webError = 'Email ou mot de passe Roomz incorrect.';
+        });
+        return;
+      }
+
+      final currentWsId = await _storage.getWorkspaceId();
+      if (!mounted) return;
+
+      if (currentWsId != null && currentWsId.isNotEmpty) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const HomeScreen(),
+            settings: const RouteSettings(name: '/'),
+          ),
+        );
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => SetupScreen(accessToken: accessToken),
+            settings: const RouteSettings(name: '/'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _webLoggingIn = false;
+          _webError = 'Erreur réseau : $e';
+        });
+      }
     }
   }
 
@@ -233,13 +316,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
     if ((!kIsWeb && Platform.isWindows)) _windowsController.dispose();
     super.dispose();
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -254,19 +337,135 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildBody() {
     if (kIsWeb) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: const [
-              Icon(Icons.qr_code_scanner, size: 64, color: Colors.blue),
-              SizedBox(height: 16),
-              Text('Connectez-vous via QR Code', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              SizedBox(height: 8),
-              Text('Ouvrez AutoRoomzio sur votre PC, appuyez sur l\'icône QR Code en haut à droite, puis scannez le code avec votre appareil photo.', 
-                   textAlign: TextAlign.center,
-                   style: TextStyle(color: Colors.grey)),
-            ],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: AutofillGroup(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Icon(Icons.lock_person_rounded, size: 56, color: Colors.blue),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Connexion MyRoomz',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Connectez-vous avec votre email et votre mot de passe Roomz.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey, fontSize: 13),
+                      ),
+                      const SizedBox(height: 24),
+                      TextField(
+                        controller: _emailController,
+                        keyboardType: TextInputType.emailAddress,
+                        autofillHints: const [AutofillHints.username, AutofillHints.email],
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Email professionnel',
+                          prefixIcon: Icon(Icons.email_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _passwordController,
+                        obscureText: _obscurePassword,
+                        autofillHints: const [AutofillHints.password],
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _webLoggingIn ? null : _handleWebLogin(),
+                        decoration: InputDecoration(
+                          labelText: 'Mot de passe Roomz',
+                          prefixIcon: const Icon(Icons.key_outlined),
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                            ),
+                            onPressed: () {
+                              setState(() => _obscurePassword = !_obscurePassword);
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: () {
+                            launchUrl(
+                              Uri.parse('https://login.roomz.io/forgot-password'),
+                              mode: LaunchMode.externalApplication,
+                            );
+                          },
+                          child: const Text(
+                            'Créer / Réinitialiser mon mot de passe Roomz',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ),
+                      if (_webError != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.redAccent),
+                          ),
+                          child: Text(
+                            _webError!,
+                            style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: _webLoggingIn ? null : _handleWebLogin,
+                          child: _webLoggingIn
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Text(
+                                  'Se connecter',
+                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.qr_code_scanner, size: 16, color: Colors.grey),
+                          SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              'Vous pouvez aussi scanner le QR Code depuis l\'application PC.',
+                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       );
@@ -303,3 +502,4 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
+
