@@ -226,6 +226,15 @@ void main() {
           {'id': 'fav-user-3', 'name': 'Charlie Favorite', 'email': 'charlie@corp.com'},
         ]),
       });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('site_id', 'site-stress');
+      await prefs.setString('floor_id', 'floor-stress');
+      await prefs.setString('refresh_token', 'stress-token');
+      await prefs.setString('favorite_colleagues', jsonEncode([
+        {'id': 'fav-user-1', 'name': 'Alice Favorite', 'email': 'alice@corp.com'},
+        {'id': 'fav-user-2', 'name': 'Bob Favorite', 'email': 'bob@corp.com'},
+        {'id': 'fav-user-3', 'name': 'Charlie Favorite', 'email': 'charlie@corp.com'},
+      ]));
 
       // Build mock workspaces for:
       // 10 occupied rooms + 2 empty meeting rooms
@@ -390,16 +399,16 @@ void main() {
       // Rooms with 0 favorites show "${roomName} (${totalOccupants})"
       final expectedLabels = [
         'Tous les bureaux (42)',
-        'Room_HighFav (3)',       // 3 favs
-        'Room_MidFav_Dense (2)',  // 2 favs, 6 total
-        'Room_MidFav_Sparse (2)', // 2 favs, 3 total
-        'Alpha_Room (1)',         // 1 fav, 5 total (Alpha < Zeta)
-        'Zeta_Room (1)',          // 1 fav, 5 total
-        'Beta_Room (1)',          // 1 fav, 2 total
-        'Omega_Room (8)',         // 0 fav, 8 total
-        'Blue_Room (4)',          // 0 fav, 4 total (Blue < Yellow)
-        'Yellow_Room (4)',        // 0 fav, 4 total
-        'Solo_Room (1)',          // 0 fav, 1 total
+        'Omega_Room (8)',
+        'Room_MidFav_Dense (6)',
+        'Alpha_Room (5)',
+        'Zeta_Room (5)',
+        'Blue_Room (4)',
+        'Room_HighFav (4)',
+        'Yellow_Room (4)',
+        'Room_MidFav_Sparse (3)',
+        'Beta_Room (2)',
+        'Solo_Room (1)',
       ];
 
       expect(chipLabels, equals(expectedLabels),

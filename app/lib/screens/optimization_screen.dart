@@ -134,6 +134,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
       setState(() => _isAutostartVerified = true);
       final storage = StorageService();
       await storage.saveAutostartVerified(true);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("Votre téléphone ne nécessite pas de configuration d'autostart supplémentaire."),
@@ -257,10 +258,10 @@ class _PermissionTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: statusColor.withOpacity(0.5)),
+        border: Border.all(color: statusColor.withValues(alpha: 0.5)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),

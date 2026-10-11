@@ -30,6 +30,9 @@ class WorkspaceMapViewer extends StatefulWidget {
   final Set<String> favoriteWorkspaceIds;
   final Function(Map<String, dynamic> workspace, DeskOccupant occupant)? onOccupantTapped;
   final String? focusedRoom;
+  final String? focusedWorkspaceId;
+  final Set<String> pendingWorkspaceIds;
+  final VoidCallback? onBackgroundTapped;
 
   const WorkspaceMapViewer({
     super.key,
@@ -46,19 +49,22 @@ class WorkspaceMapViewer extends StatefulWidget {
     this.favoriteWorkspaceIds = const {},
     this.onOccupantTapped,
     this.focusedRoom,
+    this.focusedWorkspaceId,
+    this.pendingWorkspaceIds = const {},
+    this.onBackgroundTapped,
   });
 
   @override
-  State<WorkspaceMapViewer> createState() => _WorkspaceMapViewerState();
+  State<WorkspaceMapViewer> createState() => WorkspaceMapViewerState();
 }
 
-class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
+class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
   final TransformationController _controller = TransformationController();
   // Track the last viewport size we initialized for — reinit if size changes
   Size? _lastViewportSize;
-  double _lastMapWidth = 0.0;
-  double _lastMapHeight = 0.0;
   Map<String, _RoomBounds> _savedRoomBounds = {};
+  Map<String, Rect> _savedDeskBounds = {};
+  Map<String, String> _savedDeskRooms = {};
   bool _isInitialTransformSet = false;
 
   @override
@@ -73,19 +79,150 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     if (oldWidget.focusedRoom != widget.focusedRoom) {
       _handleFocusedRoomChanged();
     }
+    if (widget.focusedWorkspaceId != null &&
+        widget.focusedWorkspaceId != oldWidget.focusedWorkspaceId) {
+      _handleFocusedWorkspaceChanged();
+    }
+  }
+
+  void _handleFocusedWorkspaceChanged() {
+    if (widget.focusedWorkspaceId == null || widget.focusedWorkspaceId!.isEmpty) return;
+    if (_lastViewportSize == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.focusedWorkspaceId != null) {
+          focusOnWorkspace(widget.focusedWorkspaceId!);
+        }
+      });
+      return;
+    }
+    focusOnWorkspace(widget.focusedWorkspaceId!);
+  }
+
+  void focusOnWorkspace(String workspaceId) {
+    if (_lastViewportSize == null) return;
+    final viewW = _lastViewportSize!.width;
+    final viewH = _lastViewportSize!.height;
+    final key = workspaceId.toLowerCase();
+    Rect? rect = _savedDeskBounds[key];
+    if (rect == null) {
+      for (final entry in _savedDeskBounds.entries) {
+        if (entry.key == key ||
+            entry.key.contains(key) ||
+            key.contains(entry.key)) {
+          rect = entry.value;
+          break;
+        }
+      }
+    }
+
+    if (rect == null || rect.width <= 0 || rect.height <= 0) return;
+
+    // Si la caméra est déjà suffisamment zoomée ou que le bureau est déjà visible dans le viewport, ne pas forcer de sur-zoom brutal
+    if (!_controller.value.isIdentity()) {
+      final currentScale = _controller.value.entry(0, 0);
+      final currentDx = _controller.value.entry(0, 3);
+      final currentDy = _controller.value.entry(1, 3);
+
+      final deskScreenLeft = rect.left * currentScale + currentDx;
+      final deskScreenTop = rect.top * currentScale + currentDy;
+      final deskScreenRight = rect.right * currentScale + currentDx;
+      final deskScreenBottom = rect.bottom * currentScale + currentDy;
+
+      const margin = 24.0;
+      final isDeskVisible = deskScreenLeft >= margin &&
+          deskScreenRight <= (viewW - margin) &&
+          deskScreenTop >= margin &&
+          deskScreenBottom <= (viewH - margin);
+
+      if (isDeskVisible && currentScale >= 0.85) {
+        // Bureau déjà bien visible dans le viewport, ne pas sur-zoomer
+        return;
+      }
+    }
+
+    // 1. Chercher si le bureau appartient à une salle connue dans _savedRoomBounds
+    _RoomBounds? roomBounds;
+    String? roomName = _savedDeskRooms[key];
+    if (roomName == null) {
+      for (final entry in _savedDeskRooms.entries) {
+        if (entry.key == key || entry.key.contains(key) || key.contains(entry.key)) {
+          roomName = entry.value;
+          break;
+        }
+      }
+    }
+
+    if (roomName != null && roomName.isNotEmpty) {
+      roomBounds = _savedRoomBounds[roomName];
+      if (roomBounds == null) {
+        for (final entry in _savedRoomBounds.entries) {
+          if (entry.key.toLowerCase() == roomName.toLowerCase()) {
+            roomBounds = entry.value;
+            break;
+          }
+        }
+      }
+    }
+
+    // Recherche géométrique si la salle n'a pas été trouvée par nom
+    if (roomBounds == null || roomBounds.minX == double.infinity) {
+      for (final bounds in _savedRoomBounds.values) {
+        if (bounds.minX != double.infinity &&
+            rect.left >= bounds.minX - 20 &&
+            rect.right <= bounds.maxX + 20 &&
+            rect.top >= bounds.minY - 20 &&
+            rect.bottom <= bounds.maxY + 20) {
+          roomBounds = bounds;
+          break;
+        }
+      }
+    }
+
+    final double targetCx;
+    final double targetCy;
+    final double scale;
+
+    if (roomBounds != null && roomBounds.minX != double.infinity) {
+      // Cadrer plutôt la salle avec un scale modéré (1.15 à 1.25) pour voir la salle entière et son contexte
+      final roomRect = Rect.fromLTRB(
+        roomBounds.minX - 28,
+        roomBounds.minY - 36,
+        roomBounds.maxX + 28,
+        roomBounds.maxY + 36,
+      );
+      targetCx = roomRect.left + roomRect.width / 2;
+      targetCy = roomRect.top + roomRect.height / 2;
+
+      final fitScaleX = (viewW * 0.80) / roomRect.width;
+      final fitScaleY = (viewH * 0.80) / roomRect.height;
+      final fitScale = (fitScaleX < fitScaleY ? fitScaleX : fitScaleY);
+      scale = fitScale.clamp(0.85, 1.25);
+    } else {
+      // Pas de salle connue : limiter le scale à 1.2 (au lieu de 1.8) et centrer proprement
+      targetCx = rect.left + rect.width / 2;
+      targetCy = rect.top + rect.height / 2;
+      scale = 1.2;
+    }
+
+    final dx = (viewW / 2) - (targetCx * scale);
+    final dy = (viewH / 2) - (targetCy * scale);
+
+    final m = Matrix4.identity()
+      ..setTranslationRaw(dx, dy, 0.0)
+      ..setEntry(0, 0, scale)
+      ..setEntry(1, 1, scale)
+      ..setEntry(2, 2, scale);
+
+    _controller.value = m;
   }
 
   void _handleFocusedRoomChanged() {
     if (_lastViewportSize == null) return;
-    final viewW = _lastViewportSize!.width;
-    final viewH = _lastViewportSize!.height;
-
     if (widget.focusedRoom == null || widget.focusedRoom!.isEmpty) {
-      if (_lastMapWidth > 0 && _lastMapHeight > 0) {
-        _initTransform(viewW, viewH, _lastMapWidth, _lastMapHeight, null);
-      }
       return;
     }
+    final viewW = _lastViewportSize!.width;
+    final viewH = _lastViewportSize!.height;
 
     _RoomBounds? bounds = _savedRoomBounds[widget.focusedRoom];
     if (bounds == null) {
@@ -247,6 +384,8 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
 
         // ── 3. Build the feature widgets ─────────────────────────────────────
         final Map<String, _RoomBounds> roomBounds = {};
+        final Map<String, Rect> deskBounds = {};
+        final Map<String, String> deskRooms = {};
         final List<Widget> featureWidgets = [];
 
         // Build quick lookup maps
@@ -268,8 +407,56 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
           final isDesk = props['workspaceType'] == 'Desk';
           final workspace = wsMap[wsId];
           final isBookable = workspace != null;
+          final effectiveWs = workspace ?? (wsId != null ? allWsMap[wsId] : null);
+          DeskOccupant? occupant = widget.occupants[wsId] ??
+              (wsId != null ? widget.occupants[wsId.toLowerCase()] : null);
+          if (occupant == null && workspace != null) {
+            final wId = workspace['id']?.toString();
+            final wName = workspace['name']?.toString();
+            if (wId != null) {
+              occupant = widget.occupants[wId] ?? widget.occupants[wId.toLowerCase()];
+            }
+            if (occupant == null && wName != null) {
+              occupant = widget.occupants[wName] ?? widget.occupants[wName.toLowerCase()];
+            }
+          }
+          if (occupant == null && effectiveWs != null) {
+            final ewId = effectiveWs['id']?.toString();
+            final ewName = effectiveWs['name']?.toString();
+            if (ewId != null) {
+              occupant = widget.occupants[ewId] ?? widget.occupants[ewId.toLowerCase()];
+            }
+            if (occupant == null && ewName != null) {
+              occupant = widget.occupants[ewName] ?? widget.occupants[ewName.toLowerCase()];
+            }
+          }
           final isSelected = widget.selectedWorkspaceId != null &&
-              widget.selectedWorkspaceId?.toLowerCase() == wsId;
+              widget.selectedWorkspaceId!.trim().isNotEmpty &&
+              wsId != null &&
+              wsId.trim().isNotEmpty &&
+              (isDesk || isBookable || occupant != null) &&
+              (widget.selectedWorkspaceId!.toLowerCase() == wsId ||
+               (workspace != null &&
+                widget.selectedWorkspaceId!.toLowerCase() ==
+                    workspace['id']?.toString().toLowerCase()) ||
+               (effectiveWs != null &&
+                widget.selectedWorkspaceId!.toLowerCase() ==
+                    effectiveWs['id']?.toString().toLowerCase()));
+
+          final hasMyConfirmedBooking = widget.occupants.values.any((o) => o.isMe);
+          final isPending = !hasMyConfirmedBooking &&
+              widget.pendingWorkspaceIds.isNotEmpty &&
+              wsId != null &&
+              wsId.trim().isNotEmpty &&
+              occupant == null &&
+              (isDesk || isBookable) &&
+              (widget.pendingWorkspaceIds.contains(wsId.toLowerCase()) ||
+               (workspace != null &&
+                widget.pendingWorkspaceIds.contains(
+                    workspace['id']?.toString().toLowerCase())) ||
+               (effectiveWs != null &&
+                widget.pendingWorkspaceIds.contains(
+                    effectiveWs['id']?.toString().toLowerCase())));
 
           final coords = feature['geometry']?['coordinates'] as List?;
           if (coords == null || coords.isEmpty) continue;
@@ -289,10 +476,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
           final width = (fMaxX - fMinX) * coordScale;
           final height = (fMaxY - fMinY) * coordScale;
 
-          // Check occupant and favorite status (Milestone M3)
-          final occupant = widget.occupants[wsId] ??
-              (wsId != null ? widget.occupants[wsId.toLowerCase()] : null);
-
           // For desks: ensure positive padding/gap between neighboring desks so they never collide
           double renderWidth = width;
           double renderHeight = height;
@@ -309,6 +492,35 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
             }
           }
 
+          final deskRect = Rect.fromLTWH(renderLeft, renderTop, renderWidth, renderHeight);
+          if (wsId != null && wsId.isNotEmpty) {
+            deskBounds[wsId] = deskRect;
+          }
+          final pName = props['name']?.toString().toLowerCase();
+          if (pName != null && pName.isNotEmpty) {
+            deskBounds[pName] = deskRect;
+          }
+          if (workspace != null) {
+            final wId = workspace['id']?.toString().toLowerCase();
+            if (wId != null && wId.isNotEmpty) {
+              deskBounds[wId] = deskRect;
+            }
+            final wName = workspace['name']?.toString().toLowerCase();
+            if (wName != null && wName.isNotEmpty) {
+              deskBounds[wName] = deskRect;
+            }
+          }
+          if (effectiveWs != null) {
+            final wId = effectiveWs['id']?.toString().toLowerCase();
+            if (wId != null && wId.isNotEmpty) {
+              deskBounds[wId] = deskRect;
+            }
+            final wName = effectiveWs['name']?.toString().toLowerCase();
+            if (wName != null && wName.isNotEmpty) {
+              deskBounds[wName] = deskRect;
+            }
+          }
+
           // Label & room determination
           String label = '';
           String? roomName;
@@ -319,8 +531,8 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
               props['text']?.toString() ??
               props['description']?.toString();
 
-          if (workspace != null) {
-            final name = workspace['name']?.toString() ?? propName ?? '';
+          if (effectiveWs != null || isDesk) {
+            final name = effectiveWs?['name']?.toString() ?? propName ?? '';
             final parts = name.split('-');
             label = parts.isNotEmpty && parts.last.isNotEmpty ? parts.last : name;
             final lastDash = name.lastIndexOf('-');
@@ -342,6 +554,23 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
             label = roomWs?['name']?.toString() ??
                 propName ??
                 (wsId != null ? 'Err: $wsId' : '');
+          }
+
+          if (roomName != null && roomName.isNotEmpty) {
+            if (wsId != null && wsId.isNotEmpty) deskRooms[wsId] = roomName;
+            if (pName != null && pName.isNotEmpty) deskRooms[pName] = roomName;
+            if (workspace != null) {
+              final wId = workspace['id']?.toString().toLowerCase();
+              if (wId != null && wId.isNotEmpty) deskRooms[wId] = roomName;
+              final wName = workspace['name']?.toString().toLowerCase();
+              if (wName != null && wName.isNotEmpty) deskRooms[wName] = roomName;
+            }
+            if (effectiveWs != null) {
+              final wId = effectiveWs['id']?.toString().toLowerCase();
+              if (wId != null && wId.isNotEmpty) deskRooms[wId] = roomName;
+              final wName = effectiveWs['name']?.toString().toLowerCase();
+              if (wName != null && wName.isNotEmpty) deskRooms[wName] = roomName;
+            }
           }
 
           // Point features (no area) → just a label
@@ -384,15 +613,42 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
           List<BoxShadow>? boxShadow;
 
           if (isSelected) {
-            bgColor = Theme.of(context).colorScheme.primary;
-            textColor = Theme.of(context).colorScheme.onPrimary;
-            borderColor = Theme.of(context).colorScheme.onPrimary;
+            // Frank / Bold Light Blue (Bleu clair) selection highlight (Retour #2)
+            bgColor = isDark ? const Color(0xFF0284C7) : const Color(0xFF38BDF8);
+            textColor = Colors.white;
+            borderColor = isDark ? const Color(0xFFBAE6FD) : const Color(0xFF0369A1);
             borderWidth = 2.5;
             boxShadow = [
               BoxShadow(
-                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
+                color: const Color(0xFF38BDF8).withValues(alpha: isDark ? 0.45 : 0.65),
+                blurRadius: 8.0,
+                spreadRadius: 2.0,
+              ),
+            ];
+          } else if (isMe) {
+            // Frank / Bold Green for personal desk (confirmed reservation)
+            bgColor = isDark ? const Color(0xFF15803D) : const Color(0xFF22C55E);
+            textColor = Colors.white;
+            borderColor = isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534);
+            borderWidth = 2.5;
+            boxShadow = [
+              BoxShadow(
+                color: const Color(0xFF22C55E).withValues(alpha: isDark ? 0.4 : 0.5),
                 blurRadius: 6.0,
-                spreadRadius: 1.0,
+                spreadRadius: 1.5,
+              ),
+            ];
+          } else if (isPending) {
+            // Frank / Bold Blue (En attente / Programmé) matching calendar (Retour #3)
+            bgColor = isDark ? const Color(0xFF1D4ED8) : const Color(0xFF2563EB);
+            textColor = Colors.white;
+            borderColor = isDark ? const Color(0xFF93C5FD) : const Color(0xFF1E40AF);
+            borderWidth = 2.5;
+            boxShadow = [
+              BoxShadow(
+                color: const Color(0xFF3B82F6).withValues(alpha: isDark ? 0.4 : 0.5),
+                blurRadius: 6.0,
+                spreadRadius: 1.5,
               ),
             ];
           } else if (isFavorite) {
@@ -404,19 +660,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
             boxShadow = [
               BoxShadow(
                 color: const Color(0xFFF59E0B).withValues(alpha: isDark ? 0.45 : 0.55),
-                blurRadius: 6.0,
-                spreadRadius: 1.5,
-              ),
-            ];
-          } else if (isMe) {
-            // Frank / Bold Green for personal desk
-            bgColor = isDark ? const Color(0xFF15803D) : const Color(0xFF22C55E);
-            textColor = Colors.white;
-            borderColor = isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534);
-            borderWidth = 2.5;
-            boxShadow = [
-              BoxShadow(
-                color: const Color(0xFF22C55E).withValues(alpha: isDark ? 0.4 : 0.5),
                 blurRadius: 6.0,
                 spreadRadius: 1.5,
               ),
@@ -491,6 +734,51 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
               ),
             );
 
+          } else if (isPending) {
+            deskContent = Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 2.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.schedule, size: 9, color: Colors.white),
+                        SizedBox(width: 2),
+                        Text(
+                          "EN ATTENTE",
+                          style: TextStyle(
+                            fontSize: 7.5,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (label.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1.0),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
           } else {
             deskContent = Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
@@ -516,7 +804,7 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                 final wsData = workspace ?? {
                   'id': wsId,
                   'name': label,
-                  'roomName': ?roomName,
+                  'roomName': roomName,
                 };
                 widget.onOccupantTapped!(wsData, occupant);
               } else if (isBookable) {
@@ -549,6 +837,8 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
         }
 
         _savedRoomBounds = roomBounds;
+        _savedDeskBounds = deskBounds;
+        _savedDeskRooms = deskRooms;
 
         // ── 4. Room group outlines ────────────────────────────────────────────
         final List<Widget> roomWidgets = [];
@@ -629,8 +919,6 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
         // Strictly equal to the canvas bounds without inflating height to the entire screen
         final mapWidth = calculatedMaxX + 24.0;
         final mapHeight = calculatedMaxY + 24.0;
-        _lastMapWidth = mapWidth;
-        _lastMapHeight = mapHeight;
 
         // Locate selected or default workspace rect, personal desk, or enclosing room
         Rect? targetRect;
@@ -729,7 +1017,9 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
           if (!_isInitialTransformSet) {
             _isInitialTransformSet = true;
             _lastViewportSize = currentSize;
-            if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
+            if (widget.focusedWorkspaceId != null && widget.focusedWorkspaceId!.isNotEmpty) {
+              focusOnWorkspace(widget.focusedWorkspaceId!);
+            } else if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
               _handleFocusedRoomChanged();
             } else {
               _initTransform(viewW, viewH, mapWidth, mapHeight, targetRect);
@@ -737,7 +1027,9 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
           } else if (_lastViewportSize != currentSize) {
             _lastViewportSize = currentSize;
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
+              if (widget.focusedWorkspaceId != null && widget.focusedWorkspaceId!.isNotEmpty) {
+                focusOnWorkspace(widget.focusedWorkspaceId!);
+              } else if (widget.focusedRoom != null && widget.focusedRoom!.isNotEmpty) {
                 _handleFocusedRoomChanged();
               } else {
                 _initTransform(viewW, viewH, mapWidth, mapHeight, targetRect);
@@ -756,16 +1048,20 @@ class _WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                 boundaryMargin: const EdgeInsets.all(double.infinity),
                 minScale: 0.1,
                 maxScale: 5.0,
-                child: SizedBox(
-                  width: mapWidth,
-                  height: mapHeight,
-                  child: ColoredBox(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest
-                        .withValues(alpha: 0.3),
-                    child: Stack(
-                      children: [...roomWidgets, ...featureWidgets],
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onBackgroundTapped,
+                  child: SizedBox(
+                    width: mapWidth,
+                    height: mapHeight,
+                    child: ColoredBox(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.3),
+                      child: Stack(
+                        children: [...roomWidgets, ...featureWidgets],
+                      ),
                     ),
                   ),
                 ),

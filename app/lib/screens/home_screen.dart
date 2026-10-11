@@ -63,6 +63,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // Calendar State
   DateTime _focusedDay = DateTime.now();
   Set<String> _requestedDates = {};
+  Map<String, String> _requestedWorkspacesMap = {};
+  Map<String, String> _requestedWorkspaceNamesMap = {};
   Set<String> _bookedDates = {};
   Set<String> _ignoredDates = {};
   Map<String, String> _bookedElsewhereMap = {};
@@ -107,36 +109,21 @@ class _HomeScreenState extends State<HomeScreen> {
     return false;
   }
 
-  void _showTopToast(String message, {bool isError = false, bool isSuccess = false}) {
+  void _showTopToast(String message, {bool isError = false}) {
+    if (!isError) return;
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars(); // Cancels previous to avoid infinite queue
     
-    // On affiche l'alerte en bas, juste au-dessus de la barre de navigation
-
-    Color bgColor = Theme.of(context).colorScheme.inverseSurface;
-    Color textColor = Theme.of(context).colorScheme.onInverseSurface;
-    IconData icon = Icons.info_outline;
-    
-    if (isError) {
-      bgColor = Colors.red.shade600;
-      textColor = Colors.white;
-      icon = Icons.error_outline;
-    } else if (isSuccess) {
-      bgColor = Colors.green.shade600;
-      textColor = Colors.white;
-      icon = Icons.check_circle_outline;
-    }
-
     messenger.showSnackBar(
       SnackBar(
         content: Row(
           children: [
-            Icon(icon, color: textColor, size: 20),
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
             const SizedBox(width: 12),
-            Expanded(child: Text(message, style: TextStyle(color: textColor, fontWeight: FontWeight.bold))),
+            Expanded(child: Text(message, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
           ],
         ),
-        backgroundColor: bgColor,
+        backgroundColor: Colors.red.shade600,
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
         elevation: 6,
@@ -149,7 +136,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _checkUpdatesOnStartup();
+    if (!kIsWeb) {
+      _checkUpdatesOnStartup();
+    }
     _checkAuthAndLoad();
   }
 
@@ -192,16 +181,35 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadData();
   }
 
-  void _openTeamMap({DateTime? date}) {
-    Navigator.of(context).push(
+  void _openTeamMap({DateTime? date}) async {
+    DateTime targetDate = date ?? _focusedDay;
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => TeamMapScreen(
-          initialDate: date ?? _focusedDay,
+          initialDate: targetDate,
+          hideWeekends: _hideWeekends,
           storageService: _storage,
           apiService: _api,
         ),
       ),
     );
+    if (mounted) {
+      await _reloadPendingSchedules();
+      await _syncCalendar();
+    }
+  }
+
+  Future<void> _reloadPendingSchedules() async {
+    final reqDates = await _storage.getRequestedDates();
+    final reqWorkspaces = await _storage.getRequestedWorkspacesMap();
+    final reqNames = await _storage.getRequestedWorkspaceNamesMap();
+    if (mounted) {
+      setState(() {
+        _requestedDates = reqDates.toSet();
+        _requestedWorkspacesMap = reqWorkspaces;
+        _requestedWorkspaceNamesMap = reqNames;
+      });
+    }
   }
 
   void _openFavoritesManager() {
@@ -221,6 +229,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final days = await _storage.getDays();
     final name = await _storage.getWorkspaceName();
     final requested = await _storage.getRequestedDates();
+    final requestedWorkspaces = await _storage.getRequestedWorkspacesMap();
+    final requestedNames = await _storage.getRequestedWorkspaceNamesMap();
     final booked = await _storage.getBookedDates();
     final ignored = await _storage.getIgnoredDates();
     final elsewhere = await _storage.getBookedElsewhereDates();
@@ -244,6 +254,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _selectedDays = days;
         _workspaceName = name;
         _requestedDates = requested.toSet();
+        _requestedWorkspacesMap = requestedWorkspaces;
+        _requestedWorkspaceNamesMap = requestedNames;
         _bookedDates = booked.toSet();
         _ignoredDates = ignored.toSet();
         _bookedElsewhereMap = {for (var d in elsewhere) d: "Ailleurs"};
@@ -342,6 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final hasSeen = await _storage.getHasSeenOptimization();
         if (!hasSeen && mounted) {
           await _storage.saveHasSeenOptimization(true);
+          if (!mounted) return;
           Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const OptimizationScreen()),
           ).then((_) => _checkPermissionsStatus());
@@ -365,15 +378,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
         
       }
-      if (mounted) {
-        _showTopToast('Automatisation activée', isSuccess: true);
-      }
     } else {
       if ((!kIsWeb && Platform.isAndroid)) {
         Workmanager().cancelAll();
-      }
-      if (mounted) {
-        _showTopToast('Automatisation désactivée');
       }
     }
   }
@@ -389,7 +396,6 @@ class _HomeScreenState extends State<HomeScreen> {
         if (_selectedDays.isEmpty && _automationEnabled) {
           _automationEnabled = false;
           _storage.saveAutomationEnabled(false);
-          _showTopToast('Automatisation désactivée (aucun jour sélectionné)');
         }
       }
     });
@@ -412,12 +418,16 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _bookedDates = {};
         _requestedDates = {};
+        _requestedWorkspacesMap = {};
+        _requestedWorkspaceNamesMap = {};
         _ignoredDates = {};
         _bookedElsewhereMap = {};
         _workspaceName = null;
       });
       await _storage.saveBookedDates([]);
       await _storage.saveRequestedDates([]);
+      await _storage.saveRequestedWorkspacesMap({});
+      await _storage.saveRequestedWorkspaceNamesMap({});
       await _storage.saveIgnoredDates([]);
       await _storage.saveBookedElsewhereDates([]);
       await _storage.saveLastSyncTime(forceReset: true); // bypass cache
@@ -495,8 +505,8 @@ class _HomeScreenState extends State<HomeScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                border: Border.all(color: Colors.orange.withOpacity(0.5)),
+                color: Colors.orange.withValues(alpha: 0.1),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.5)),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Row(
@@ -630,6 +640,13 @@ class _HomeScreenState extends State<HomeScreen> {
               {'id': 'settings', 'icon': Icons.settings_rounded, 'label': 'Paramètres', 'widget': _buildSettingsTab()},
             ];
 
+            if (_currentIndex >= tabs.length) {
+              _currentIndex = tabs.length - 1;
+            }
+            if (_currentIndex < 0) {
+              _currentIndex = 0;
+            }
+
             return Scaffold(
               backgroundColor: Colors.transparent,
               body: GestureDetector(
@@ -649,7 +666,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     alignment: Alignment.topCenter,
                     children: <Widget>[
                       ...previousChildren,
-                      if (currentChild != null) currentChild,
+                      ?currentChild,
                     ],
                   );
                 },
@@ -701,7 +718,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SnackBar(
             content: Text("Appuyez à nouveau pour quitter"),
               behavior: SnackBarBehavior.floating,
-              margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+              margin: EdgeInsets.only(bottom: 80, left: 16, right: 16),
               duration: Duration(seconds: 2),
           ),
         );
@@ -723,7 +740,10 @@ class _HomeScreenState extends State<HomeScreen> {
         child: InkWell(
           onTap: () {
             if (index == _currentIndex) return;
-              setState(() => _currentIndex = index);
+            setState(() => _currentIndex = index);
+            if (index == 0 || index == 1) {
+              _reloadPendingSchedules();
+            }
           },
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1078,6 +1098,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 var toCleanLocally = <String>[];
                                 
                                 while (!userConfirmed) {
+                                  if (!mounted) break;
                                   picked = await showDateRangePicker(
                                     context: context,
                                     firstDate: today,
@@ -1107,6 +1128,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   }
                                   
                                   if (conflicts.isNotEmpty) {
+                                    if (!mounted) break;
                                     final p = picked;
                                     final confirm = await showDialog<bool>(
                                       context: context,
@@ -1139,8 +1161,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                 if (picked != null && userConfirmed) {
                                   if (conflicts.isNotEmpty) {
                                     if (!mounted) return;
-                                    final messenger = ScaffoldMessenger.of(context);
-                                    messenger.showSnackBar(SnackBar(content: Text('Annulation de ${conflicts.length} journée(s)...')));
                                     
                                     final token = await _api.refreshMyToken();
                                     if (token != null) {
@@ -1162,8 +1182,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                       _storage.saveRequestedDates(_requestedDates.toList());
                                       _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
                                     }
-                                    
-                                    messenger.showSnackBar(const SnackBar(content: Text('Journées libérées avec succès.')));
                                   }
                                   
                                   setState(() {
@@ -1289,7 +1307,10 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         bool isOccupiedByOthers = !isBooked && !isElsewhere && !isDelegated && _occupiedByOthers.containsKey(dateStr);
         bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday) && _showAllReservations;
-      if (_isVacation(date)) isRecurring = false;
+        if (_hideWeekends && (date.weekday == DateTime.saturday || date.weekday == DateTime.sunday)) {
+          isRecurring = false;
+        }
+        if (_isVacation(date)) isRecurring = false;
 
       if (isDelegated) {
         upcoming.add({"date": date, "source": "Délégué", "isBooked": true, "name": delegateName, "location": delegateLocation});
@@ -1301,8 +1322,9 @@ class _HomeScreenState extends State<HomeScreen> {
         if (isBooked) {
           upcoming.add({"date": date, "source": "Calendrier", "isBooked": true});
         } else if (isRequested) {
-        upcoming.add({"date": date, "source": "Calendrier", "isBooked": false});
-      } else if (isOccupiedByOthers) {
+          final requestedWs = _requestedWorkspaceNamesMap[dateStr] ?? _requestedWorkspacesMap[dateStr];
+          upcoming.add({"date": date, "source": "Calendrier", "isBooked": false, "name": requestedWs, "isRequested": true});
+        } else if (isOccupiedByOthers) {
         if (isRecurring && recurringProjectionsCount < _projectionsCount) {
           upcoming.add({"date": date, "source": "Occupé", "isBooked": false, "name": _occupiedByOthers[dateStr]});
           recurringProjectionsCount++;
@@ -1327,6 +1349,8 @@ class _HomeScreenState extends State<HomeScreen> {
         final date = item['date'] as DateTime;
         final source = item['source'] as String;
         final isBooked = item['isBooked'] as bool;
+        final isRequested = item['isRequested'] == true || (!isBooked && source == 'Calendrier');
+        final isDeletable = isBooked || source == 'Délégué' || source == 'Ailleurs' || isRequested;
         final weekDayName = weekdays[date.weekday - 1];
 
         return Card(
@@ -1339,7 +1363,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ListTile(
             visualDensity: _compactMode ? VisualDensity.compact : null,
             contentPadding: _compactMode ? const EdgeInsets.symmetric(horizontal: 8, vertical: 0) : null,
-                          leading: Builder(
+            onTap: () => _handleDateTap(date),
+            leading: Builder(
                 builder: (context) {
                   final isDark = Theme.of(context).brightness == Brightness.dark;
                   return Icon(
@@ -1353,7 +1378,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 builder: (context) {
                   final isDark = Theme.of(context).brightness == Brightness.dark;
                   return Text(
-                    source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Délégué' ? 'Réservé pour ${item["name"]}' + (item["location"] != null && item["location"].toString().isNotEmpty ? ' (${item["location"]})' : '') : (source == 'Occupé' ? 'Indisponible (réservé par ${item["name"] ?? "qqn d\'autre"})' : (isBooked ? 'Déjà réservé' : 'Sera réservé (Automatique)'))),
+                    source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Délégué' ? 'Réservé pour ${item["name"]}${item["location"] != null && item["location"].toString().isNotEmpty ? ' (${item["location"]})' : ''}' : (source == 'Occupé' ? 'Indisponible (réservé par ${item["name"] ?? "qqn d'autre"})' : (isBooked ? 'Déjà réservé' : (source == 'Calendrier' && item["name"] != null && item["name"].toString().isNotEmpty ? 'Programmé en attente (${item["name"]})' : 'Sera réservé (Automatique)')))),
                     style: TextStyle(color: source == 'Ailleurs' ? (isDark ? Colors.orange.shade300 : Colors.orange.shade900) : (source == 'Délégué' ? (isDark ? Colors.purple.shade300 : Colors.purple.shade900) : (source == 'Occupé' ? (isDark ? Colors.grey.shade400 : Colors.grey.shade700) : (isBooked ? (isDark ? Colors.green.shade400 : Colors.green) : (isDark ? Colors.blue.shade300 : Colors.blue)))), fontSize: _compactMode ? 10 : 12),
                   );
                 }
@@ -1370,10 +1395,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 if (source != 'Occupé')
                   IconButton(
-                    icon: Icon(isBooked || source == 'Délégué' || source == 'Ailleurs' ? Icons.delete_outline : Icons.block, size: 20),
-                      color: Colors.redAccent,
-                      tooltip: isBooked || source == 'Délégué' || source == 'Ailleurs' ? 'Supprimer' : 'Bloquer',
-                      onPressed: () => _quickAction(date, isBooked || source == 'Délégué' || source == 'Ailleurs', source),
+                    icon: Icon(isDeletable ? Icons.delete_outline : Icons.block, size: 20),
+                    color: Colors.redAccent,
+                    tooltip: isDeletable ? 'Supprimer' : 'Bloquer',
+                    onPressed: () => _quickAction(
+                      date,
+                      isBooked || source == 'Délégué' || source == 'Ailleurs',
+                      source,
+                      isRequested: isRequested,
+                    ),
                   ),
               ],
             ),
@@ -1466,15 +1496,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       availableGestures: AvailableGestures.horizontalSwipe,
                     enabledDayPredicate: (day) {
                       final normDay = DateTime(day.year, day.month, day.day);
+                      final dateStr = normDay.toIso8601String().split('T').first;
+                      final hasBooking = _bookedDates.contains(dateStr) ||
+                                         _bookedElsewhereMap.containsKey(dateStr) ||
+                                         _delegatedBookingsMap.containsKey(dateStr) ||
+                                         _requestedDates.contains(dateStr);
                       if (_hideWeekends && (normDay.weekday == DateTime.saturday || normDay.weekday == DateTime.sunday)) {
-                        return false;
+                        return hasBooking;
                       }
                       if (_showAutomation) {
                         for (final v in _vacations) {
                           final start = DateTime(v.start.year, v.start.month, v.start.day);
                           final end = DateTime(v.end.year, v.end.month, v.end.day);
                           if (!normDay.isBefore(start) && !normDay.isAfter(end)) {
-                            return false;
+                            return hasBooking;
                           }
                         }
                       }
@@ -1506,6 +1541,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       defaultBuilder: (context, day, focusedDay) => _buildDayCell(day),
                       todayBuilder: (context, day, focusedDay) => _buildDayCell(day, isToday: true),
                       outsideBuilder: (context, day, focusedDay) => _buildDayCell(day, isOutside: true),
+                      disabledBuilder: (context, day, focusedDay) => _buildDayCell(day),
                     ),
                   ),
                 ),
@@ -1677,7 +1713,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _delegatedBookingsMap.remove(dateStr);
       });
       _storage.saveDelegatedBookingsMap(_delegatedBookingsMap);
-      if (mounted) _showTopToast('La délégation a été annulée.', isSuccess: true);
       return true;
     } else {
       if (mounted) _showTopToast('Erreur lors de l\'annulation.', isError: true);
@@ -1685,14 +1720,32 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _quickAction(DateTime day, bool isBooked, String source) async {
+  Future<void> _quickAction(DateTime day, bool isBooked, String source, {bool isRequested = false}) async {
     final dateStr = day.toIso8601String().split('T').first;
     
     setState(() => _isCalendarBusy = true);
     try {
       if (source == 'Délégué') {
         await _cancelDelegationAction(dateStr);
-        setState(() => _isCalendarBusy = false);
+        if (mounted) setState(() => _isCalendarBusy = false);
+        await _syncCalendar();
+        return;
+      }
+
+      if (isRequested || (!isBooked && source == 'Calendrier')) {
+        setState(() {
+          _requestedDates.remove(dateStr);
+          _requestedWorkspacesMap.remove(dateStr);
+          _requestedWorkspaceNamesMap.remove(dateStr);
+          _ignoredDates.remove(dateStr);
+          _isCalendarBusy = false;
+        });
+        await _storage.removeRequestedDate(dateStr);
+        await _storage.saveRequestedDates(_requestedDates.toList());
+        await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+        await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
+        await _storage.saveIgnoredDates(_ignoredDates.toList());
+        await _syncCalendar();
         return;
       }
       
@@ -1706,29 +1759,41 @@ class _HomeScreenState extends State<HomeScreen> {
         } else {
           await _api.cancelReservation(dateStr, token, workspaceId);
         }
-        
       }
 
       setState(() {
         if (isBooked) {
           if (source == 'Ailleurs') {
             _bookedElsewhereMap.remove(dateStr);
+            _allTimeElsewhereDates.remove(dateStr);
           } else {
             _bookedDates.remove(dateStr);
+            _allTimeBookedDates.remove(dateStr);
             _occupiedByOthers.remove(dateStr);
             _requestedDates.remove(dateStr);
+            _requestedWorkspacesMap.remove(dateStr);
+            _requestedWorkspaceNamesMap.remove(dateStr);
           }
         } else {
           _ignoredDates.add(dateStr);
         }
       });
 
-      _storage.saveRequestedDates(_requestedDates.toList());
-      _storage.saveBookedDates(_bookedDates.toList());
-      _storage.saveIgnoredDates(_ignoredDates.toList());
-      
-      if (mounted) {
-        _showTopToast(isBooked ? 'Réservation supprimée' : 'Jour bloqué ($dateStr)');
+      if (isBooked) {
+        await _storage.removeRequestedDate(dateStr);
+        await _storage.saveRequestedDates(_requestedDates.toList());
+        await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+        await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
+        await _storage.saveBookedDates(_bookedDates.toList());
+        await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
+        if (source == 'Ailleurs') {
+          await _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
+          await _storage.saveAllTimeElsewhereDates(_allTimeElsewhereDates.toList());
+        }
+        if (mounted) setState(() => _isCalendarBusy = false);
+        await _syncCalendar();
+      } else {
+        await _storage.saveIgnoredDates(_ignoredDates.toList());
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -1741,6 +1806,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final token = await _api.refreshMyToken();
       final workspaceId = await _storage.getWorkspaceId();
       if (token == null || workspaceId == null) return;
+
+      final freshReq = await _storage.getRequestedDates();
+      final freshWsMap = await _storage.getRequestedWorkspacesMap();
+      final freshNamesMap = await _storage.getRequestedWorkspaceNamesMap();
+      _requestedDates = freshReq.toSet();
+      _requestedWorkspacesMap = freshWsMap;
+      _requestedWorkspaceNamesMap = freshNamesMap;
 
       final now = DateTime.now();
       
@@ -1763,17 +1835,23 @@ class _HomeScreenState extends State<HomeScreen> {
           continue;
         }
 
-        // 2. Skip if user's target desk is already occupied by someone else on that date
-        if (_occupiedByOthers.containsKey(dateStr)) {
-          debugPrint("🔒 Target desk occupied by ${_occupiedByOthers[dateStr]} on $dateStr, skipping automation.");
-          continue;
-        }
-
         // If not ignored/booked and it's either already requested or a valid automation day
         if (_requestedDates.contains(dateStr) || _selectedDays.contains(targetDate.weekday)) {
-          final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
+          final targetWsId = _requestedWorkspacesMap[dateStr] ?? workspaceId;
+
+          // 2. Skip if user's target desk is already occupied by someone else on that date
+          // Only check occupiedByOthers if targetWsId is default workspaceId
+          if (targetWsId == workspaceId && _occupiedByOthers.containsKey(dateStr)) {
+            debugPrint("🔒 Target desk occupied by ${_occupiedByOthers[dateStr]} on $dateStr, skipping automation.");
+            continue;
+          }
+
+          final success = await _api.reserveWorkspace(dateStr, token, targetWsId);
           if (success) {
             _bookedDates.add(dateStr);
+            _requestedDates.remove(dateStr);
+            _requestedWorkspacesMap.remove(dateStr);
+            _requestedWorkspaceNamesMap.remove(dateStr);
             await _storage.recordBookingStat(true);
             await _refreshStats();
             addedCount++;
@@ -1784,15 +1862,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (addedCount > 0) {
         setState(() {}); // refresh UI
         _storage.saveBookedDates(_bookedDates.toList());
-      }
-      
-      if (mounted) {
-        _showTopToast(
-          addedCount > 0 
-            ? '$addedCount réservation(s) ajoutée(s) !' 
-            : 'Le planning est déjà à jour (aucune nouvelle place réservable)',
-          isSuccess: addedCount > 0
-        );
+        _storage.saveRequestedDates(_requestedDates.toList());
+        _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+        _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -1829,6 +1901,13 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_isLoading) _loadingTextNotifier.value = "Vérification de la configuration du bureau...";
       
       // We check requested dates + the next horizon days (including weekends, so they can be displayed if booked externally)
+      final freshReq = await _storage.getRequestedDates();
+      final freshWsMap = await _storage.getRequestedWorkspacesMap();
+      final freshNamesMap = await _storage.getRequestedWorkspaceNamesMap();
+      _requestedDates = freshReq.toSet();
+      _requestedWorkspacesMap = freshWsMap;
+      _requestedWorkspaceNamesMap = freshNamesMap;
+
       Set<String> datesToCheck = Set.from(_requestedDates);
       final now = DateTime.now();
       for (int i = 0; i <= 13; i++) {
@@ -1880,20 +1959,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
       Set<String> newBookedDates = {};
       Set<String> newRequestedDates = Set.from(_requestedDates);
+      Map<String, String> newRequestedWorkspaces = Map.from(_requestedWorkspacesMap);
+      Map<String, String> newRequestedNames = Map.from(_requestedWorkspaceNamesMap);
       Set<String> newIgnoredDates = Set.from(_ignoredDates);
 
       for (final dateStr in datesToCheck) {
         if (bookedHere.contains(dateStr)) {
           newBookedDates.add(dateStr);
-          newRequestedDates.add(dateStr);
+          newRequestedDates.remove(dateStr);
+          newRequestedWorkspaces.remove(dateStr);
+          newRequestedNames.remove(dateStr);
           newIgnoredDates.remove(dateStr);
         } else if (bookedElsewhere.containsKey(dateStr)) {
           // Already booked elsewhere this day — remove from requested (can't double-book)
           newRequestedDates.remove(dateStr);
-        } else {
-          if (_bookedDates.contains(dateStr)) {
-            newRequestedDates.remove(dateStr);
-          }
+          newRequestedWorkspaces.remove(dateStr);
+          newRequestedNames.remove(dateStr);
         }
       }
 
@@ -1906,12 +1987,16 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _bookedDates = newBookedDates;
           _requestedDates = newRequestedDates;
+          _requestedWorkspacesMap = newRequestedWorkspaces;
+          _requestedWorkspaceNamesMap = newRequestedNames;
           _ignoredDates = newIgnoredDates;
           _bookedElsewhereMap = bookedElsewhere; // reuse field for "booked elsewhere by me"
         });
           setState(() { _occupiedByOthers = occupiedDates; });
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
+        _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+        _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
         _storage.saveIgnoredDates(_ignoredDates.toList());
         _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
         _storage.saveLastSyncTime(); // Cache TTL
@@ -1927,13 +2012,13 @@ class _HomeScreenState extends State<HomeScreen> {
     
     final targetDate = DateTime.now().add(Duration(days: daysOffset));
     if (_hideWeekends && (targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday)) {
-      _showTopToast('Réservation le week-end désactivée.');
+      _showTopToast('Réservation le week-end désactivée.', isError: true);
       return;
     }
 
     final dateStr = targetDate.toIso8601String().split('T').first;
     if (_bookedDates.contains(dateStr)) {
-      _showTopToast('Déjà réservé !');
+      _showTopToast('Déjà réservé !', isError: true);
       return;
     }
 
@@ -1957,7 +2042,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _storage.saveBookedDates(_bookedDates.toList());
         _storage.saveRequestedDates(_requestedDates.toList());
         _storage.saveIgnoredDates(_ignoredDates.toList());
-        _showTopToast('Bureau réservé pour ${daysOffset == 0 ? "aujourd'hui" : "demain"} !', isSuccess: true);
       } else {
         _showTopToast('Échec de la réservation.', isError: true);
       }
@@ -1974,7 +2058,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final day = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
     
     if (day.isBefore(today)) {
-      _showTopToast('Impossible de modifier le passé.');
+      _showTopToast('Impossible de modifier le passé.', isError: true);
       return;
     }
 
@@ -1995,6 +2079,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final dLoc = dParts.length > 2 ? dParts[2] : '';
     
     final myWsId = await _storage.getWorkspaceId();
+    if (!mounted) return;
     final isDelegatedOnMyDesk = isDelegated && dParts.isNotEmpty && dParts[0] == myWsId;
 
     final action = await showModalBottomSheet<String>(
@@ -2013,7 +2098,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ListTile(
                       leading: Icon(Icons.group_off, color: Theme.of(context).brightness == Brightness.dark ? Colors.purple.shade300 : Colors.purple.shade900),
                       title: Text('Annuler la délégation', style: TextStyle(color: Theme.of(context).brightness == Brightness.dark ? Colors.purple.shade300 : Colors.purple.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: Text("Annule la réservation faite pour $dName" + (dLoc.isNotEmpty ? " sur $dLoc" : "") + " ce jour-là.", style: const TextStyle(fontSize: 11)),
+                      subtitle: Text("Annule la réservation faite pour $dName${dLoc.isNotEmpty ? " sur $dLoc" : ""} ce jour-là.", style: const TextStyle(fontSize: 11)),
                       onTap: () => Navigator.pop(context, 'cancel_delegation'),
                       ),
               if (!isBooked && !isRequested)
@@ -2068,13 +2153,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   subtitle: const Text('Sélectionner parmi vos favoris ou rechercher'),
                   onTap: () => Navigator.pop(context, 'reserve_for_colleague'),
                 ),
+              if (isRequested && !isBooked)
+                ListTile(
+                  leading: const Icon(Icons.schedule, color: Colors.blue),
+                  title: Text(
+                    _requestedWorkspaceNamesMap[dateStr] != null
+                        ? 'Bureau programmé : ${_requestedWorkspaceNamesMap[dateStr]}'
+                        : (_requestedWorkspacesMap[dateStr] != null
+                            ? 'Bureau programmé : ${_requestedWorkspacesMap[dateStr]}'
+                            : 'Programmation en attente'),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  subtitle: const Text(
+                    "Ce bureau sera réservé automatiquement dès l'ouverture des créneaux (J-13).",
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
               if (isBooked || isRequested)
                 ListTile(
                   leading: const Icon(Icons.cancel_outlined, color: Colors.red),
-                  title: Text(isBooked ? 'Libérer la place' : 'Annuler la demande'),
+                  title: Text(isBooked ? 'Libérer la place' : 'Annuler la programmation'),
                   onTap: () => Navigator.pop(context, 'cancel'),
                 ),
-              if (!kIsWeb && !isIgnored && !isWeekendAndHidden && !isElsewhere)
+              if (!kIsWeb && !isIgnored && !isWeekendAndHidden && !isElsewhere && !isRequested && !isBooked)
                 ListTile(
                   leading: const Icon(Icons.block, color: Colors.redAccent),
                   title: const Text('Bloquer (Ignorer l\'automatisation)'),
@@ -2139,9 +2240,6 @@ class _HomeScreenState extends State<HomeScreen> {
               _requestedDates.remove(dateStr);
               await _storage.saveRequestedDates(_requestedDates.toList());
               setState(() {});
-              if (mounted) {
-                _showTopToast(result.getLocalizedMessage(colleague.name), isSuccess: true);
-              }
             } else {
               if (mounted) {
                 _showTopToast(result.getLocalizedMessage(colleague.name), isError: true);
@@ -2185,17 +2283,23 @@ class _HomeScreenState extends State<HomeScreen> {
           final accessToken = await _api.refreshMyToken();
           final workspaceId = await _storage.getWorkspaceId();
           if (accessToken != null && workspaceId != null) {
-            final success = await _api.reserveWorkspace(dateStr, accessToken, workspaceId);
+            final targetWsId = _requestedWorkspacesMap[dateStr] ?? workspaceId;
+            final success = await _api.reserveWorkspace(dateStr, accessToken, targetWsId);
             if (success) {
               await _storage.recordBookingStat(false);
               await _refreshStats();
               setState(() {
                 _bookedDates.add(dateStr);
                 _allTimeBookedDates.add(dateStr);
+                _requestedDates.remove(dateStr);
+                _requestedWorkspacesMap.remove(dateStr);
+                _requestedWorkspaceNamesMap.remove(dateStr);
               });
-              _storage.saveBookedDates(_bookedDates.toList());
-              _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
-              if (mounted) _showTopToast('Place réservée pour le $dateStr', isSuccess: true);
+              await _storage.saveBookedDates(_bookedDates.toList());
+              await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
+              await _storage.saveRequestedDates(_requestedDates.toList());
+              await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+              await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
             } else {
               if (mounted) _showTopToast('Ce bureau n\'est plus disponible à cette date', isError: true);
             }
@@ -2210,22 +2314,34 @@ class _HomeScreenState extends State<HomeScreen> {
           final token = await _api.refreshMyToken();
           final workspaceId = await _storage.getWorkspaceId();
           if (token != null && workspaceId != null) {
-            await _api.cancelReservation(dateStr, token, workspaceId);
+            final targetWsId = _requestedWorkspacesMap[dateStr] ?? workspaceId;
+            await _api.cancelReservation(dateStr, token, targetWsId);
           }
         }
         setState(() {
           _requestedDates.remove(dateStr);
+          _requestedWorkspacesMap.remove(dateStr);
+          _requestedWorkspaceNamesMap.remove(dateStr);
           _bookedDates.remove(dateStr);
           _allTimeBookedDates.remove(dateStr);
           _occupiedByOthers.remove(dateStr);
           if (action == 'block') {
             _ignoredDates.add(dateStr);
+          } else {
+            _ignoredDates.remove(dateStr);
           }
         });
-        _storage.saveRequestedDates(_requestedDates.toList());
-        _storage.saveBookedDates(_bookedDates.toList());
-        _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
-        _storage.saveIgnoredDates(_ignoredDates.toList());
+        await _storage.removeRequestedDate(dateStr);
+        await _storage.saveRequestedDates(_requestedDates.toList());
+        await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+        await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
+        await _storage.saveBookedDates(_bookedDates.toList());
+        await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
+        await _storage.saveIgnoredDates(_ignoredDates.toList());
+        if (action == 'cancel') {
+          if (mounted) setState(() => _isCalendarBusy = false);
+          await _syncCalendar();
+        }
       } else if (action == 'cancel_delegation') {
         await _cancelDelegationAction(dateStr);
       } else if (action == 'cancel_elsewhere') {
@@ -2239,7 +2355,6 @@ class _HomeScreenState extends State<HomeScreen> {
             });
             _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
             _storage.saveAllTimeElsewhereDates(_allTimeElsewhereDates.toList());
-            if (mounted) _showTopToast('Votre réservation a été annulée.', isSuccess: true);
           } else {
             if (mounted) _showTopToast('Impossible d\'annuler la réservation.', isError: true);
           }
@@ -2305,7 +2420,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ? 'Non configuré'
         : '${_selectedDays.length} jour${_selectedDays.length > 1 ? 's' : ''} / sem.';
     final rhythmSubtitle = _selectedDays.isEmpty
-        ? 'Définissez vos jours dans l\'onglet Automate'
+        ? (kIsWeb ? 'Non configuré' : 'Définissez vos jours dans l\'onglet Automate')
         : rhythmDaysStr;
 
     return ListView(
@@ -2388,16 +2503,18 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ],
         ),
-        const SizedBox(height: 16),
-        // Bottom Summary Banner: Configured attendance rhythm
-        _buildStatCard(
-          title: 'Rythme de Présence Paramétré',
-          value: rhythmValue,
-          subtitle: rhythmSubtitle,
-          icon: Icons.schedule_rounded,
-          color: Colors.indigo,
-          tooltip: 'Rythme de présence configuré dans l\'application pour la réservation automatique de votre bureau.',
-        ),
+        if (!kIsWeb || _selectedDays.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          // Bottom Summary Banner: Configured attendance rhythm
+          _buildStatCard(
+            title: 'Rythme de Présence Paramétré',
+            value: rhythmValue,
+            subtitle: rhythmSubtitle,
+            icon: Icons.schedule_rounded,
+            color: Colors.indigo,
+            tooltip: 'Rythme de présence configuré dans l\'application pour la réservation automatique de votre bureau.',
+          ),
+        ],
       ],
     );
   }
@@ -2531,6 +2648,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _checkUpdatesOnStartup() async {
+    if (kIsWeb) return;
     try {
       final response = await http.get(Uri.parse('https://api.github.com/repos/Xris65/AutoRoomzio/releases/latest'));
       if (!mounted) return;
@@ -2539,9 +2657,20 @@ class _HomeScreenState extends State<HomeScreen> {
         final data = json.decode(response.body);
         final latestTag = data['tag_name'] as String;
         
+        final assets = (data['assets'] as List?) ?? [];
         String? apkUrl;
-        if (data['assets'] != null && data['assets'].isNotEmpty) {
-          apkUrl = data['assets'][0]['browser_download_url'] as String?;
+        String? zipUrl;
+        for (final asset in assets) {
+          if (asset is Map) {
+            final name = (asset['name'] as String?)?.toLowerCase() ?? '';
+            final downloadUrl = asset['browser_download_url'] as String?;
+            if (name.endsWith('.apk') && apkUrl == null) {
+              apkUrl = downloadUrl;
+            }
+            if (name.endsWith('.zip') && zipUrl == null) {
+              zipUrl = downloadUrl;
+            }
+          }
         }
 
         final packageInfo = await PackageInfo.fromPlatform();
@@ -2551,7 +2680,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final ignoredVersion = await _storage.getIgnoredUpdateVersion();
         
         if (latestVersion != currentVersion && _isNewer(latestVersion, currentVersion) && latestVersion != ignoredVersion) {
-          
+          if (!mounted) return;
           String releaseNotes = data['body'] ?? '';
           
           showDialog(
@@ -2589,10 +2718,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 ElevatedButton(
                   onPressed: () {
                     Navigator.pop(ctx);
-                    if (apkUrl != null) {
-                      _downloadAndInstallApk(apkUrl);
+                    if (!kIsWeb && Platform.isWindows) {
+                      final target = zipUrl ?? (data['html_url'] as String?);
+                      if (target != null) {
+                        launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+                      }
+                    } else if (!kIsWeb && Platform.isAndroid) {
+                      if (apkUrl != null) {
+                        _downloadAndInstallApk(apkUrl);
+                      } else {
+                        final htmlUrl = data['html_url'] as String?;
+                        if (htmlUrl != null) {
+                          launchUrl(Uri.parse(htmlUrl), mode: LaunchMode.externalApplication);
+                        }
+                      }
                     } else {
-                      launchUrl(Uri.parse(data['html_url']), mode: LaunchMode.externalApplication);
+                      final target = data['html_url'] as String?;
+                      if (target != null) {
+                        launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+                      }
                     }
                   },
                   child: const Text('Installer'),
@@ -2623,9 +2767,20 @@ class _HomeScreenState extends State<HomeScreen> {
         final data = json.decode(response.body);
         final latestTag = data['tag_name'] as String; // e.g. "v1.3.1"
         
+        final assets = (data['assets'] as List?) ?? [];
         String? apkUrl;
-        if (data['assets'] != null && data['assets'].isNotEmpty) {
-          apkUrl = data['assets'][0]['browser_download_url'] as String?;
+        String? zipUrl;
+        for (final asset in assets) {
+          if (asset is Map) {
+            final name = (asset['name'] as String?)?.toLowerCase() ?? '';
+            final downloadUrl = asset['browser_download_url'] as String?;
+            if (name.endsWith('.apk') && apkUrl == null) {
+              apkUrl = downloadUrl;
+            }
+            if (name.endsWith('.zip') && zipUrl == null) {
+              zipUrl = downloadUrl;
+            }
+          }
         }
 
         final packageInfo = await PackageInfo.fromPlatform();
@@ -2634,6 +2789,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final latestVersion = latestTag.replaceAll('v', '');
         
         if (latestVersion != currentVersion && _isNewer(latestVersion, currentVersion)) {
+          if (!mounted) return;
           showDialog(
             context: context,
             builder: (ctx) => AlertDialog(
@@ -2654,10 +2810,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 ElevatedButton(
                   onPressed: () {
                     Navigator.pop(ctx);
-                    if (apkUrl != null) {
-                      _downloadAndInstallApk(apkUrl);
+                    if (!kIsWeb && Platform.isWindows) {
+                      final target = zipUrl ?? (data['html_url'] as String?);
+                      if (target != null) {
+                        launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+                      }
+                    } else if (!kIsWeb && Platform.isAndroid) {
+                      if (apkUrl != null) {
+                        _downloadAndInstallApk(apkUrl);
+                      } else {
+                        final htmlUrl = data['html_url'] as String?;
+                        if (htmlUrl != null) {
+                          launchUrl(Uri.parse(htmlUrl), mode: LaunchMode.externalApplication);
+                        }
+                      }
                     } else {
-                      launchUrl(Uri.parse(data['html_url']), mode: LaunchMode.externalApplication);
+                      final target = data['html_url'] as String?;
+                      if (target != null) {
+                        launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+                      }
                     }
                   },
                   child: const Text('Installer'),
@@ -2665,8 +2836,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           );
-        } else {
-          _showTopToast('Votre application est déjà à jour ! (v$currentVersion)', isSuccess: true);
         }
       } else {
         _showTopToast('Erreur serveur lors de la vérification.', isError: true);
@@ -2832,10 +3001,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   value: _showAutomation,
                   onChanged: (val) {
                     setState(() {
-                      if (val) _currentIndex++; else _currentIndex--;
                       _showAutomation = val;
-                      if (!val) {
-                        if (_automationEnabled) _toggleAutomation(false);
+                      _currentIndex = 2 + (_showAutomation && !kIsWeb ? 1 : 0) + (_showStats ? 1 : 0);
+                      if (!val && _automationEnabled) {
+                        _toggleAutomation(false);
                       }
                     });
                     _storage.saveShowAutomation(val);
@@ -2849,8 +3018,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 value: _showStats,
                 onChanged: (val) {
                   setState(() {
-                    if (val) _currentIndex++; else _currentIndex--;
                     _showStats = val;
+                    _currentIndex = 2 + (_showAutomation && !kIsWeb ? 1 : 0) + (_showStats ? 1 : 0);
                   });
                   _storage.saveShowStats(val);
                 },

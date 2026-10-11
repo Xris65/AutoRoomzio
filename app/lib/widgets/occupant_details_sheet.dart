@@ -9,6 +9,8 @@ class OccupantDetailsSheet extends StatelessWidget {
   final DeskOccupant occupant;
   final bool isFavorite;
   final VoidCallback? onToggleFavorite;
+  final VoidCallback? onCancelMyBooking;
+  final VoidCallback? onCancelDelegatedBooking;
 
   const OccupantDetailsSheet({
     super.key,
@@ -16,6 +18,8 @@ class OccupantDetailsSheet extends StatelessWidget {
     required this.occupant,
     this.isFavorite = false,
     this.onToggleFavorite,
+    this.onCancelMyBooking,
+    this.onCancelDelegatedBooking,
   });
 
   /// Displays the [OccupantDetailsSheet] as a modal bottom sheet.
@@ -25,6 +29,8 @@ class OccupantDetailsSheet extends StatelessWidget {
     required DeskOccupant occupant,
     bool isFavorite = false,
     VoidCallback? onToggleFavorite,
+    VoidCallback? onCancelMyBooking,
+    VoidCallback? onCancelDelegatedBooking,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -38,6 +44,8 @@ class OccupantDetailsSheet extends StatelessWidget {
         occupant: occupant,
         isFavorite: isFavorite,
         onToggleFavorite: onToggleFavorite,
+        onCancelMyBooking: onCancelMyBooking,
+        onCancelDelegatedBooking: onCancelDelegatedBooking,
       ),
     );
   }
@@ -232,6 +240,46 @@ class OccupantDetailsSheet extends StatelessWidget {
             const SizedBox(height: 16),
 
             // Action Buttons
+            if (occupant.isMe && onCancelMyBooking != null) ...[
+              ElevatedButton.icon(
+                icon: const Icon(Icons.event_busy_rounded, color: Colors.white),
+                label: const Text(
+                  "Libérer ma place",
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                  onCancelMyBooking!();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+            if (onCancelDelegatedBooking != null) ...[
+              ElevatedButton.icon(
+                icon: const Icon(Icons.person_remove_rounded, color: Colors.white),
+                label: const Text(
+                  "Libérer la place du collègue",
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                  onCancelDelegatedBooking!();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
             if (!occupant.isMe && onToggleFavorite != null)
               OutlinedButton.icon(
                 icon: Icon(isFavorite ? Icons.star_border : Icons.star),

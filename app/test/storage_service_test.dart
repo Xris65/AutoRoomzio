@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:auto_roomzio/storage_service.dart';
+import 'package:auto_roomzio/models/colleague.dart';
 
 class FakeSecureStorage extends FlutterSecureStorage {
   final Map<String, String> map;
@@ -209,6 +210,126 @@ void main() {
       await storage.saveRoomId('ws_room_7');
       expect(await storage.getWorkspaceId(), equals('ws_room_7'));
       expect(await storage.getRoomId(), equals('ws_room_7'));
+    });
+
+    test('rememberEmail and savedEmail getters/setters operate as expected', () async {
+      final storage = StorageService();
+
+      expect(await storage.getRememberEmail(), isTrue); // default is true
+      await storage.saveRememberEmail(false);
+      expect(await storage.getRememberEmail(), isFalse);
+
+      await storage.saveSavedEmail('test.user@company.com');
+      expect(await storage.getSavedEmail(), equals('test.user@company.com'));
+    });
+
+    test('clearAllData preserves email if rememberEmail is true, clears if false', () async {
+      final storage = StorageService();
+
+      // Case A: remember = true
+      await storage.saveRememberEmail(true);
+      await storage.saveSavedEmail('user@company.com');
+      await storage.saveRefreshToken('token-to-be-cleared');
+      await storage.saveWorkspaceName('Desk 42');
+
+      await storage.clearAllData();
+
+      expect(await storage.getRememberEmail(), isTrue);
+      expect(await storage.getSavedEmail(), equals('user@company.com'));
+      expect(await storage.getRefreshToken(), isNull);
+      expect(await storage.getWorkspaceName(), isNull);
+
+      // Case B: remember = false
+      await storage.saveRememberEmail(false);
+      await storage.saveSavedEmail('user2@company.com');
+      await storage.saveRefreshToken('another-token');
+
+      await storage.clearAllData();
+
+      expect(await storage.getSavedEmail(), isNull);
+      expect(await storage.getRefreshToken(), isNull);
+    });
+
+    test('bookedElsewhere and delegatedBookingsMap persist correctly', () async {
+      final storage = StorageService();
+
+      expect(await storage.getBookedElsewhereDates(), isEmpty);
+      await storage.saveBookedElsewhereDates(['2026-10-15', '2026-10-16']);
+      final dates = await storage.getBookedElsewhereDates();
+      expect(dates, contains('2026-10-15'));
+      expect(dates, contains('2026-10-16'));
+
+      final delMap = {'2026-10-15': 'ws-1|Jean|Desk 1|evt-1|u-1'};
+      await storage.saveDelegatedBookingsMap(delMap);
+      final retrievedDel = await storage.getDelegatedBookingsMap();
+      expect(retrievedDel['2026-10-15'], equals('ws-1|Jean|Desk 1|evt-1|u-1'));
+    });
+
+    test('mergeFavoriteColleagues preserves local external/manual favorites while updating from API', () async {
+      final storage = StorageService();
+
+      // Add a manual external colleague
+      const manualColleague = Colleague(
+        id: 'ext_12345',
+        name: 'Jean Externe',
+        email: 'jean.ext@partner.com',
+      );
+      await storage.addFavoriteColleague(manualColleague);
+
+      // Add another colleague with custom prefix
+      const customColleague = Colleague(
+        id: 'custom_99',
+        name: 'Marie Consultant',
+        email: 'marie@consulting.com',
+      );
+      await storage.addFavoriteColleague(customColleague);
+
+      // API returns a new colleague and an update
+      const apiColleague = Colleague(
+        id: 'usr_internal_1',
+        name: 'Pierre Interne',
+        email: 'pierre@company.com',
+      );
+
+      await storage.mergeFavoriteColleagues([apiColleague]);
+
+      final favorites = await storage.getFavoriteColleagues();
+      expect(favorites.length, equals(3));
+      expect(favorites.any((c) => c.id == 'ext_12345' && c.name == 'Jean Externe'), isTrue);
+      expect(favorites.any((c) => c.id == 'custom_99' && c.name == 'Marie Consultant'), isTrue);
+      expect(favorites.any((c) => c.id == 'usr_internal_1' && c.name == 'Pierre Interne'), isTrue);
+    });
+
+    test('delegated bookings on the same date can coexist and be canceled independently', () async {
+      final storage = StorageService();
+      const date = '2026-10-20';
+
+      // Save two bookings on different desks for the same day
+      await storage.saveDelegatedBooking(date, 'ws-desk-1', 'ws-desk-1|Alice|Desk 1|evt-1|usr-1');
+      await storage.saveDelegatedBooking(date, 'ws-desk-2', 'ws-desk-2|Bob|Desk 2|evt-2|usr-2');
+
+      // Both should coexist and be retrievable individually
+      final booking1 = await storage.getDelegatedBooking(date, 'ws-desk-1');
+      final booking2 = await storage.getDelegatedBooking(date, 'ws-desk-2');
+      expect(booking1, equals('ws-desk-1|Alice|Desk 1|evt-1|usr-1'));
+      expect(booking2, equals('ws-desk-2|Bob|Desk 2|evt-2|usr-2'));
+
+      final allBookings = await storage.getDelegatedBookingsMap();
+      expect(allBookings.containsKey('$date#ws-desk-1'), isTrue);
+      expect(allBookings.containsKey('$date#ws-desk-2'), isTrue);
+
+      // Cancel desk 1 only
+      await storage.removeDelegatedBooking(date, 'ws-desk-1');
+
+      // Desk 1 removed, Desk 2 still intact
+      expect(await storage.getDelegatedBooking(date, 'ws-desk-1'), isNull);
+      expect(await storage.getDelegatedBooking(date, 'ws-desk-2'), equals('ws-desk-2|Bob|Desk 2|evt-2|usr-2'));
+      expect(await storage.getDelegatedBooking(date), equals('ws-desk-2|Bob|Desk 2|evt-2|usr-2'));
+
+      // Cancel desk 2
+      await storage.removeDelegatedBooking(date, 'ws-desk-2');
+      expect(await storage.getDelegatedBooking(date, 'ws-desk-2'), isNull);
+      expect(await storage.getDelegatedBooking(date), isNull);
     });
   });
 }

@@ -19,6 +19,21 @@ import 'package:auto_roomzio/background_task.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:auto_roomzio/main.dart';
 
+class _OccupiedMockApiService extends RoomzApiService {
+  _OccupiedMockApiService({super.client});
+
+  @override
+  Future<({Map<String, String> occupiedByOthers, Map<String, String> delegatedBookings, Set<String> delegatedHere, Set<String> delegatedElsewhere})> getWorkspaceOccupancy(
+      String token, String workspaceId, String floorId, List<String> dates, String? myUserId, Map<String, String> elsewhereMap) async {
+    return (
+      occupiedByOthers: {for (final d in dates) d: 'Alex Martin'},
+      delegatedBookings: <String, String>{},
+      delegatedHere: <String>{},
+      delegatedElsewhere: <String>{},
+    );
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -641,6 +656,7 @@ void main() {
     });
   });
 
+
   // ═════════════════════════════════════════════════════════════════════════════
   // 10. Hotfix 4: Delegation Button Hidden on Occupied Desk
   // ═════════════════════════════════════════════════════════════════════════════
@@ -652,6 +668,7 @@ void main() {
 
       SharedPreferences.setMockInitialValues({
         'refresh_token': 'mock-token',
+        'floor_id': 'fl-1',
         'workspace_id': 'ws-1',
         'workspace_name': 'My Desk',
         'initial_tab': 1,
@@ -659,6 +676,12 @@ void main() {
       });
 
       final client = MockClient((req) async {
+        if (req.url.path.contains('/token')) {
+          return http.Response(jsonEncode({
+            'access_token': 'mock-access-token',
+            'refresh_token': 'mock-refresh-token',
+          }), 200);
+        }
         if (req.url.path.contains('/workspaces/calendars')) {
           return http.Response(jsonEncode({
             'data': [
@@ -666,7 +689,7 @@ void main() {
                 'workspaceId': 'ws-1',
                 'status': 'Reserved',
                 'bookedTimeSlot': {
-                  'user': {'name': 'Tristan Follain'}
+                  'user': {'name': 'Alex Martin'}
                 }
               }
             ]
@@ -675,7 +698,7 @@ void main() {
         return http.Response('[]', 200);
       });
 
-      final api = RoomzApiService(client: client);
+      final api = _OccupiedMockApiService(client: client);
       final storage = StorageService();
 
       await tester.pumpWidget(MaterialApp(

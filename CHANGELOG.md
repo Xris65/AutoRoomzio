@@ -2,6 +2,36 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.6.0] - 2026-10-11
+
+### Nouveautés & Améliorations
+- **Plan d'Équipe 2D & Réservation Intuitive** :
+  - Possibilité de réserver un bureau libre directement depuis le plan d'équipe 2D, pour soi-même ou pour un collègue par délégation.
+  - Garde de date bloquant les réservations passées ou au-delà de J+13 conformément aux règles de l'API.
+  - Action immédiate « Libérer ma place » dans la fiche de détails d'occupant pour annuler sa propre réservation directement depuis la carte.
+  - Centrage et zoom automatique fluide de la caméra sur le poste de travail sélectionné ou recherché.
+  - Bouton de rafraîchissement manuel avec indicateur en rotation dans la barre d'action supérieure et overlay plein écran de chargement lors des opérations asynchrones.
+- **Sélection Intelligente & Persistance des Collègues** :
+  - Boîte de dialogue de sélection de collègue (`ColleagueSelectionDialog`) avec détection proactive des collègues déjà assis (« A déjà une place (Desk ...) ») et désactivation des clics pour éviter toute double réservation conflictuelle.
+  - Algorithme de fusion intelligent (`mergeFavoriteColleagues`) préservant l'intégrité des collègues externes locaux lors de la synchronisation avec l'annuaire distant Roomz.
+  - Mémorisation sécurisée de l'adresse email de connexion avec conservation lors de la déconnexion si l'option « Se souvenir de mon email » est active.
+- **Programmation en Attente & Cartes d'Accueil Synchronisées** :
+  - Persistance granulaire du bureau ciblé (`requested_workspaces` et `requested_workspace_names`) pour chaque date programmée en attente.
+  - Remplacement de l'action « Bloquer » par « Supprimer » sur les cartes d'accueil de réservation en attente, permettant une annulation limpide.
+  - Synchronisation bidirectionnelle instantanée entre les cartes de l'écran d'accueil, le calendrier et le service d'arrière-plan de l'automate.
+  - Priorité stricte donnée aux réservations réelles confirmées sur l'affichage des badges de présence.
+- **Navigation Flexible & Gestion des Week-ends** :
+  - Navigation jour par jour par flèches `<` et `>` continue sans sauter les samedis et dimanches, même lorsque l'affichage compact des week-ends est coché.
+  - Respect strict du paramètre utilisateur autorisant ou bloquant les réservations de poste les samedis et dimanches.
+- **Formulaire Web Renforcé & Multi-Plateforme** :
+  - Formulaire de connexion Web (`Form` et `TextFormField`) avec validation stricte par expression régulière de l'email et du mot de passe (minimum 6 caractères) bloquant tout appel réseau invalide.
+  - Détection multi-plateforme des mises à jour : téléchargement direct de l'archive ZIP portable sous Windows et désactivation complète du vérificateur sur le Web (`kIsWeb`).
+  - Calcul déterministe de l'index des onglets dans les paramètres évitant les décalages ou erreurs d'index hors limites (`RangeError`).
+
+### Correctifs & Robustesse
+- **Cohérence Web & Paramètres** : Masquage automatique de la bannière de rythme de présence sur le Web en l'absence de rythme configuré, éliminant les références à l'onglet Automate non disponible sur navigateur.
+- **Qualité de Code & Suite de Tests Automatisée** : Zéro avertissement d'analyse statique (`flutter analyze`), prise en charge robuste des environnements de test headless VM sous Windows, et suite de tests unitaires et d'intégration validée à 100%.
+
 ## [1.5.1] - 2026-10-10
 
 ### Nouveautés

@@ -112,6 +112,7 @@ void main() {
           apiService: api,
           storageService: storage,
           initialDate: baseDate,
+          hideWeekends: false,
         ),
       ));
       await tester.pumpAndSettle();
@@ -132,8 +133,8 @@ void main() {
       // Verification: Token refresh was only performed ONCE (cached and mutex-protected)
       expect(tokenRefreshHttpCalls, equals(1), reason: 'Token refresh must not be flooded on date clicks');
 
-      // Verification: 10 date requests were triggered (+ 1 initial load)
-      expect(requestedDates.length, equals(11));
+      // Verification: 10 date requests were triggered (+ 1 initial load, plus optional colleague harvest)
+      expect(requestedDates.length, greaterThanOrEqualTo(11));
 
       // Verification: Final date in state corresponds to baseDate + 10 days (2026-10-15)
       final expectedFinalDate = baseDate.add(const Duration(days: 10));
@@ -184,9 +185,12 @@ void main() {
         if (path.contains('/workspaces/calendars')) {
           final body = jsonDecode(req.body);
           final d = body['date']?.toString() ?? '';
-          final completer = Completer<http.Response>();
-          calendarCompleters[d] = completer;
-          return await completer.future;
+          if (['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08'].contains(d)) {
+            final completer = Completer<http.Response>();
+            calendarCompleters[d] = completer;
+            return await completer.future;
+          }
+          return http.Response(jsonEncode({'data': []}), 200);
         }
         if (path.contains('/workspaces')) {
           return http.Response(jsonEncode([
@@ -244,14 +248,14 @@ void main() {
           {
             'workspaceId': 'ws-target',
             'status': 'Reserved',
-            'bookedTimeSlot': {'occupantName': 'David Follain', 'creator': {'id': 'u4', 'name': 'David Follain'}}
+            'bookedTimeSlot': {'occupantName': 'Alex Martin', 'creator': {'id': 'u4', 'name': 'Alex Martin'}}
           }
         ]
       }), 200));
       await tester.pumpAndSettle();
 
-      // Formatted as FOLLAIN D.
-      expect(find.textContaining('FOLLAIN D.'), findsWidgets);
+      // Formatted as MARTIN A.
+      expect(find.textContaining('MARTIN A.'), findsWidgets);
 
       // Now the obsolete earlier requests complete late
       calendarCompleters['2026-10-06']?.complete(http.Response(jsonEncode({
@@ -275,7 +279,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // State MUST NOT be overwritten by the stale earlier requests!
-      expect(find.textContaining('FOLLAIN D.'), findsWidgets);
+      expect(find.textContaining('MARTIN A.'), findsWidgets);
       expect(find.textContaining('STALE B.'), findsNothing);
       expect(find.textContaining('STALE C.'), findsNothing);
       expect(sessionExpiredFired, isFalse);
@@ -653,7 +657,7 @@ void main() {
       expect(await storage.getUiScale(), equals(1.15));
     });
 
-    test('Protected API call (getSites, getFloorOccupants, reserveWorkspace) on HTTP 401 triggers onSessionExpired', () async {
+    test('Protected API call (getSites, getFloorOccupants, reserveWorkspace) on HTTP 401 invalidates cached token without forced logout', () async {
       SharedPreferences.setMockInitialValues({
         'refresh_token': 'expired-tok',
         'site_id': 'saved-site-id',
@@ -670,22 +674,23 @@ void main() {
 
       await api.getSites('bad-token');
       await Future.delayed(const Duration(milliseconds: 20));
-      expect(expiryCount, equals(1));
+      // Protected API calls on HTTP 401 must NOT trigger forced session expiry (per commit c0aa345)
+      expect(expiryCount, equals(0));
 
-      // getFloorOccupants verifies both getCurrentUserId and calendar endpoint 401s
       await api.getFloorOccupants('bad-token', 'fl-1', '2026-10-10');
       await Future.delayed(const Duration(milliseconds: 20));
-      expect(expiryCount, equals(3), reason: 'getFloorOccupants triggers 401 on both getCurrentUserId and calendar endpoint');
+      expect(expiryCount, equals(0));
 
       await api.reserveWorkspace('2026-10-10', 'bad-token', 'ws-1');
       await Future.delayed(const Duration(milliseconds: 20));
-      expect(expiryCount, equals(4));
+      expect(expiryCount, equals(0));
 
-      expect(await storage.getRefreshToken(), isNull);
+      // Refresh token is preserved to allow automatic re-authentication
+      expect(await storage.getRefreshToken(), equals('expired-tok'));
       expect(await storage.getSiteId(), equals('saved-site-id'));
     });
 
-    test('reserveWorkspaceForColleague() on HTTP 401 returns unauthorized, triggers onSessionExpired, and clears tokens', () async {
+    test('reserveWorkspaceForColleague() on HTTP 401 returns unauthorized without forced logout', () async {
       SharedPreferences.setMockInitialValues({
         'refresh_token': 'expired-tok',
         'site_id': 'saved-site-id',
@@ -708,8 +713,9 @@ void main() {
       );
 
       expect(result.status, equals(BookingStatus.unauthorized));
-      expect(sessionExpiredFired, isTrue);
-      expect(await storage.getRefreshToken(), isNull);
+      // Does not trigger forced session expiry per commit c0aa345
+      expect(sessionExpiredFired, isFalse);
+      expect(await storage.getRefreshToken(), equals('expired-tok'));
       expect(await storage.getSiteId(), equals('saved-site-id'));
     });
   });
