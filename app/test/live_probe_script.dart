@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -51,34 +52,34 @@ Future<void> main() async {
   final bResp = await http.get(Uri.parse("$api/users/current/bookings"), headers: headers);
   print("Status: ${bResp.statusCode}");
   if (bResp.statusCode == 200) {
-    print("Body: ${bResp.body.length > 500 ? bResp.body.substring(0, 500) + '...' : bResp.body}");
+    print("Body: ${bResp.body.length > 500 ? '${bResp.body.substring(0, 500)}...' : bResp.body}");
   }
 
   final candidates = [
     // Direct user / directory search endpoints
     "GET $api/users",
-    "GET $api/users?search=kristo",
-    "GET $api/users?q=kristo",
-    "GET $api/users?filter=kristo",
-    "GET $api/users?search=dhima",
-    "GET $api/users/search?q=kristo",
-    "GET $api/users/search?search=kristo",
-    "GET $api/users/search?query=kristo",
+    "GET $api/users?search=test_user",
+    "GET $api/users?q=test_user",
+    "GET $api/users?filter=test_user",
+    "GET $api/users?search=test_user",
+    "GET $api/users/search?q=test_user",
+    "GET $api/users/search?search=test_user",
+    "GET $api/users/search?query=test_user",
     "GET $api/directory/users",
-    "GET $api/directory/search?query=kristo",
-    "GET $api/directory/search?q=kristo",
-    "GET $api/directory?query=kristo",
-    "GET $api/search/users?query=kristo",
-    "GET $api/search/users?q=kristo",
-    "GET $api/search/users?term=kristo",
-    "GET $api/search?query=kristo",
-    "GET $api/search?q=kristo",
+    "GET $api/directory/search?query=test_user",
+    "GET $api/directory/search?q=test_user",
+    "GET $api/directory?query=test_user",
+    "GET $api/search/users?query=test_user",
+    "GET $api/search/users?q=test_user",
+    "GET $api/search/users?term=test_user",
+    "GET $api/search?query=test_user",
+    "GET $api/search?q=test_user",
     "GET $api/colleagues",
-    "GET $api/colleagues?search=kristo",
+    "GET $api/colleagues?search=test_user",
 
     // Organization-scoped endpoints
     "GET $api/organizations/$orgId/users",
-    "GET $api/organizations/$orgId/users?search=kristo",
+    "GET $api/organizations/$orgId/users?search=test_user",
     "GET $api/organizations/$orgId/colleagues",
     "GET $api/organizations/$orgId/directory",
     "GET $api/organizations/users",
@@ -113,7 +114,7 @@ Future<void> main() async {
           : http.post(Uri.parse(url), headers: headers));
       print("[$method] $url -> ${res.statusCode} (Length: ${res.body.length})");
       if (res.statusCode != 404 && res.statusCode != 405) {
-        print("   >>> Content (${res.statusCode}): ${res.body.length > 300 ? res.body.substring(0, 300) + '...' : res.body}");
+        print("   >>> Content (${res.statusCode}): ${res.body.length > 300 ? '${res.body.substring(0, 300)}...' : res.body}");
       }
     } catch (e) {
       print("[$method] $url -> EXCEPTION: $e");
@@ -134,11 +135,11 @@ Future<void> main() async {
       final res = await http.post(
         Uri.parse(url),
         headers: headers,
-        body: jsonEncode({"query": "kristo", "search": "kristo", "term": "kristo"}),
+        body: jsonEncode({"query": "test_user", "search": "test_user", "term": "test_user"}),
       );
       print("[POST] $url -> ${res.statusCode} (Length: ${res.body.length})");
       if (res.statusCode != 404 && res.statusCode != 405) {
-        print("   >>> Content (${res.statusCode}): ${res.body.length > 300 ? res.body.substring(0, 300) + '...' : res.body}");
+        print("   >>> Content (${res.statusCode}): ${res.body.length > 300 ? '${res.body.substring(0, 300)}...' : res.body}");
       }
     } catch (e) {
       print("[POST] $url -> EXCEPTION: $e");

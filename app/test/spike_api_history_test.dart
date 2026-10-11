@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 // app/test/spike_api_history_test.dart
 // Spike Test for Milestone M1 (AutoRoomzio v1.4.0)
 // Requirement R1: Prove conclusively whether MyRoomz API allows querying past reservation history.

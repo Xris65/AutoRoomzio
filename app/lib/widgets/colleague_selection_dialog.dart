@@ -15,6 +15,7 @@ class ColleagueSelectionDialog extends StatefulWidget {
   final RoomzApiService? apiService;
   final ValueChanged<Colleague>? onColleagueSelected;
   final bool isManagementMode;
+  final Map<String, String>? alreadySeatedColleagues;
 
   const ColleagueSelectionDialog({
     super.key,
@@ -24,6 +25,7 @@ class ColleagueSelectionDialog extends StatefulWidget {
     this.apiService,
     this.onColleagueSelected,
     this.isManagementMode = false,
+    this.alreadySeatedColleagues,
   });
 
   @override
@@ -166,6 +168,32 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
     } catch (_) {}
 
     if (mounted) setState(() => _isRemoteSearching = false);
+  }
+
+  String? _getAlreadySeatedDeskName(Colleague colleague) {
+    final map = widget.alreadySeatedColleagues;
+    if (map == null || map.isEmpty) return null;
+
+    final id = colleague.id.trim();
+    final name = colleague.name.trim().toLowerCase();
+    final email = colleague.email.trim().toLowerCase();
+
+    // 1. Direct key lookups
+    if (id.isNotEmpty && map.containsKey(id)) return map[id];
+    if (id.isNotEmpty && map.containsKey(id.toLowerCase())) return map[id.toLowerCase()];
+    if (name.isNotEmpty && map.containsKey(name)) return map[name];
+    if (email.isNotEmpty && map.containsKey(email)) return map[email];
+
+    // 2. Case-insensitive key comparison across entries
+    for (final entry in map.entries) {
+      final key = entry.key.trim().toLowerCase();
+      if (key.isEmpty) continue;
+      if (id.isNotEmpty && id.toLowerCase() == key) return entry.value;
+      if (name.isNotEmpty && name == key) return entry.value;
+      if (email.isNotEmpty && email == key) return entry.value;
+    }
+
+    return null;
   }
 
   bool _isColleagueFavorite(Colleague colleague) {
@@ -391,6 +419,18 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
   Future<void> _onColleagueTapped(Colleague colleague) async {
     if (widget.isManagementMode) {
       await _toggleFavorite(colleague);
+      return;
+    }
+
+    final occupiedDesk = _getAlreadySeatedDeskName(colleague);
+    if (occupiedDesk != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${colleague.name} a déjà une place ($occupiedDesk)'),
+          ),
+        );
+      }
       return;
     }
 
@@ -770,8 +810,16 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
         : (colleague.email.isNotEmpty ? colleague.email : colleague.name);
     final isPending = _pendingFavoriteIds.contains(key);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final occupiedDesk = _getAlreadySeatedDeskName(colleague);
+    final isAlreadySeated = occupiedDesk != null;
 
-    return ListTile(
+    final String? alreadySeatedText = isAlreadySeated
+        ? (occupiedDesk.isNotEmpty
+            ? 'A déjà une place ($occupiedDesk)'
+            : 'A déjà une place')
+        : null;
+
+    final tile = ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       leading: CircleAvatar(
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
@@ -780,13 +828,30 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
       ),
       title: Text(colleague.name,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-      subtitle: colleague.email.isNotEmpty
-          ? Text(colleague.email,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            color: isAlreadySeated
+                ? (isDark ? Colors.grey.shade400 : Colors.grey.shade700)
+                : null,
+          )),
+      subtitle: isAlreadySeated
+          ? Text(
+              alreadySeatedText!,
+              style: TextStyle(
+                fontSize: 12,
+                color: isDark ? Colors.red.shade300 : Colors.red.shade700,
+                fontWeight: FontWeight.w500,
+              ),
               maxLines: 1,
-              overflow: TextOverflow.ellipsis)
-          : null,
+              overflow: TextOverflow.ellipsis,
+            )
+          : (colleague.email.isNotEmpty
+              ? Text(colleague.email,
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis)
+              : null),
       trailing: isPending
           ? SizedBox(
               width: 48,
@@ -812,7 +877,15 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
               onPressed: () => _toggleFavorite(colleague),
             ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      onTap: isPending ? null : () => _onColleagueTapped(colleague),
+      onTap: (isPending || isAlreadySeated) ? null : () => _onColleagueTapped(colleague),
     );
+
+    if (isAlreadySeated) {
+      return Opacity(
+        opacity: 0.55,
+        child: tile,
+      );
+    }
+    return tile;
   }
 }

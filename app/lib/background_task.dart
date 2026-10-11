@@ -21,9 +21,14 @@ Future<int> runBackgroundBookingAutomation({
   final daysToBook = await storage.getDays();
 
   final requestedDates = await storage.getRequestedDates();
+  final requestedWorkspaces = await storage.getRequestedWorkspacesMap();
+  final requestedNames = await storage.getRequestedWorkspaceNamesMap();
   final bookedDates = await storage.getBookedDates();
   final ignoredDates = await storage.getIgnoredDates();
   final Set<String> newBooked = Set.from(bookedDates);
+  final List<String> updatedRequestedDates = List.from(requestedDates);
+  final Map<String, String> updatedRequestedWorkspaces = Map.from(requestedWorkspaces);
+  final Map<String, String> updatedRequestedNames = Map.from(requestedNames);
 
   if (floorId == null || workspaceId == null) {
     debugPrint("⚠️ Missing floor or workspace ID, aborting automation.");
@@ -116,29 +121,41 @@ Future<int> runBackgroundBookingAutomation({
       continue;
     }
 
-    // Hotfix 6 Pre-flight Conflict Guard 2:
-    // Skip if user's target desk is already occupied by someone else on that date
-    if (occupiedByOthers.containsKey(dateStr)) {
-      debugPrint("🔒 Target desk is occupied by ${occupiedByOthers[dateStr]} on $dateStr, skipping.");
-      continue;
-    }
-
     // Check if this date should be booked (configured weekday OR pending requested date)
     if (daysToBook.contains(targetDate.weekday) || requestedDates.contains(dateStr)) {
+      final targetWsId = requestedWorkspaces[dateStr] ?? workspaceId;
+
+      // Hotfix 6 Pre-flight Conflict Guard 2:
+      // Skip if user's target desk is already occupied by someone else on that date
+      // Note: Only check occupiedByOthers if targetWsId is default workspaceId
+      if (targetWsId == workspaceId && occupiedByOthers.containsKey(dateStr)) {
+        debugPrint("🔒 Target desk is occupied by ${occupiedByOthers[dateStr]} on $dateStr, skipping.");
+        continue;
+      }
+
       if (bookedHere.contains(dateStr)) {
         newBooked.add(dateStr);
+        updatedRequestedDates.remove(dateStr);
+        updatedRequestedWorkspaces.remove(dateStr);
+        updatedRequestedNames.remove(dateStr);
       } else if (!newBooked.contains(dateStr)) {
-        final success = await api.reserveWorkspace(dateStr, token, workspaceId);
+        final success = await api.reserveWorkspace(dateStr, token, targetWsId);
         if (success) {
           await storage.recordBookingStat(true);
           newBooked.add(dateStr);
           newlyBookedCount++;
+          updatedRequestedDates.remove(dateStr);
+          updatedRequestedWorkspaces.remove(dateStr);
+          updatedRequestedNames.remove(dateStr);
         }
       }
     }
   }
 
   await storage.saveBookedDates(newBooked.toList());
+  await storage.saveRequestedDates(updatedRequestedDates);
+  await storage.saveRequestedWorkspacesMap(updatedRequestedWorkspaces);
+  await storage.saveRequestedWorkspaceNamesMap(updatedRequestedNames);
   return newlyBookedCount;
 }
 

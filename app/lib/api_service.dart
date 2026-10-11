@@ -328,15 +328,33 @@ class RoomzApiService {
             bool isDelegated = false;
             final creator = b['creator'];
             final organizer = b['organizer'];
+            final bookedFor = b['bookedFor'];
             String targetName = "Quelqu'un";
             
-            if (creator != null && organizer != null) {
-               if (creator['id'] != null && organizer['id'] != null && creator['id'] != organizer['id']) {
+            if (bookedFor != null) {
+              isDelegated = true;
+              if (bookedFor is Map) {
+                targetName = bookedFor['name'] ?? bookedFor['displayName'] ?? targetName;
+              } else if (bookedFor is String) {
+                targetName = bookedFor;
+              }
+            } else if (creator != null && organizer != null) {
+               final creatorId = creator['id'];
+               final orgId = organizer['id'];
+               final creatorEmail = creator['email']?.toString().toLowerCase();
+               final orgEmail = organizer['email']?.toString().toLowerCase();
+               final creatorName = creator['name'];
+               final orgName = organizer['name'] ?? organizer['displayName'];
+
+               if (creatorId != null && orgId != null && creatorId != orgId) {
                   isDelegated = true;
-                  targetName = organizer['name'] ?? targetName;
-               } else if (creator['name'] != null && organizer['name'] != null && creator['name'] != organizer['name']) {
+                  targetName = orgName ?? targetName;
+               } else if (creatorEmail != null && orgEmail != null && creatorEmail != orgEmail) {
                   isDelegated = true;
-                  targetName = organizer['name'];
+                  targetName = orgName ?? organizer['email'] ?? targetName;
+               } else if (creatorName != null && orgName != null && creatorName != orgName) {
+                  isDelegated = true;
+                  targetName = orgName;
                }
             }
             
@@ -349,8 +367,12 @@ class RoomzApiService {
                // eventId in API has format "workspaceId/eventUUID" — extract just the UUID part
                final rawEventId = b['eventId']?.toString() ?? '';
                final evId = rawEventId.contains('/') ? rawEventId.split('/')[1] : rawEventId;
-               final orgId = organizer?['id']?.toString() ?? '';
-               delegated[dateStr] = '$wsId|$targetName|$location|$evId|$orgId';
+               final orgId = organizer?['id']?.toString() ?? organizer?['email']?.toString() ?? '';
+               final entryVal = '$wsId|$targetName|$location|$evId|$orgId';
+               // If multiple delegated reservations exist for this day, prioritize matching current workspaceId
+               if (!delegated.containsKey(dateStr) || wsId.toLowerCase() == workspaceId.toLowerCase()) {
+                 delegated[dateStr] = entryVal;
+               }
             } else if (b['workspaceId'] == workspaceId) {
               here.add(dateStr);
             } else {
@@ -367,7 +389,9 @@ class RoomzApiService {
     }
 
   /// Finds a booking on a specific date (any workspace) and cancels it.
-  Future<bool> cancelBookingByDate(String token, String dateStr) async {
+  /// Optionally targets a specific [workspaceId], [forUserId], or [eventId] so other
+  /// bookings on the same date (e.g. multi-delegation) are never mistakenly deleted.
+  Future<bool> cancelBookingByDate(String token, String dateStr, {String? workspaceId, String? forUserId, String? eventId}) async {
     try {
       final response = await _client.get(
         Uri.parse("$_apiBase/users/current/bookings"),
@@ -377,32 +401,58 @@ class RoomzApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final bookings = data['bookings'] as List? ?? [];
-        String? foundUserId;
-            for (final b in bookings) {
-              if (foundUserId == null && b['creator'] != null && b['creator']['id'] != null) {
-                foundUserId = b['creator']['id']?.toString();
-              }
+        for (final b in bookings) {
           if (b['type'] != 'Reserved') continue;
           final bDate = b['eventDate']?.toString().split('T').first;
-          if (bDate == dateStr) {
-            final bCreator = b['creator'];
-            final bOrganizer = b['organizer'];
-            bool isDelegatedBooking = false;
-            if (bCreator != null && bOrganizer != null) {
-              if (bCreator['id'] != null && bOrganizer['id'] != null) {
-                isDelegatedBooking = bCreator['id'] != bOrganizer['id'];
-              } else if (bCreator['email'] != null && bOrganizer['email'] != null) {
-                isDelegatedBooking = bCreator['email'] != bOrganizer['email'];
-              } else if (bCreator['name'] != null && bOrganizer['name'] != null) {
-                isDelegatedBooking = bCreator['name'] != bOrganizer['name'];
-              }
-            }
-            if (isDelegatedBooking) continue; // Skip delegation, we want to cancel the personal booking
+          if (bDate != dateStr) continue;
 
-            final wsId = b['workspaceId']?.toString();
-            if (wsId != null) {
-              return await cancelReservation(dateStr, token, wsId);
+          final bWsId = b['workspaceId']?.toString() ??
+              b['workspace']?['id']?.toString() ??
+              b['workspace']?['workspaceId']?.toString();
+
+          // Target strictly the requested workspace if provided
+          if (workspaceId != null && workspaceId.isNotEmpty) {
+            if (bWsId != null && bWsId.toLowerCase() != workspaceId.toLowerCase()) {
+              continue;
             }
+          }
+
+          final bCreator = b['creator'];
+          final bOrganizer = b['organizer'];
+          final bBookedFor = b['bookedFor'];
+          bool isDelegatedBooking = false;
+          if (bBookedFor != null) {
+            isDelegatedBooking = true;
+          } else if (bCreator != null && bOrganizer != null) {
+            if (bCreator['id'] != null && bOrganizer['id'] != null) {
+              isDelegatedBooking = bCreator['id'] != bOrganizer['id'];
+            } else if (bCreator['email'] != null && bOrganizer['email'] != null) {
+              isDelegatedBooking = bCreator['email'] != bOrganizer['email'];
+            } else if (bCreator['name'] != null && bOrganizer['name'] != null) {
+              isDelegatedBooking = bCreator['name'] != bOrganizer['name'];
+            }
+          }
+
+          if (forUserId != null && forUserId.isNotEmpty) {
+            if (!isDelegatedBooking) continue;
+            final orgId = bOrganizer?['id']?.toString();
+            final orgEmail = bOrganizer?['email']?.toString() ?? bOrganizer?['mail']?.toString();
+            final orgName = bOrganizer?['name']?.toString() ?? bOrganizer?['displayName']?.toString();
+            final targetUserId = forUserId.toLowerCase();
+            final matchesDelegate = (orgId != null && orgId.toLowerCase() == targetUserId) ||
+                (orgEmail != null && orgEmail.toLowerCase() == targetUserId) ||
+                (orgName != null && orgName.toLowerCase() == targetUserId);
+            if ((orgId != null || orgEmail != null || orgName != null) && !matchesDelegate) {
+              continue;
+            }
+          } else if (workspaceId == null || workspaceId.isEmpty) {
+            if (isDelegatedBooking) continue; // Skip delegation, we want to cancel personal booking
+          }
+
+          final targetWsId = bWsId ?? workspaceId;
+          final bEventId = eventId ?? b['eventId']?.toString() ?? b['id']?.toString();
+          if (targetWsId != null && targetWsId.isNotEmpty) {
+            return await cancelReservation(dateStr, token, targetWsId, eventId: bEventId, forUserId: forUserId);
           }
         }
       }
@@ -453,25 +503,49 @@ class RoomzApiService {
                       if (bookedTimeSlot != null) {
                         final creator = bookedTimeSlot['creator'];
                         final organizer = bookedTimeSlot['organizer'];
+                        final bookedFor = bookedTimeSlot['bookedFor'];
                         
                         bool isDelegated = false;
                         String delegateName = "Quelqu'un";
                         
-                        if (creator != null && organizer != null && myUserId != null && creator['id'] == myUserId) {
-                           final organizerName = organizer['name'];
-                           final creatorName = creator['name'];
-                           if (organizerName != null && organizerName != creatorName) {
+                        final creatorId = creator?['id']?.toString();
+                        final creatorName = creator?['name']?.toString() ?? creator?['displayName']?.toString();
+                        final creatorEmail = creator?['email']?.toString().toLowerCase();
+                        
+                        final organizerId = organizer?['id']?.toString();
+                        final organizerName = organizer?['name']?.toString() ?? organizer?['displayName']?.toString() ?? organizer?['email']?.toString();
+                        final organizerEmail = organizer?['email']?.toString().toLowerCase();
+                        
+                        final bool isCreatorMe = myUserId != null && creatorId != null && creatorId == myUserId;
+                        
+                        if (isCreatorMe) {
+                          if (bookedFor != null) {
+                            isDelegated = true;
+                            final targetName = bookedFor is Map ? (bookedFor['name'] ?? bookedFor['displayName'] ?? 'Collègue') : bookedFor.toString();
+                            final wsId = item['workspaceId']?.toString() ?? item['id']?.toString() ?? workspaceId;
+                            final location = isMyDesk ? 'Mon bureau' : (elsewhereMap[date] ?? item['workspaceName']?.toString() ?? item['name']?.toString() ?? 'Autre bureau');
+                            final evId = bookedTimeSlot['eventId']?.toString() ?? bookedTimeSlot['id']?.toString() ?? '';
+                            final orgId = (bookedFor is Map ? bookedFor['id']?.toString() : null) ?? "";
+                            delegateName = "$wsId|$targetName|$location|$evId|$orgId";
+                          } else if (organizer != null) {
+                            final bool diff = (organizerId != null && creatorId != organizerId) ||
+                                (organizerEmail != null && creatorEmail != null && organizerEmail != creatorEmail) ||
+                                (organizerName != null && creatorName != null && organizerName.toLowerCase() != creatorName.toLowerCase());
+                            if (diff) {
                               isDelegated = true;
                               final wsId = item['workspaceId']?.toString() ?? item['id']?.toString() ?? workspaceId;
                               final location = isMyDesk ? 'Mon bureau' : (elsewhereMap[date] ?? item['workspaceName']?.toString() ?? item['name']?.toString() ?? 'Autre bureau');
                               final evId = bookedTimeSlot['eventId']?.toString() ?? bookedTimeSlot['id']?.toString() ?? '';
-                              final orgId = organizer['id']?.toString() ?? "";
-                              delegateName = "$wsId|$organizerName|$location|$evId|$orgId";
-                           }
+                              final orgId = organizerId ?? organizerEmail ?? "";
+                              delegateName = "$wsId|${organizerName ?? 'Quelqu\'un'}|$location|$evId|$orgId";
+                            }
+                          }
                         }
                         
                         if (isDelegated) {
-                           delegated[date] = delegateName;
+                           if (!delegated.containsKey(date) || isMyDesk) {
+                             delegated[date] = delegateName;
+                           }
                            if (isMyDesk) {
                              delegatedHere.add(date);
                            } else {
@@ -510,21 +584,31 @@ class RoomzApiService {
 
   Future<bool> cancelReservation(
       String date, String token, String workspaceId, {String? eventId, String? forUserId}) async {
+    // In case caller passes workspaceId and date swapped
+    String effectiveDate = date;
+    String effectiveWorkspaceId = workspaceId;
+    final dateRegex = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+    if (!dateRegex.hasMatch(date) && dateRegex.hasMatch(workspaceId)) {
+      effectiveDate = workspaceId;
+      effectiveWorkspaceId = date;
+    }
+
     String? foundBookingId;
     // If we already have the exact eventId from the calendar, use it!
     if (eventId != null && eventId.isNotEmpty) {
-      debugPrint("⚠️ Try 0: DELETE /bookings/$eventId");
+      final cleanEventId = eventId.contains('/') ? eventId.split('/')[1] : eventId;
+      debugPrint("⚠️ Try 0: DELETE /bookings/$cleanEventId");
       final delResp = await _client.delete(
-        Uri.parse("$_apiBase/bookings/$eventId"),
+        Uri.parse("$_apiBase/bookings/$cleanEventId"),
         headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
       );
       _checkAuthResponse(delResp);
       if (delResp.statusCode == 200 || delResp.statusCode == 204) {
-        debugPrint("✅ Cancelled by eventId: $eventId");
+        debugPrint("✅ Cancelled by eventId: $cleanEventId");
         return true;
       }
       debugPrint("❌ Try 0 FAILED: ${delResp.statusCode} - ${delResp.body}");
-      foundBookingId = eventId;
+      foundBookingId = cleanEventId;
     }
 
     // First, try to find the exact booking ID from /users/current/bookings
@@ -541,15 +625,28 @@ class RoomzApiService {
         for (final b in bookings) {
           if (b['type'] != 'Reserved') continue;
           final bDate = b['eventDate']?.toString().split('T').first;
-          final bWsId = b['workspaceId']?.toString() ?? b['workspace']?['id']?.toString();
-          if (bDate != date || bWsId != workspaceId) continue;
+          if (bDate != effectiveDate) continue;
 
-          // Determine if this is a delegated booking (organizer != creator)
+          final bWsId = b['workspaceId']?.toString() ??
+              b['workspace']?['id']?.toString() ??
+              b['workspace']?['workspaceId']?.toString() ??
+              b['id']?.toString();
+
+          // CRITICAL: Strictly target the matching workspace ID (case-insensitive)
+          if (effectiveWorkspaceId.isNotEmpty && bWsId != null &&
+              bWsId.toLowerCase() != effectiveWorkspaceId.toLowerCase()) {
+            continue;
+          }
+
+          // Determine if this is a delegated booking (organizer != creator or bookedFor present)
           // NOTE: organizer may have no 'id' field (external/guest accounts) — fall back to email/name comparison
           final bCreator = b['creator'];
           final bOrganizer = b['organizer'];
+          final bBookedFor = b['bookedFor'];
           bool isDelegatedBooking = false;
-          if (bCreator != null && bOrganizer != null) {
+          if (bBookedFor != null) {
+            isDelegatedBooking = true;
+          } else if (bCreator != null && bOrganizer != null) {
             if (bCreator['id'] != null && bOrganizer['id'] != null) {
               isDelegatedBooking = bCreator['id'] != bOrganizer['id'];
             } else if (bCreator['email'] != null && bOrganizer['email'] != null) {
@@ -563,16 +660,34 @@ class RoomzApiService {
           // If forUserId is NOT set → we want to cancel a personal booking → skip delegations
           if (forUserId != null && forUserId.isNotEmpty) {
             if (!isDelegatedBooking) continue; // skip personal, we want delegation
+            final orgId = bOrganizer?['id']?.toString();
+            final orgEmail = bOrganizer?['email']?.toString() ?? bOrganizer?['mail']?.toString();
+            final orgName = bOrganizer?['name']?.toString() ?? bOrganizer?['displayName']?.toString();
+            final bookedForId = bBookedFor is Map ? bBookedFor['id']?.toString() : null;
+            final bookedForEmail = bBookedFor is Map ? (bBookedFor['email']?.toString() ?? bBookedFor['mail']?.toString()) : null;
+            final bookedForName = bBookedFor is Map ? bBookedFor['name']?.toString() : (bBookedFor is String ? bBookedFor : null);
+
+            final targetUserId = forUserId.toLowerCase();
+            final matchesDelegate = (orgId != null && orgId.toLowerCase() == targetUserId) ||
+                (orgEmail != null && orgEmail.toLowerCase() == targetUserId) ||
+                (orgName != null && orgName.toLowerCase() == targetUserId) ||
+                (bookedForId != null && bookedForId.toLowerCase() == targetUserId) ||
+                (bookedForEmail != null && bookedForEmail.toLowerCase() == targetUserId) ||
+                (bookedForName != null && bookedForName.toString().toLowerCase() == targetUserId);
+
+            if ((orgId != null || orgEmail != null || orgName != null || bookedForId != null || bookedForEmail != null) && !matchesDelegate) {
+              continue;
+            }
           } else {
             if (isDelegatedBooking) continue; // skip delegation, we want personal
           }
 
-          foundBookingId = b['eventId']?.toString() ?? b['id']?.toString();
+          foundBookingId = b['eventId']?.toString() ?? b['id']?.toString() ?? b['bookingId']?.toString();
           if (foundBookingId != null && foundBookingId.contains('/')) {
             foundBookingId = foundBookingId.split('/')[1];
           }
           if (foundBookingId != null) {
-            debugPrint("⚠️ Try 1: DELETE /bookings/$foundBookingId (delegated=$isDelegatedBooking)");
+            debugPrint("⚠️ Try 1: DELETE /bookings/$foundBookingId (delegated=$isDelegatedBooking, ws=$bWsId)");
             final delResp = await _client.delete(
               Uri.parse("$_apiBase/bookings/$foundBookingId"),
               headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
@@ -583,19 +698,21 @@ class RoomzApiService {
               return true;
             }
             debugPrint("❌ Try 1 FAILED: ${delResp.statusCode} - ${delResp.body}");
+            break; // Targeted the specific booking, do not loop to other bookings!
           }
         }
       }
     } catch (_) {}
     
     // Fallback to body-based DELETE, injecting the ID if found
-    final payload = {
-      "workspaceId": workspaceId,
-      "localDate": date,
+    final payload = <String, dynamic>{
+      "workspaceId": effectiveWorkspaceId,
+      "localDate": effectiveDate,
       "timeSlot": "FullDay",
     };
     if (foundBookingId != null && foundBookingId.isNotEmpty) {
       payload["id"] = foundBookingId;
+      payload["eventId"] = foundBookingId;
     }
     if (forUserId != null && forUserId.isNotEmpty) {
       payload["forUserId"] = forUserId;
@@ -1381,12 +1498,23 @@ class RoomzApiService {
           for (final item in items) {
             if (item is! Map) continue;
             final status = item['status']?.toString();
-            if (status != 'Reserved') continue;
+            final statusLower = status?.toLowerCase();
+            if (statusLower != 'reserved' && statusLower != 'booked' && statusLower != 'occupied') {
+              continue;
+            }
 
-            final rawSlot = item['bookedTimeSlot'] ??
-                (item['bookedTimeSlots'] is List && (item['bookedTimeSlots'] as List).isNotEmpty
-                    ? (item['bookedTimeSlots'] as List).first
-                    : null);
+            dynamic rawSlot = item['bookedTimeSlot'] ??
+                item['booking'] ??
+                item['timeSlot'];
+            if (rawSlot == null && item['bookedTimeSlots'] is List && (item['bookedTimeSlots'] as List).isNotEmpty) {
+              final list = (item['bookedTimeSlots'] as List).whereType<Map>().toList();
+              if (list.isNotEmpty) {
+                rawSlot = list.firstWhere(
+                  (s) => s['timeSlot']?.toString().toLowerCase() == 'fullday',
+                  orElse: () => list.first,
+                );
+              }
+            }
             if (rawSlot == null || rawSlot is! Map) continue;
 
             final bookedTimeSlot = Map<String, dynamic>.from(rawSlot);
@@ -1405,12 +1533,33 @@ class RoomzApiService {
               bookedForString = bookedTimeSlot['bookedFor'] as String;
             }
 
-            final target = bookedFor ?? user ?? owner ?? organizer ?? creator;
+            final creatorId = creator?['id']?.toString() ?? creator?['userId']?.toString();
+            final creatorName = creator?['name']?.toString() ?? creator?['displayName']?.toString();
+            final creatorEmail = creator?['email']?.toString() ?? creator?['mail']?.toString();
+
+            final organizerId = organizer?['id']?.toString() ?? organizer?['userId']?.toString();
+            final organizerName = organizer?['name']?.toString() ?? organizer?['displayName']?.toString();
+            final organizerEmail = organizer?['email']?.toString() ?? organizer?['mail']?.toString();
+
+            final bool isOrganizerDelegated = creator != null && organizer != null &&
+                ((organizerId != null && creatorId != null && organizerId != creatorId) ||
+                 (organizerEmail != null && creatorEmail != null && organizerEmail.toLowerCase() != creatorEmail.toLowerCase()) ||
+                 (organizerName != null && creatorName != null && organizerName.toLowerCase() != creatorName.toLowerCase()));
+
+            // Hierarchy of occupant resolution:
+            // 1. bookedFor (explicit delegate/colleague target)
+            // 2. organizer if differs from creator (delegated booking for external or colleague)
+            // 3. user
+            // 4. owner
+            // 5. organizer
+            // 6. creator
+            final target = bookedFor ?? (isOrganizerDelegated ? organizer : null) ?? user ?? owner ?? organizer ?? creator;
 
             final occName = target?['name']?.toString() ??
                 target?['displayName']?.toString() ??
                 target?['fullName']?.toString() ??
                 bookedForString ??
+                (isOrganizerDelegated ? organizerName : null) ??
                 bookedTimeSlot['userName']?.toString() ??
                 bookedTimeSlot['occupantName']?.toString() ??
                 item['occupantName']?.toString() ??
@@ -1418,18 +1567,17 @@ class RoomzApiService {
 
             if (occName.isEmpty) continue;
 
-            final occId = target?['id']?.toString() ?? target?['userId']?.toString();
-            final occEmail = target?['email']?.toString() ?? target?['mail']?.toString();
-
-            final creatorId = creator?['id']?.toString() ?? creator?['userId']?.toString();
-            final creatorName = creator?['name']?.toString() ?? creator?['displayName']?.toString();
+            final occId = target?['id']?.toString() ?? target?['userId']?.toString() ?? (isOrganizerDelegated ? organizerId : null);
+            final occEmail = target?['email']?.toString() ?? target?['mail']?.toString() ?? (isOrganizerDelegated ? organizerEmail : null);
 
             final isDelegated = (bookedFor != null || bookedForString != null) ||
+                isOrganizerDelegated ||
                 (creator != null && target != null &&
                     ((occId != null && creatorId != null && occId != creatorId) ||
+                     (occEmail != null && creatorEmail != null && occEmail.toLowerCase() != creatorEmail.toLowerCase()) ||
                      (occName.isNotEmpty && creatorName != null && occName.toLowerCase() != creatorName.toLowerCase())));
 
-            final bookedByName = isDelegated ? creatorName : null;
+            final bookedByName = isDelegated ? (creatorName ?? creatorEmail) : null;
 
             bool isMe = false;
             if (resolvedMyUserId != null && resolvedMyUserId.isNotEmpty) {
@@ -1446,6 +1594,8 @@ class RoomzApiService {
             final wsId = item['workspaceId']?.toString() ??
                 item['id']?.toString() ??
                 item['workspace']?['id']?.toString() ??
+                item['workspace']?['workspaceId']?.toString() ??
+                bookedTimeSlot['workspaceId']?.toString() ??
                 '';
 
             if (wsId.isNotEmpty) {
@@ -1458,6 +1608,7 @@ class RoomzApiService {
                 isDelegated: isDelegated,
                 bookedByName: bookedByName,
               );
+              // Ensure all desks for this occupant are preserved in the dictionary
               occupants[wsId] = occupant;
               occupants[wsId.toLowerCase()] = occupant;
             }

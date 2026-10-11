@@ -18,21 +18,33 @@ import '../utils/html_helper.dart';
 /// - Web: Direct Email + Password login via Cloudflare PKCE Worker (or QR Code URL)
 class LoginScreen extends StatefulWidget {
   final bool ignoreUrlToken;
-  const LoginScreen({super.key, this.ignoreUrlToken = false});
+  final bool forceWebLayout;
+  final StorageService? storageService;
+  final RoomzApiService? apiService;
+
+  const LoginScreen({
+    super.key,
+    this.ignoreUrlToken = false,
+    this.forceWebLayout = false,
+    this.storageService,
+    this.apiService,
+  });
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _storage = StorageService();
-  final _api = RoomzApiService();
+  late final StorageService _storage;
+  late final RoomzApiService _api;
   bool _extracting = false;
   bool _windowsReady = false;
 
   // Web login form controllers & state
+  final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  bool _rememberEmail = true;
   bool _webLoggingIn = false;
   bool _obscurePassword = true;
   String? _webError;
@@ -65,13 +77,10 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    if (kIsWeb) {
-      if (widget.ignoreUrlToken) {
-        // Prevent infinite loop on invalid tokens
-        _storage.clearAllData();
-      } else {
-        _checkWebToken();
-      }
+    _storage = widget.storageService ?? StorageService();
+    _api = widget.apiService ?? RoomzApiService();
+    if (kIsWeb || widget.forceWebLayout) {
+      _initWeb();
     } else if ((!kIsWeb && Platform.isAndroid)) {
       _initAndroid();
     } else if ((!kIsWeb && Platform.isWindows)) {
@@ -79,9 +88,34 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _initWeb() async {
+    if (widget.ignoreUrlToken) {
+      // Prevent infinite loop on invalid tokens
+      await _storage.clearAllData();
+    } else {
+      await _checkWebToken();
+    }
+    if (mounted) {
+      await _loadRememberedEmail();
+    }
+  }
+
+  Future<void> _loadRememberedEmail() async {
+    final remember = await _storage.getRememberEmail();
+    if (!mounted) return;
+    setState(() => _rememberEmail = remember);
+    if (remember) {
+      final email = await _storage.getSavedEmail();
+      if (!mounted) return;
+      if (email != null && email.isNotEmpty && _emailController.text.isEmpty) {
+        _emailController.text = email;
+      }
+    }
+  }
+
   // ── Initialisation ────────────────────────────────────────────────────────
 
-  void _checkWebToken() async {
+  Future<void> _checkWebToken() async {
     final params = Uri.base.queryParameters;
     final tokenEncrypted = params['token'];
     
@@ -151,16 +185,17 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _handleWebLogin() async {
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
-    if (email.isEmpty || password.isEmpty) {
-      setState(() => _webError = 'Veuillez renseigner votre email et votre mot de passe.');
+    setState(() => _webError = null);
+
+    if (_formKey.currentState == null || !_formKey.currentState!.validate()) {
       return;
     }
 
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
     setState(() {
       _webLoggingIn = true;
-      _webError = null;
     });
 
     try {
@@ -174,6 +209,13 @@ class _LoginScreenState extends State<LoginScreen> {
           _webError = 'Email ou mot de passe Roomz incorrect.';
         });
         return;
+      }
+
+      await _storage.saveRememberEmail(_rememberEmail);
+      if (_rememberEmail) {
+        await _storage.saveSavedEmail(email);
+      } else {
+        await _storage.clearSavedEmail();
       }
 
       final currentWsId = await _storage.getWorkspaceId();
@@ -318,7 +360,9 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
-    if ((!kIsWeb && Platform.isWindows)) _windowsController.dispose();
+    if (!kIsWeb && !widget.forceWebLayout && Platform.isWindows && _windowsController.value.isInitialized) {
+      _windowsController.dispose();
+    }
     super.dispose();
   }
 
@@ -335,7 +379,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildBody() {
-    if (kIsWeb) {
+    if (kIsWeb || widget.forceWebLayout) {
       return Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -344,124 +388,157 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Card(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: AutofillGroup(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Icon(Icons.lock_person_rounded, size: 56, color: Colors.blue),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Connexion MyRoomz',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Connectez-vous avec votre email et votre mot de passe Roomz.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey, fontSize: 13),
-                      ),
-                      const SizedBox(height: 24),
-                      TextField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        autofillHints: const [AutofillHints.username, AutofillHints.email],
-                        textInputAction: TextInputAction.next,
-                        decoration: const InputDecoration(
-                          labelText: 'Email professionnel',
-                          prefixIcon: Icon(Icons.email_outlined),
-                          border: OutlineInputBorder(),
+                child: Form(
+                  key: _formKey,
+                  child: AutofillGroup(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Icon(Icons.lock_person_rounded, size: 56, color: Colors.blue),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Connexion MyRoomz',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        autofillHints: const [AutofillHints.password],
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) => _webLoggingIn ? null : _handleWebLogin(),
-                        decoration: InputDecoration(
-                          labelText: 'Mot de passe Roomz',
-                          prefixIcon: const Icon(Icons.key_outlined),
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                            ),
-                            onPressed: () {
-                              setState(() => _obscurePassword = !_obscurePassword);
-                            },
-                          ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Connectez-vous avec votre email et votre mot de passe Roomz.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey, fontSize: 13),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () {
-                            launchUrl(
-                              Uri.parse('https://login.roomz.io/forgot-password'),
-                              mode: LaunchMode.externalApplication,
-                            );
+                        const SizedBox(height: 24),
+                        TextFormField(
+                          controller: _emailController,
+                          keyboardType: TextInputType.emailAddress,
+                          autofillHints: const [AutofillHints.username, AutofillHints.email],
+                          textInputAction: TextInputAction.next,
+                          validator: (value) {
+                            final val = (value ?? '').trim();
+                            if (val.isEmpty || !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(val)) {
+                              return 'Veuillez saisir une adresse email valide.';
+                            }
+                            return null;
                           },
-                          child: const Text(
-                            'Créer / Réinitialiser mon mot de passe Roomz',
-                            style: TextStyle(fontSize: 12),
+                          decoration: const InputDecoration(
+                            labelText: 'Email professionnel',
+                            prefixIcon: Icon(Icons.email_outlined),
+                            border: OutlineInputBorder(),
                           ),
                         ),
-                      ),
-                      if (_webError != null) ...[
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _passwordController,
+                          obscureText: _obscurePassword,
+                          autofillHints: const [AutofillHints.password],
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => _webLoggingIn ? null : _handleWebLogin(),
+                          validator: (value) {
+                            final val = (value ?? '').trim();
+                            if (val.isEmpty) {
+                              return 'Veuillez saisir votre mot de passe.';
+                            }
+                            if (val.length < 6) {
+                              return 'Le mot de passe doit contenir au moins 6 caractères.';
+                            }
+                            return null;
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Mot de passe Roomz',
+                            prefixIcon: const Icon(Icons.key_outlined),
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                              ),
+                              onPressed: () {
+                                setState(() => _obscurePassword = !_obscurePassword);
+                              },
+                            ),
+                          ),
+                        ),
                         const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.red.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.redAccent),
+                        CheckboxListTile(
+                          value: _rememberEmail,
+                          onChanged: (val) {
+                            setState(() => _rememberEmail = val ?? false);
+                          },
+                          title: const Text(
+                            'Se souvenir de mon email',
+                            style: TextStyle(fontSize: 14),
                           ),
-                          child: Text(
-                            _webError!,
-                            style: const TextStyle(color: Colors.redAccent, fontSize: 13),
-                            textAlign: TextAlign.center,
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          dense: true,
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: () {
+                              launchUrl(
+                                Uri.parse('https://login.roomz.io/forgot-password'),
+                                mode: LaunchMode.externalApplication,
+                              );
+                            },
+                            child: const Text(
+                              'Créer / Réinitialiser mon mot de passe Roomz',
+                              style: TextStyle(fontSize: 12),
+                            ),
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        height: 48,
-                        child: ElevatedButton(
-                          onPressed: _webLoggingIn ? null : _handleWebLogin,
-                          child: _webLoggingIn
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Text(
-                                  'Se connecter',
-                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                                ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      const Divider(),
-                      const SizedBox(height: 8),
-                      const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.qr_code_scanner, size: 16, color: Colors.grey),
-                          SizedBox(width: 8),
-                          Flexible(
+                        if (_webError != null) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.redAccent),
+                            ),
                             child: Text(
-                              'Vous pouvez aussi scanner le QR Code depuis l\'application PC.',
-                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                              _webError!,
+                              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
                               textAlign: TextAlign.center,
                             ),
                           ),
                         ],
-                      ),
-                    ],
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          height: 48,
+                          child: ElevatedButton(
+                            onPressed: _webLoggingIn ? null : _handleWebLogin,
+                            child: _webLoggingIn
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Text(
+                                    'Se connecter',
+                                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        const Divider(),
+                        const SizedBox(height: 8),
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.qr_code_scanner, size: 16, color: Colors.grey),
+                            SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                'Vous pouvez aussi scanner le QR Code depuis l\'application PC.',
+                                style: TextStyle(fontSize: 12, color: Colors.grey),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

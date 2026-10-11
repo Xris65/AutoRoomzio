@@ -1,4 +1,6 @@
 import 'dart:convert'; // used by saveVacations/getVacations
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models/colleague.dart';
@@ -7,15 +9,46 @@ import 'models/colleague.dart';
 /// and shared_preferences for app settings and cache.
 class StorageService {
   final FlutterSecureStorage _secureStorage;
+  final bool _useSecureStorage;
 
   StorageService({FlutterSecureStorage? secureStorage})
       : _secureStorage = secureStorage ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(resetOnError: true),
               iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
-            );
+            ),
+        _useSecureStorage = secureStorage != null || kIsWeb || !Platform.environment.containsKey('FLUTTER_TEST');
 
   static const String _refreshTokenKey = 'refresh_token';
+  static const String _rememberEmailKey = 'remember_email';
+  static const String _savedEmailKey = 'saved_email';
+
+  // ── Remember Email (Milestone M1 - Requirement R1) ─────────────────────────
+
+  Future<void> saveRememberEmail(bool remember) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_rememberEmailKey, remember);
+  }
+
+  Future<bool> getRememberEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_rememberEmailKey) ?? true;
+  }
+
+  Future<void> saveSavedEmail(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_savedEmailKey, email);
+  }
+
+  Future<String?> getSavedEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_savedEmailKey);
+  }
+
+  Future<void> clearSavedEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_savedEmailKey);
+  }
 
   // === UI Settings ===
 
@@ -83,6 +116,11 @@ class StorageService {
   // ── Token ─────────────────────────────────────────────────────────────────
 
   Future<void> saveRefreshToken(String token) async {
+    if (!_useSecureStorage) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_refreshTokenKey, token);
+      return;
+    }
     try {
       await _secureStorage.write(key: _refreshTokenKey, value: token);
     } catch (_) {
@@ -94,6 +132,10 @@ class StorageService {
   }
 
   Future<String?> getRefreshToken() async {
+    if (!_useSecureStorage) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_refreshTokenKey);
+    }
     try {
       final secureToken = await _secureStorage.read(key: _refreshTokenKey);
       if (secureToken != null && secureToken.isNotEmpty) {
@@ -123,9 +165,11 @@ class StorageService {
   }
 
   Future<void> clearAuthToken() async {
-    try {
-      await _secureStorage.delete(key: _refreshTokenKey);
-    } catch (_) {}
+    if (_useSecureStorage) {
+      try {
+        await _secureStorage.delete(key: _refreshTokenKey);
+      } catch (_) {}
+    }
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_refreshTokenKey);
@@ -135,6 +179,10 @@ class StorageService {
 
   Future<void> clearTokens() async {
     await clearAuthToken();
+    final remember = await getRememberEmail();
+    if (!remember) {
+      await clearSavedEmail();
+    }
   }
 
   // ── Workspace settings ────────────────────────────────────────────────────
@@ -206,6 +254,108 @@ class StorageService {
     return prefs.getStringList('requested_dates') ?? [];
   }
 
+  Future<Map<String, String>> getRequestedWorkspacesMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('requested_workspaces_map');
+    if (jsonStr != null) {
+      try {
+        final Map<String, dynamic> decoded = jsonDecode(jsonStr);
+        return decoded.map((k, v) => MapEntry(k, v.toString()));
+      } catch (_) {}
+    }
+    return {};
+  }
+
+  Future<void> saveRequestedWorkspacesMap(Map<String, String> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('requested_workspaces_map', jsonEncode(map));
+  }
+
+  Future<Map<String, String>> getRequestedWorkspaceNamesMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('requested_workspace_names_map');
+    if (jsonStr != null) {
+      try {
+        final Map<String, dynamic> decoded = jsonDecode(jsonStr);
+        return decoded.map((k, v) => MapEntry(k, v.toString()));
+      } catch (_) {}
+    }
+    return {};
+  }
+
+  Future<void> saveRequestedWorkspaceNamesMap(Map<String, String> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('requested_workspace_names_map', jsonEncode(map));
+  }
+
+  /// Associates a specific [workspaceId] (and optional [workspaceName]) to a requested [date].
+  /// If [workspaceId] is null or empty, removes the association for that date.
+  Future<void> saveRequestedWorkspace(String date, String? workspaceId, {String? workspaceName}) async {
+    final map = await getRequestedWorkspacesMap();
+    final namesMap = await getRequestedWorkspaceNamesMap();
+    if (workspaceId != null && workspaceId.isNotEmpty) {
+      map[date] = workspaceId;
+      if (workspaceName != null && workspaceName.isNotEmpty) {
+        namesMap[date] = workspaceName;
+      }
+    } else {
+      map.remove(date);
+      namesMap.remove(date);
+    }
+    await saveRequestedWorkspacesMap(map);
+    await saveRequestedWorkspaceNamesMap(namesMap);
+  }
+
+  /// Retrieves the specific requested workspace ID for [date] if one was configured.
+  Future<String?> getRequestedWorkspace(String date) async {
+    final map = await getRequestedWorkspacesMap();
+    return map[date];
+  }
+
+  /// Retrieves the specific requested workspace name for [date] if one was configured.
+  Future<String?> getRequestedWorkspaceName(String date) async {
+    final namesMap = await getRequestedWorkspaceNamesMap();
+    return namesMap[date];
+  }
+
+  /// Adds a date to requested dates, optionally binding a specific workspace.
+  Future<void> addRequestedDate(String date, {String? workspaceId, String? workspaceName}) async {
+    final dates = await getRequestedDates();
+    if (!dates.contains(date)) {
+      dates.add(date);
+      await saveRequestedDates(dates);
+    }
+    if (workspaceId != null && workspaceId.isNotEmpty) {
+      await saveRequestedWorkspace(date, workspaceId, workspaceName: workspaceName);
+    }
+  }
+
+  /// Removes a date from requested dates and clears its workspace association.
+  Future<void> removeRequestedDate(String date) async {
+    final dates = await getRequestedDates();
+    if (dates.contains(date)) {
+      dates.remove(date);
+      await saveRequestedDates(dates);
+    }
+    await saveRequestedWorkspace(date, null);
+  }
+
+  /// Toggles a requested date and optionally sets its workspace association.
+  Future<void> toggleRequestedDate(String date, {String? workspaceId, String? workspaceName}) async {
+    final dates = await getRequestedDates();
+    if (dates.contains(date)) {
+      dates.remove(date);
+      await saveRequestedDates(dates);
+      await saveRequestedWorkspace(date, null);
+    } else {
+      dates.add(date);
+      await saveRequestedDates(dates);
+      if (workspaceId != null && workspaceId.isNotEmpty) {
+        await saveRequestedWorkspace(date, workspaceId, workspaceName: workspaceName);
+      }
+    }
+  }
+
   Future<void> saveBookedDates(List<String> dates) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('booked_dates', dates);
@@ -262,10 +412,111 @@ class StorageService {
     }
     return {};
   }
-  
+
   Future<void> saveDelegatedBookingsMap(Map<String, String> map) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('delegated_bookings_map', jsonEncode(map));
+  }
+
+  /// Persists a delegated booking for a given [date] and [workspaceId].
+  /// Supports multiple delegated bookings on the same date via composite keys `'$date#$workspaceId'`.
+  Future<void> saveDelegatedBooking(
+    String date,
+    String workspaceIdOrBooking, [
+    String? bookingData,
+  ]) async {
+    final String workspaceId;
+    final String value;
+    if (bookingData != null) {
+      workspaceId = workspaceIdOrBooking;
+      value = bookingData;
+    } else {
+      if (workspaceIdOrBooking.contains('|')) {
+        workspaceId = workspaceIdOrBooking.split('|').first;
+        value = workspaceIdOrBooking;
+      } else {
+        workspaceId = workspaceIdOrBooking;
+        value = workspaceIdOrBooking;
+      }
+    }
+
+    final map = await getDelegatedBookingsMap();
+    final compositeKey = '$date#$workspaceId';
+    map[compositeKey] = value;
+    // Maintain backwards compatibility for single-date lookups
+    if (!map.containsKey(date)) {
+      map[date] = value;
+    }
+    await saveDelegatedBookingsMap(map);
+  }
+
+  /// Retrieves the delegated booking data for [date] and optional [workspaceId].
+  /// If [workspaceId] is specified, searches for that specific desk delegation.
+  /// If omitted, returns any delegation existing on that date.
+  Future<String?> getDelegatedBooking(String date, [String? workspaceId]) async {
+    final map = await getDelegatedBookingsMap();
+    if (workspaceId != null && workspaceId.isNotEmpty) {
+      final compositeKey = '$date#$workspaceId';
+      if (map.containsKey(compositeKey)) {
+        return map[compositeKey];
+      }
+      for (final entry in map.entries) {
+        if (entry.key.startsWith('$date#')) {
+          final keyWs = entry.key.substring(date.length + 1);
+          if (keyWs == workspaceId || entry.value.split('|').first == workspaceId) {
+            return entry.value;
+          }
+        }
+      }
+      final legacy = map[date];
+      if (legacy != null) {
+        final legacyWsId = legacy.split('|').first;
+        if (legacyWsId == workspaceId || legacyWsId == legacy) {
+          return legacy;
+        }
+      }
+      return null;
+    }
+
+    if (map.containsKey(date)) {
+      return map[date];
+    }
+    for (final entry in map.entries) {
+      if (entry.key.startsWith('$date#')) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
+  /// Removes a specific delegated booking on [date] for [workspaceId],
+  /// preserving other bookings on the same date without overwriting them.
+  Future<void> removeDelegatedBooking(String date, String workspaceId) async {
+    final map = await getDelegatedBookingsMap();
+    final compositeKey = '$date#$workspaceId';
+    map.remove(compositeKey);
+
+    map.removeWhere((key, val) =>
+        key.startsWith('$date#') &&
+        (key.substring(date.length + 1) == workspaceId || val.split('|').first == workspaceId));
+
+    final remainingForDate = <String>[];
+    for (final entry in map.entries) {
+      if (entry.key.startsWith('$date#')) {
+        remainingForDate.add(entry.value);
+      }
+    }
+
+    if (remainingForDate.isNotEmpty) {
+      final legacy = map[date];
+      if (legacy == null || legacy.split('|').first == workspaceId) {
+        map[date] = remainingForDate.first;
+      }
+    } else {
+      map.remove(date);
+    }
+
+    await saveDelegatedBookingsMap(map);
   }
 
   Future<List<String>> getBookedElsewhereDates() async {
@@ -535,12 +786,22 @@ class StorageService {
   }
 
   Future<void> clearAll() async {
-    try {
-      await _secureStorage.deleteAll();
-    } catch (_) {}
+    final remember = await getRememberEmail();
+    final savedEmail = remember ? await getSavedEmail() : null;
+
+    if (_useSecureStorage) {
+      try {
+        await _secureStorage.deleteAll();
+      } catch (_) {}
+    }
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
+
+    if (remember && savedEmail != null && savedEmail.isNotEmpty) {
+      await prefs.setBool(_rememberEmailKey, true);
+      await prefs.setString(_savedEmailKey, savedEmail);
+    }
   }
 
   Future<void> clearAllData() async {
@@ -614,12 +875,62 @@ class StorageService {
     await prefs.setString('favorite_colleagues', jsonStr);
   }
 
+  /// Merges remote [apiFavorites] with existing local favorite colleagues.
+  /// Local external/manual favorites (e.g. ID starting with 'ext_' or 'custom_',
+  /// or any local favorite not returned by the API) are strictly preserved.
+  /// Existing colleagues are updated with API metadata while ensuring [isFavorite] is true.
+  Future<void> mergeFavoriteColleagues(List<Colleague> apiFavorites) async {
+    final current = await getFavoriteColleagues();
+    final merged = <Colleague>[];
+    final matchedApiIndices = <int>{};
+
+    for (final local in current) {
+      // Find matching colleague in apiFavorites
+      final apiIndex = apiFavorites.indexWhere((api) =>
+          (local.id.isNotEmpty && api.id.isNotEmpty && local.id == api.id) ||
+          (local.favoriteId != null && api.favoriteId != null && local.favoriteId == api.favoriteId) ||
+          (local.email.isNotEmpty && api.email.isNotEmpty && local.email.toLowerCase() == api.email.toLowerCase()));
+
+      if (apiIndex >= 0) {
+        matchedApiIndices.add(apiIndex);
+        final apiColleague = apiFavorites[apiIndex];
+        merged.add(apiColleague.copyWith(
+          isFavorite: true,
+          favoriteId: apiColleague.favoriteId ?? local.favoriteId,
+        ));
+      } else {
+        // Local colleague is manual/external (e.g. custom_*, ext_*) or not in API: keep them
+        merged.add(local.copyWith(isFavorite: true));
+      }
+    }
+
+    // Add new API favorites not already in merged
+    for (int i = 0; i < apiFavorites.length; i++) {
+      if (!matchedApiIndices.contains(i)) {
+        final apiColleague = apiFavorites[i];
+        final exists = merged.any((c) =>
+            (c.id.isNotEmpty && apiColleague.id.isNotEmpty && c.id == apiColleague.id) ||
+            (c.email.isNotEmpty && apiColleague.email.isNotEmpty && c.email.toLowerCase() == apiColleague.email.toLowerCase()));
+        if (!exists) {
+          merged.add(apiColleague.copyWith(isFavorite: true));
+        }
+      }
+    }
+
+    await saveFavoriteColleagues(merged);
+  }
+
   /// Adds a colleague to favorites or updates them if their id is already present.
   /// Automatically ensures [isFavorite] is true.
   Future<void> addFavoriteColleague(Colleague colleague) async {
     final current = await getFavoriteColleagues();
-    final updatedColleague = colleague.copyWith(isFavorite: true);
-    final index = current.indexWhere((c) => c.id == colleague.id);
+    final effectiveId = colleague.id.isNotEmpty
+        ? colleague.id
+        : 'ext_${DateTime.now().millisecondsSinceEpoch}';
+    final updatedColleague = colleague.copyWith(id: effectiveId, isFavorite: true);
+    final index = current.indexWhere((c) =>
+        (c.id.isNotEmpty && effectiveId.isNotEmpty && c.id == effectiveId) ||
+        (c.email.isNotEmpty && colleague.email.isNotEmpty && c.email.toLowerCase() == colleague.email.toLowerCase()));
     if (index >= 0) {
       current[index] = updatedColleague;
     } else {
