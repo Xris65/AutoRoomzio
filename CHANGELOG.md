@@ -2,6 +2,42 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.6.1] - 2026-10-15
+
+### Nouveautés & Évolutions Carte 2D
+- **Time-Slider de la Semaine & Cache Haute Performance** :
+  - Réglette temporelle animée permettant de naviguer sur l'ensemble de la semaine avec balayage tactile ou curseur souris (scrubbing fluide).
+  - Pré-chargement asynchrone et mise en cache intelligente de l'occupation des étages sans latence réseau lors du changement de jour.
+- **Mini-Map Radar Interactive** :
+  - Silhouette miniature rétractable de l'étage positionnée en bas à gauche avec bouton bascule radar.
+  - Projection en temps réel du viewport de la caméra sur le plan avec repositionnement interactif immédiat au toucher / clic.
+  - Animation de transition fluide, backdrop interactif et fermeture automatique lors d'un clic extérieur.
+- **Coloration Thermique des Salles (Room Heatmap)** :
+  - Rendu thermique vectoriel des pièces avec teintes pastel douces adaptées au thème selon le taux d'affluence réel.
+  - Badges informatifs de places disponibles par salle et bouton de bascule rapide dans la barre d'outils.
+
+### Correctifs & Réservations Déléguées
+- **Résolution de l'Erreur 403 & Gestion Stricte de Propriété** :
+  - Distinction formelle entre réservations déléguées créées par l'utilisateur connecté (`isDelegatedByMe`) et réservations effectuées par des tiers pour d'autres collègues (`isDelegatedOther`).
+  - Le bouton « Libérer » n'est désormais affiché que si l'utilisateur est légitimement le créateur de la réservation, éliminant les erreurs HTTP 403 Forbidden.
+- **Affichage Exhaustif sur le Calendrier & l'Accueil** :
+  - Restitution limpide et systématique de l'identité du bénéficiaire et du créateur sous le format unifié : « Réservé pour [X] par [Y] » sur les cartes d'accueil, le planning et les fiches de détails.
+
+### Ergonomie, Barre des Favoris & Cliquabilité
+- **Barre Flottante des Favoris Redessinée** :
+  - Positionnement au-dessus du radar et des boutons de zoom avec Z-index prioritaire sur les contrôles cartographiques.
+  - Déplacement fluide activé exclusivement sur appui long maintenu pour préserver le scroll naturel à 60/120 FPS.
+  - Surface tactile active sur 100% de la barre avec morphing et expansion continue sans saut brutal d'affichage.
+- **Correction Complète de la Cliquabilité des Popups & Panneaux** :
+  - Résolution des conflits d'écouteurs d'événements et des hit-tests sur les boutons du panneau d'occupants déplié (centrage GPS, fiches détails, effacement de recherche, fermeture).
+  - Réactivité immédiate au premier tap sur les boutons d'action des bottom sheets de réservation et d'occupants.
+
+### Web Entreprise & Robustesse
+- **Garde Défensif WebAssembly (GPO & Entreprise)** :
+  - Garde défensif pour `window.WebAssembly` dans `app/web/index.html` évitant l'erreur `ReferenceError: WebAssembly is not defined` sur les postes soumis à des stratégies de groupe strictes.
+- **Bandeau de Fallback Gracieux & Diagnostic Edge** :
+  - Bandeau d'alerte HTML/CSS pur intégré dans `<body>`, fournissant des consignes de diagnostic et de configuration pour le Mode de Sécurité Renforcée de Microsoft Edge, masqué automatiquement dès l'initialisation de l'application.
+
 ## [1.6.0] - 2026-10-11
 
 ### Nouveautés & Améliorations

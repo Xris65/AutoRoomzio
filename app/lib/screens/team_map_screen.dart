@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shimmer/shimmer.dart';
 import '../models/desk_occupant.dart';
 import '../models/colleague.dart';
@@ -10,6 +11,7 @@ import '../widgets/workspace_map_viewer.dart';
 import '../widgets/occupant_details_sheet.dart';
 import '../widgets/colleague_selection_dialog.dart';
 import '../widgets/action_loading_overlay.dart';
+import '../widgets/time_slider_bar.dart';
 
 class _RoomSummary {
   final String roomName;
@@ -66,6 +68,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   List<Map<String, dynamic>> _allWorkspaces = [];
   List<Map<String, dynamic>> _workspaces = [];
   Map<String, DeskOccupant> _occupants = {};
+  final Map<String, Map<String, DeskOccupant>> _occupancyCache = {};
+  @visibleForTesting
+  Map<String, Map<String, DeskOccupant>> get occupancyCache => _occupancyCache;
 
   Set<String> _favoriteIds = {};
   Set<String> _favoriteNamesNormalized = {};
@@ -84,9 +89,13 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   bool _isLoading = true;
   bool _isOccupancyLoading = false;
   bool _isOccupantsPanelExpanded = false;
+  final ValueNotifier<Offset> _occupantsBarOffset = ValueNotifier<Offset>(Offset.zero);
+  Offset _longPressStartPos = Offset.zero;
+  Offset _longPressStartOffset = Offset.zero;
   bool _isActionInProgress = false;
   String? _actionLoadingMessage;
   bool _hideWeekends = true;
+  bool _showRoomHeatmap = true;
   String? _errorMessage;
 
   @override
@@ -110,6 +119,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   void dispose() {
     _selectionTimer?.cancel();
     _colleagueSearchController.dispose();
+    _occupantsBarOffset.dispose();
     super.dispose();
   }
 
@@ -282,11 +292,19 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       String token, String siteId, String floorId) async {
     try {
       final dateStr = _formatDateIso(_selectedDate);
+      final delegatedMap = await _storage.getDelegatedBookingsMap();
+      final savedEmail = await _storage.getSavedEmail();
 
       final futures = await Future.wait<dynamic>([
         _api.getFloorPlanData(token, siteId, floorId),
         _api.getAllWorkspaces(token, siteId, floorId),
-        _api.getFloorOccupants(token, floorId, dateStr),
+        _api.getFloorOccupants(
+          token,
+          floorId,
+          dateStr,
+          myUserEmail: savedEmail,
+          delegatedBookingsMap: delegatedMap,
+        ),
       ]);
 
       final planData = futures[0];
@@ -317,9 +335,13 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }).toList();
 
       if (mounted) {
+        final dateStr = _formatDateIso(_selectedDate);
+        if (_floorId != null) {
+          _occupancyCache["${_floorId}_$dateStr"] = occs;
+        }
         final hasMe = occs.values.any((o) => o.isMe);
         if (hasMe) {
-          _bookedDates.add(_formatDateIso(_selectedDate));
+          _bookedDates.add(dateStr);
         }
         setState(() {
           _features = features;
@@ -329,6 +351,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           _isLoading = false;
           _isOccupancyLoading = false;
         });
+        _preloadWeekOccupancy(_selectedDate);
       }
     } catch (e) {
       if (mounted) {
@@ -352,8 +375,28 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
-  Future<void> _loadOccupancyForDate(DateTime date) async {
+  Future<void> _loadOccupancyForDate(DateTime date, {bool forceRefresh = false}) async {
     final requestId = ++_occupancyRequestId;
+    final dateStr = _formatDateIso(date);
+    final floorId = _floorId;
+
+    // Check cache first for instant synchronous UI update
+    if (!forceRefresh && floorId != null) {
+      final cacheKey = "${floorId}_$dateStr";
+      if (_occupancyCache.containsKey(cacheKey)) {
+        final cachedOccs = _occupancyCache[cacheKey]!;
+        if (cachedOccs.values.any((o) => o.isMe)) {
+          _bookedDates.add(dateStr);
+        }
+        setState(() {
+          _occupants = cachedOccs;
+          _isOccupancyLoading = false;
+        });
+        _preloadWeekOccupancy(date);
+        return;
+      }
+    }
+
     setState(() => _isOccupancyLoading = true);
     try {
       _requestedDates = (await _storage.getRequestedDates()).toSet();
@@ -365,10 +408,18 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _cachedAccessToken = token;
       }
 
-      if (token != null && token.isNotEmpty && _floorId != null) {
-        final dateStr = _formatDateIso(date);
-        final occs = await _api.getFloorOccupants(token, _floorId!, dateStr);
+      if (token != null && token.isNotEmpty && floorId != null) {
+        final delegatedMap = await _storage.getDelegatedBookingsMap();
+        final savedEmail = await _storage.getSavedEmail();
+        final occs = await _api.getFloorOccupants(
+          token,
+          floorId,
+          dateStr,
+          myUserEmail: savedEmail,
+          delegatedBookingsMap: delegatedMap,
+        );
         if (mounted && requestId == _occupancyRequestId) {
+          _occupancyCache["${floorId}_$dateStr"] = occs;
           final hasMe = occs.values.any((o) => o.isMe);
           if (hasMe) {
             _bookedDates.add(dateStr);
@@ -377,6 +428,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             _occupants = occs;
             _isOccupancyLoading = false;
           });
+          _preloadWeekOccupancy(date);
         }
       } else {
         if (mounted && requestId == _occupancyRequestId) {
@@ -397,11 +449,67 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
+  Future<void> _preloadWeekOccupancy(DateTime baseDate) async {
+    final floorId = _floorId;
+    if (floorId == null) return;
+    String? token = _cachedAccessToken;
+    if (token == null || token.isEmpty) return;
+
+    final monday = DateTime(baseDate.year, baseDate.month, baseDate.day - (baseDate.weekday - 1));
+    final count = (_hideWeekends && baseDate.weekday <= 5) ? 5 : 7;
+    final weekDays = List.generate(count, (i) => DateTime(monday.year, monday.month, monday.day + i));
+
+    final missingDays = weekDays.where((d) {
+      final key = "${floorId}_${_formatDateIso(d)}";
+      return !_occupancyCache.containsKey(key);
+    }).toList();
+
+    if (missingDays.isEmpty) return;
+
+    final delegatedMap = await _storage.getDelegatedBookingsMap();
+    final savedEmail = await _storage.getSavedEmail();
+
+    await Future.wait(missingDays.map((d) async {
+      try {
+        final dStr = _formatDateIso(d);
+        final occs = await _api.getFloorOccupants(
+          token,
+          floorId,
+          dStr,
+          myUserEmail: savedEmail,
+          delegatedBookingsMap: delegatedMap,
+        );
+        _occupancyCache["${floorId}_$dStr"] = occs;
+        if (occs.values.any((o) => o.isMe)) {
+          _bookedDates.add(dStr);
+        }
+      } catch (_) {
+        // Silently swallow background preload error
+      }
+    }));
+
+    if (mounted) {
+      final currentKey = "${floorId}_${_formatDateIso(_selectedDate)}";
+      if (_occupancyCache.containsKey(currentKey) && _occupants.isEmpty) {
+        setState(() {
+          _occupants = _occupancyCache[currentKey]!;
+        });
+      } else {
+        setState(() {});
+      }
+    }
+  }
+
   Future<void> _fetchOccupants() async {
-    await _loadOccupancyForDate(_selectedDate);
+    final floorId = _floorId;
+    if (floorId != null) {
+      _occupancyCache.remove("${floorId}_${_formatDateIso(_selectedDate)}");
+    }
+    await _loadOccupancyForDate(_selectedDate, forceRefresh: true);
   }
 
   Future<void> _refreshData() async {
+    _occupancyCache.clear();
     setState(() => _isLoading = true);
     try {
       final hw = await _storage.getHideWeekends();
@@ -573,23 +681,30 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final dateStr = _formatDateIso(_selectedDate);
     final delegatedMap = await _storage.getDelegatedBookingsMap();
     final compositeKey = '$dateStr#$wsId';
-    final isDelegated = occupant.isDelegated ||
-        delegatedMap.containsKey(compositeKey) ||
-        delegatedMap.containsKey(dateStr);
+    final inDelegatedStorage = delegatedMap.containsKey(compositeKey) ||
+        delegatedMap[dateStr] == wsId ||
+        (delegatedMap[dateStr]?.startsWith('$wsId|') ?? false);
+    final isDelegatedByMe = occupant.isDelegatedByMe || inDelegatedStorage;
+
+    final effectiveOccupant = occupant.copyWith(
+      isDelegated: occupant.isDelegated || isDelegatedByMe,
+      isDelegatedByMe: isDelegatedByMe,
+      isDelegatedOther: !isDelegatedByMe && !occupant.isDelegatedForMe && (occupant.isDelegated || isDelegatedByMe),
+    );
 
     if (!mounted) return;
 
     await OccupantDetailsSheet.show(
       context: context,
       workspace: workspace,
-      occupant: occupant,
+      occupant: effectiveOccupant,
       isFavorite: isFav,
-      onToggleFavorite: () => _toggleFavorite(occupant),
-      onCancelMyBooking: (!isPast && occupant.isMe)
-          ? () => _cancelMyBooking(workspace, occupant)
+      onToggleFavorite: () => _toggleFavorite(effectiveOccupant),
+      onCancelMyBooking: (!isPast && effectiveOccupant.isMe)
+          ? () => _cancelMyBooking(workspace, effectiveOccupant)
           : null,
-      onCancelDelegatedBooking: (!isPast && (isDelegated || occupant.isDelegated) && !occupant.isMe)
-          ? () => _cancelDelegatedBooking(workspace, occupant)
+      onCancelDelegatedBooking: (!isPast && isDelegatedByMe && !effectiveOccupant.isMe)
+          ? () => _cancelDelegatedBooking(workspace, effectiveOccupant)
           : null,
     );
 
@@ -857,15 +972,20 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final roomName = workspace['roomName']?.toString() ?? _extractRoomName(workspace);
     final theme = Theme.of(context);
 
+    if (_isOccupantsPanelExpanded) {
+      setState(() => _isOccupantsPanelExpanded = false);
+    }
+
     await showModalBottomSheet(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
         return SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1031,6 +1151,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                   ),
                   const SizedBox(height: 16),
                   FilledButton.icon(
+                    key: const ValueKey('cancel_programming_button'),
                     icon: const Icon(Icons.cancel_outlined),
                     label: const Text("Annuler la programmation"),
                     style: FilledButton.styleFrom(
@@ -1047,6 +1168,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                 ] else if (isBeyond13Days) ...[
                   if (!kIsWeb) ...[
                     FilledButton.icon(
+                      key: const ValueKey('program_desk_button'),
                       icon: const Icon(Icons.schedule_rounded),
                       label: const Text("Programmer ce bureau (En attente)"),
                       style: FilledButton.styleFrom(
@@ -1060,6 +1182,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                     ),
                     const SizedBox(height: 10),
                     OutlinedButton.icon(
+                      key: const ValueKey('reserve_for_colleague_beyond13_button'),
                       icon: const Icon(Icons.person_add_alt_1_rounded),
                       label: const Text("Réserver pour un collègue"),
                       style: OutlinedButton.styleFrom(
@@ -1106,6 +1229,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                   ],
                 ] else ...[
                   FilledButton.icon(
+                    key: const ValueKey('reserve_for_me_button'),
                     icon: const Icon(Icons.check_circle_outline),
                     label: const Text("Réserver ce bureau pour moi"),
                     style: FilledButton.styleFrom(
@@ -1119,6 +1243,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                   ),
                   const SizedBox(height: 10),
                   OutlinedButton.icon(
+                    key: const ValueKey('reserve_for_colleague_button'),
                     icon: const Icon(Icons.person_add_alt_1_rounded),
                     label: const Text("Réserver ce bureau pour un collègue"),
                     style: OutlinedButton.styleFrom(
@@ -1133,6 +1258,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                   const SizedBox(height: 8),
                 ],
                 TextButton(
+                  key: const ValueKey('close_free_desk_sheet_button'),
                   onPressed: () => Navigator.pop(ctx),
                   child: const Text("Fermer"),
                 ),
@@ -1412,10 +1538,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       );
 
       if (result.isSuccess) {
-        final delegatedMap = await _storage.getDelegatedBookingsMap();
         final eventId = result.eventId ?? '';
-        delegatedMap[dateStr] = '$wsId|${colleague.name}|$deskName|$eventId|${colleague.id}';
-        await _storage.saveDelegatedBookingsMap(delegatedMap);
+        await _storage.saveDelegatedBooking(
+          dateStr,
+          wsId,
+          '$wsId|${colleague.name}|$deskName|$eventId|${colleague.id}',
+        );
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1671,121 +1799,28 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   Widget _buildDateNavigationBar() {
-    final theme = Theme.of(context);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final isToday = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day) == today;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        border: Border(bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.2))),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.chevron_left),
-            tooltip: "Jour précédent",
-            onPressed: () => _changeDate(-1),
-          ),
-          Flexible(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(16),
-              onTap: _pickDate,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.calendar_today, size: 16, color: theme.colorScheme.primary),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        _formatDateFrench(_selectedDate),
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (_hasConfirmedReservationForDate(_selectedDate)) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.green.withValues(alpha: 0.4)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.check_circle_outline, size: 11, color: Colors.green),
-                            SizedBox(width: 3),
-                            Text(
-                              "Votre bureau",
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.green,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ] else if (_isPendingReservationForDate(_selectedDate)) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.blue.withValues(alpha: 0.4)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.schedule, size: 11, color: Colors.blue),
-                            SizedBox(width: 3),
-                            Text(
-                              "En attente",
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.blue,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!isToday)
-                TextButton(
-                  onPressed: () {
-                    setState(() => _selectedDate = DateTime.now());
-                    _loadOccupancyForDate(DateTime.now());
-                  },
-                  child: const Text("Aujourd'hui", style: TextStyle(fontSize: 12)),
-                ),
-              IconButton(
-                icon: const Icon(Icons.chevron_right),
-                tooltip: "Jour suivant",
-                onPressed: () => _changeDate(1),
-              ),
-            ],
-          ),
-        ],
-      ),
+    return TimeSliderBar(
+      selectedDate: _selectedDate,
+      hideWeekends: _hideWeekends,
+      bookedDates: _bookedDates,
+      pendingDates: _requestedDates,
+      hasConfirmedReservation: _hasConfirmedReservationForDate,
+      isPendingReservation: _isPendingReservationForDate,
+      isLoading: _isOccupancyLoading,
+      onDateSelected: (date) {
+        setState(() {
+          _selectedDate = date;
+        });
+        _loadOccupancyForDate(date);
+      },
+      onPreviousDay: () => _changeDate(-1),
+      onNextDay: () => _changeDate(1),
+      onPickDate: _pickDate,
+      onToday: () {
+        final now = DateTime.now();
+        setState(() => _selectedDate = now);
+        _loadOccupancyForDate(now);
+      },
     );
   }
 
@@ -2025,6 +2060,19 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             tooltip: 'Actualiser',
             onPressed: _refreshData,
           ),
+          IconButton(
+            icon: Icon(_showRoomHeatmap
+                ? Icons.thermostat_rounded
+                : Icons.thermostat_outlined),
+            tooltip: _showRoomHeatmap
+                ? 'Désactiver la coloration thermique'
+                : 'Activer la coloration thermique',
+            onPressed: () {
+              setState(() {
+                _showRoomHeatmap = !_showRoomHeatmap;
+              });
+            },
+          ),
           if (_floors.length > 1)
             Padding(
               padding: const EdgeInsets.only(right: 12.0),
@@ -2105,6 +2153,13 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                             focusedRoom: _focusedRoom,
                             focusedWorkspaceId: _focusedWorkspaceId,
                             pendingWorkspaceIds: _getPendingWorkspaceIdsForSelectedDate(),
+                            showRoomHeatmap: _showRoomHeatmap,
+                            showHeatmapToggleChip: false,
+                            onToggleHeatmap: (val) {
+                              setState(() {
+                                _showRoomHeatmap = val;
+                              });
+                            },
                             onBackgroundTapped: () {
                               _selectionTimer?.cancel();
                               if (_selectedDeskId != null) {
@@ -2126,6 +2181,14 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                               _showOccupantDetails(ws, occ);
                             },
                           ),
+                          if (_isOccupantsPanelExpanded)
+                            Positioned.fill(
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => setState(() => _isOccupantsPanelExpanded = false),
+                              ),
+                            ),
+                          _buildOccupantsSummaryPanel(theme, favoritesSeatedCount),
                           if (_isOccupancyLoading)
                             Positioned(
                               top: 8,
@@ -2154,15 +2217,6 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                                 ),
                               ),
                             ),
-                          if (_isOccupantsPanelExpanded)
-                            Positioned.fill(
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () => setState(() => _isOccupantsPanelExpanded = false),
-                              ),
-                            ),
-                          // Collègues présents summary panel
-                          _buildOccupantsSummaryPanel(theme, favoritesSeatedCount),
                         ],
                       ),
           ),
@@ -2212,251 +2266,432 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       return name.contains(query) || room.contains(query) || desk.contains(query);
     }).toList();
 
+    final seatedFavorites = seatedList.where((item) => item.isFavorite).toList();
+
     return Positioned(
-      bottom: 12,
+      bottom: 72,
       left: 16,
-      right: 72, // Leave space for zoom buttons
-      child: Material(
-        elevation: 3,
-        borderRadius: BorderRadius.circular(16),
-        color: theme.colorScheme.surface.withValues(alpha: 0.95),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      right: 16,
+      child: ValueListenableBuilder<Offset>(
+        valueListenable: _occupantsBarOffset,
+        builder: (context, barOffset, child) {
+          return Transform.translate(
+            offset: barOffset,
+            child: child,
+          );
+        },
+        child: TapRegion(
+          groupId: 'occupants_summary_panel',
+          onTapOutside: (_) {
+            if (_isOccupantsPanelExpanded) {
+              setState(() {
+                _isOccupantsPanelExpanded = false;
+              });
+            }
+          },
+          child: Material(
+            elevation: 3,
+            borderRadius: BorderRadius.circular(16),
+            color: theme.colorScheme.surface.withValues(alpha: 0.95),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Flexible(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.star,
-                          size: 16,
-                          color: favoritesSeatedCount > 0
-                              ? Colors.amber.shade800
-                              : Colors.grey,
-                        ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            favoritesSeatedCount > 0
-                                ? "$favoritesSeatedCount collègue${favoritesSeatedCount > 1 ? 's' : ''} favori${favoritesSeatedCount > 1 ? 's' : ''} sur site"
-                                : "Aucun favori assis ce jour-là",
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: theme.colorScheme.onSurface,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () {
-                      setState(() {
-                        _isOccupantsPanelExpanded = !_isOccupantsPanelExpanded;
-                      });
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            "Collègues présents ($totalOccupantsCount)",
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.bold,
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                          Icon(
-                            _isOccupantsPanelExpanded
-                                ? Icons.keyboard_arrow_down
-                                : Icons.keyboard_arrow_up,
-                            size: 18,
-                            color: theme.colorScheme.primary,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (_isOccupantsPanelExpanded) ...[
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _colleagueSearchController,
-                  decoration: InputDecoration(
-                    hintText: "Rechercher un collègue ou une salle...",
-                    hintStyle: const TextStyle(fontSize: 12),
-                    prefixIcon: const Icon(Icons.search, size: 18),
-                    suffixIcon: _colleagueSearchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, size: 16),
-                            onPressed: () => _colleagueSearchController.clear(),
-                          )
-                        : null,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    filled: true,
-                    fillColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Divider(height: 1),
-                if (filteredSeatedList.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16.0),
-                    child: Center(
-                      child: Text(
-                        _colleagueSearchQuery.isNotEmpty
-                            ? "Aucun collègue trouvé pour « $_colleagueSearchQuery »"
-                            : "Aucun occupant sur cet étage",
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 220),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      itemCount: filteredSeatedList.length,
-                      separatorBuilder: (context, index) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final item = filteredSeatedList[index];
-                        final occ = item.occupant;
-                        final isFav = item.isFavorite;
-                        final isMe = occ.isMe;
-
-                        Color badgeBg;
-                        Color badgeBorder;
-                        Color badgeText;
-                        if (isFav) {
-                          badgeBg = isDark ? const Color(0xFFD97706) : const Color(0xFFFBBF24);
-                          badgeBorder = isDark ? const Color(0xFFFDE68A) : const Color(0xFFB45309);
-                          badgeText = isDark ? Colors.white : const Color(0xFF78350F);
-                        } else if (isMe) {
-                          badgeBg = isDark ? const Color(0xFF15803D) : const Color(0xFF22C55E);
-                          badgeBorder = isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534);
-                          badgeText = Colors.white;
-                        } else {
-                          badgeBg = isDark ? const Color(0xFF4B5563) : const Color(0xFFCBD5E1);
-                          badgeBorder = isDark ? const Color(0xFF6B7280) : const Color(0xFF94A3B8);
-                          badgeText = isDark ? const Color(0xFFF3F4F6) : const Color(0xFF1E293B);
-                        }
-
-                        return InkWell(
-                          onTap: () {
-                            _selectionTimer?.cancel();
-                            final wsId = item.workspace['id']?.toString() ?? occ.workspaceId;
-                            setState(() => _focusedWorkspaceId = wsId);
-                            _showOccupantDetails(item.workspace, occ);
+                  // Whole header bar is draggable via long-press and clickable to expand/collapse
+                  Row(
+                    children: [
+                      // Left side: star + favorite pastilles + count text (tap to toggle)
+                      Expanded(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onLongPressStart: (details) {
+                            HapticFeedback.selectionClick();
+                            _longPressStartPos = details.globalPosition;
+                            _longPressStartOffset = _occupantsBarOffset.value;
                           },
-                          borderRadius: BorderRadius.circular(8),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 26,
-                                  height: 26,
-                                  decoration: BoxDecoration(
-                                    color: badgeBg,
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(color: badgeBorder, width: 1.5),
+                          onLongPressMoveUpdate: (details) {
+                            final delta = details.globalPosition - _longPressStartPos;
+                            _occupantsBarOffset.value = _longPressStartOffset + delta;
+                          },
+                          onLongPressEnd: (_) {
+                            HapticFeedback.selectionClick();
+                          },
+                          child: InkWell(
+                            key: const ValueKey('toggle_occupants_panel_left'),
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () {
+                              setState(() {
+                                _isOccupantsPanelExpanded = !_isOccupantsPanelExpanded;
+                              });
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.star,
+                                    size: 16,
+                                    color: favoritesSeatedCount > 0
+                                        ? Colors.amber.shade800
+                                        : Colors.grey,
                                   ),
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    occ.initials,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: badgeText,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Flexible(
-                                            child: Text(
-                                              occ.occupantName,
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
+                                  if (seatedFavorites.isNotEmpty) ...[
+                                    const SizedBox(width: 6),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        for (final fav in seatedFavorites.take(3))
+                                          Container(
+                                            margin: const EdgeInsets.only(right: 3),
+                                            width: 20,
+                                            height: 20,
+                                            decoration: BoxDecoration(
+                                              color: isDark ? const Color(0xFFD97706) : const Color(0xFFFBBF24),
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                color: isDark ? const Color(0xFFFDE68A) : const Color(0xFFB45309),
+                                                width: 1,
                                               ),
-                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              fav.occupant.initials,
+                                              style: TextStyle(
+                                                fontSize: 8.5,
+                                                fontWeight: FontWeight.bold,
+                                                color: isDark ? Colors.white : const Color(0xFF78350F),
+                                              ),
                                             ),
                                           ),
-                                          if (isFav) ...[
-                                            const SizedBox(width: 4),
-                                            const Icon(Icons.star, size: 12, color: Colors.amber),
-                                          ],
-                                          if (isMe) ...[
-                                            const SizedBox(width: 4),
-                                            const Text(
-                                              "(Moi)",
-                                              style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold),
+                                        if (seatedFavorites.length > 3)
+                                          Container(
+                                            width: 20,
+                                            height: 20,
+                                            decoration: BoxDecoration(
+                                              color: isDark ? const Color(0xFF78350F) : const Color(0xFFFDE68A),
+                                              shape: BoxShape.circle,
                                             ),
-                                          ],
-                                        ],
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              "+${seatedFavorites.length - 3}",
+                                              style: TextStyle(
+                                                fontSize: 8.5,
+                                                fontWeight: FontWeight.bold,
+                                                color: isDark ? Colors.amber.shade200 : const Color(0xFF78350F),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      favoritesSeatedCount > 0
+                                          ? "$favoritesSeatedCount collègue${favoritesSeatedCount > 1 ? 's' : ''} favori${favoritesSeatedCount > 1 ? 's' : ''} sur site"
+                                          : "Aucun favori assis ce jour-là",
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: theme.colorScheme.onSurface,
                                       ),
-                                      Text(
-                                        "${item.roomName.isNotEmpty ? item.roomName : 'Bureau'} • ${item.deskLabel}",
-                                        style: TextStyle(
-                                          fontSize: 10.5,
-                                          color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                                        ),
-                                      ),
-                                    ],
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.gps_fixed, size: 16),
-                                  tooltip: "Centrer sur le plan",
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                  onPressed: () {
-                                    final wsId = item.workspace['id']?.toString() ?? occ.workspaceId;
-                                    _highlightDeskTemporarily(wsId);
-                                  },
-                                ),
-                                const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        );
-                      },
-                    ),
+                        ),
+                      ),
+                      // Reposition button (isolated from toggle tap)
+                      ValueListenableBuilder<Offset>(
+                        valueListenable: _occupantsBarOffset,
+                        builder: (context, off, _) {
+                          if (off == Offset.zero) return const SizedBox.shrink();
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: IconButton(
+                              icon: const Icon(Icons.restart_alt, size: 16),
+                              tooltip: "Repositionner en bas",
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                              onPressed: () {
+                                _occupantsBarOffset.value = Offset.zero;
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                      // Right side: expand indicator button
+                      InkWell(
+                        key: const ValueKey('toggle_occupants_panel_right'),
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () {
+                          setState(() {
+                            _isOccupantsPanelExpanded = !_isOccupantsPanelExpanded;
+                          });
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                "Collègues présents ($totalOccupantsCount)",
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              AnimatedRotation(
+                                turns: _isOccupantsPanelExpanded ? 0.5 : 0.0,
+                                duration: const Duration(milliseconds: 260),
+                                curve: Curves.easeOutCubic,
+                                child: Icon(
+                                  Icons.keyboard_arrow_up,
+                                  size: 18,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (_isOccupantsPanelExpanded) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          key: const ValueKey('close_occupants_panel_button'),
+                          icon: const Icon(Icons.close, size: 18),
+                          tooltip: "Fermer le panneau",
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                          onPressed: () {
+                            setState(() {
+                              _isOccupantsPanelExpanded = false;
+                            });
+                          },
+                        ),
+                      ],
+                    ],
                   ),
-              ],
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
+                    child: _isOccupantsPanelExpanded
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 8),
+                              TextField(
+                                key: const ValueKey('colleague_search_field'),
+                                controller: _colleagueSearchController,
+                                decoration: InputDecoration(
+                                  hintText: "Rechercher un collègue ou une salle...",
+                                  hintStyle: const TextStyle(fontSize: 12),
+                                  prefixIcon: const Icon(Icons.search, size: 18),
+                                  suffixIcon: _colleagueSearchQuery.isNotEmpty
+                                      ? IconButton(
+                                          key: const ValueKey('clear_colleague_search_button'),
+                                          icon: const Icon(Icons.clear, size: 16),
+                                          onPressed: () {
+                                            _colleagueSearchController.clear();
+                                          },
+                                        )
+                                      : null,
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  filled: true,
+                                  fillColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              const Divider(height: 1),
+                              if (filteredSeatedList.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 16.0),
+                                  child: Center(
+                                    child: Text(
+                                      _colleagueSearchQuery.isNotEmpty
+                                          ? "Aucun collègue trouvé pour « $_colleagueSearchQuery »"
+                                          : "Aucun occupant sur cet étage",
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              else
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(maxHeight: 220),
+                                  child: ListView.separated(
+                                    shrinkWrap: true,
+                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    itemCount: filteredSeatedList.length,
+                                    separatorBuilder: (context, index) => const Divider(height: 1),
+                                    itemBuilder: (context, index) {
+                                      final item = filteredSeatedList[index];
+                                      final occ = item.occupant;
+                                      final isFav = item.isFavorite;
+                                      final isMe = occ.isMe;
+
+                                      Color badgeBg;
+                                      Color badgeBorder;
+                                      Color badgeText;
+                                      if (isFav) {
+                                        badgeBg = isDark ? const Color(0xFFD97706) : const Color(0xFFFBBF24);
+                                        badgeBorder = isDark ? const Color(0xFFFDE68A) : const Color(0xFFB45309);
+                                        badgeText = isDark ? Colors.white : const Color(0xFF78350F);
+                                      } else if (isMe) {
+                                        badgeBg = isDark ? const Color(0xFF15803D) : const Color(0xFF22C55E);
+                                        badgeBorder = isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534);
+                                        badgeText = Colors.white;
+                                      } else {
+                                        badgeBg = isDark ? const Color(0xFF4B5563) : const Color(0xFFCBD5E1);
+                                        badgeBorder = isDark ? const Color(0xFF6B7280) : const Color(0xFF94A3B8);
+                                        badgeText = isDark ? const Color(0xFFF3F4F6) : const Color(0xFF1E293B);
+                                      }
+
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 2),
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: InkWell(
+                                                key: ValueKey('colleague_item_${occ.workspaceId}'),
+                                                onTap: () {
+                                                  _selectionTimer?.cancel();
+                                                  final wsId = item.workspace['id']?.toString() ?? occ.workspaceId;
+                                                  setState(() {
+                                                    _focusedWorkspaceId = wsId;
+                                                    _isOccupantsPanelExpanded = false;
+                                                  });
+                                                  _showOccupantDetails(item.workspace, occ);
+                                                },
+                                                borderRadius: BorderRadius.circular(8),
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                                                  child: Row(
+                                                    children: [
+                                                      Container(
+                                                        width: 26,
+                                                        height: 26,
+                                                        decoration: BoxDecoration(
+                                                          color: badgeBg,
+                                                          borderRadius: BorderRadius.circular(4),
+                                                          border: Border.all(color: badgeBorder, width: 1.5),
+                                                        ),
+                                                        alignment: Alignment.center,
+                                                        child: Text(
+                                                          occ.initials,
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                            fontWeight: FontWeight.bold,
+                                                            color: badgeText,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      Expanded(
+                                                        child: Column(
+                                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                                          mainAxisSize: MainAxisSize.min,
+                                                          children: [
+                                                            Row(
+                                                              children: [
+                                                                Flexible(
+                                                                  child: Text(
+                                                                    occ.occupantName,
+                                                                    style: const TextStyle(
+                                                                      fontSize: 12,
+                                                                      fontWeight: FontWeight.w600,
+                                                                    ),
+                                                                    overflow: TextOverflow.ellipsis,
+                                                                  ),
+                                                                ),
+                                                                if (isFav) ...[
+                                                                  const SizedBox(width: 4),
+                                                                  const Icon(Icons.star, size: 12, color: Colors.amber),
+                                                                ],
+                                                                if (isMe) ...[
+                                                                  const SizedBox(width: 4),
+                                                                  const Text(
+                                                                    "(Moi)",
+                                                                    style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold),
+                                                                  ),
+                                                                ],
+                                                              ],
+                                                            ),
+                                                            Text(
+                                                              "${item.roomName.isNotEmpty ? item.roomName : 'Bureau'} • ${item.deskLabel}",
+                                                              style: TextStyle(
+                                                                fontSize: 10.5,
+                                                                color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                                                                ),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            IconButton(
+                                              key: ValueKey('colleague_gps_${occ.workspaceId}'),
+                                              icon: const Icon(Icons.gps_fixed, size: 18),
+                                              tooltip: "Centrer sur le plan",
+                                              padding: const EdgeInsets.all(4),
+                                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                              onPressed: () {
+                                                final wsId = item.workspace['id']?.toString() ?? occ.workspaceId;
+                                                _highlightDeskTemporarily(wsId);
+                                              },
+                                            ),
+                                            IconButton(
+                                              key: ValueKey('colleague_details_${occ.workspaceId}'),
+                                              icon: const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
+                                              tooltip: "Voir les détails",
+                                              padding: const EdgeInsets.all(4),
+                                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                              onPressed: () {
+                                                _selectionTimer?.cancel();
+                                                final wsId = item.workspace['id']?.toString() ?? occ.workspaceId;
+                                                setState(() {
+                                                  _focusedWorkspaceId = wsId;
+                                                  _isOccupantsPanelExpanded = false;
+                                                });
+                                                _showOccupantDetails(item.workspace, occ);
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                            ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
             ],
           ),
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 
 }
