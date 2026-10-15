@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/desk_occupant.dart';
+import 'mini_map_overlay.dart';
 
 class _RoomBounds {
   double minX = double.infinity;
@@ -12,6 +13,39 @@ class _RoomBounds {
     if (left + width > maxX) maxX = left + width;
     if (top + height > maxY) maxY = top + height;
   }
+}
+
+class RoomOccupancyStats {
+  final int totalDesks;
+  final int occupiedDesks;
+
+  const RoomOccupancyStats({
+    required this.totalDesks,
+    required this.occupiedDesks,
+  });
+
+  /// Nombre de bureaux disponibles
+  int get freeDesks => (totalDesks - occupiedDesks).clamp(0, totalDesks);
+
+  /// Taux d'occupation : bureaux_occupés / total_bureaux (0.0 à 1.0)
+  double get occupancyRatio =>
+      totalDesks > 0 ? (occupiedDesks / totalDesks).clamp(0.0, 1.0) : 0.0;
+
+  /// Ratio de places libres : places_libres / total_bureaux (0.0 à 1.0)
+  double get freeRatio =>
+      totalDesks > 0 ? (freeDesks / totalDesks).clamp(0.0, 1.0) : 1.0;
+
+  /// Pourcentage de places libres (0 à 100)
+  double get freePercentage => freeRatio * 100.0;
+
+  /// Pourcentage d'occupation (0 à 100)
+  double get occupancyPercentage => occupancyRatio * 100.0;
+
+  /// Couleur thermique pastel associée selon les seuils
+  Color get heatmapColor => WorkspaceMapViewer.getRoomHeatmapColor(
+        occupiedDesks: occupiedDesks,
+        totalDesks: totalDesks,
+      );
 }
 
 class WorkspaceMapViewer extends StatefulWidget {
@@ -33,6 +67,62 @@ class WorkspaceMapViewer extends StatefulWidget {
   final String? focusedWorkspaceId;
   final Set<String> pendingWorkspaceIds;
   final VoidCallback? onBackgroundTapped;
+  final bool showMiniMap;
+  final TransformationController? controller;
+
+  // Evolution #4: Coloration thermique des pièces
+  final bool showRoomHeatmap;
+  final bool showHeatmapToggleChip;
+  final ValueChanged<bool>? onToggleHeatmap;
+  final Widget? bottomBar;
+
+  static const Color heatmapGreen = Color(0x1822C55E);
+  static const Color heatmapOrange = Color(0x18F59E0B);
+  static const Color heatmapRed = Color(0x18EF4444);
+  static const Color heatmapSlate = Color(0x1A64748B);
+
+  /// Calcule le taux d'occupation : bureaux_occupés / total_bureaux
+  static double calculateOccupancyRatio({
+    required int occupiedDesks,
+    required int totalDesks,
+  }) {
+    if (totalDesks <= 0) return 0.0;
+    return (occupiedDesks / totalDesks).clamp(0.0, 1.0);
+  }
+
+  /// Calcule le ratio de places libres : places_libres / total_bureaux
+  static double calculateFreeRatio({
+    required int occupiedDesks,
+    required int totalDesks,
+  }) {
+    if (totalDesks <= 0) return 1.0;
+    final free = (totalDesks - occupiedDesks).clamp(0, totalDesks);
+    return free / totalDesks;
+  }
+
+  /// Retourne la couleur thermique pastel adaptée à l'occupation de la salle :
+  /// - 🟢 Verte pastel très douce (0x1822C55E) si > 65% de places libres (très calme)
+  /// - 🟡 Orangée pastel douce (0x18F59E0B) si 35% à 65% libre (modérée)
+  /// - 🔴 Feutrée / ardoise douce (0x18EF4444) si < 35% de places libres (presque pleine)
+  static Color getRoomHeatmapColor({
+    required int occupiedDesks,
+    required int totalDesks,
+    bool isDark = false,
+  }) {
+    if (totalDesks <= 0) return Colors.transparent;
+    final freeRatio = calculateFreeRatio(
+      occupiedDesks: occupiedDesks,
+      totalDesks: totalDesks,
+    );
+
+    if (freeRatio > 0.65) {
+      return isDark ? const Color(0x2222C55E) : heatmapGreen;
+    } else if (freeRatio >= 0.35) {
+      return isDark ? const Color(0x22F59E0B) : heatmapOrange;
+    } else {
+      return isDark ? const Color(0x22EF4444) : heatmapRed;
+    }
+  }
 
   const WorkspaceMapViewer({
     super.key,
@@ -52,6 +142,12 @@ class WorkspaceMapViewer extends StatefulWidget {
     this.focusedWorkspaceId,
     this.pendingWorkspaceIds = const {},
     this.onBackgroundTapped,
+    this.showMiniMap = true,
+    this.controller,
+    this.showRoomHeatmap = true,
+    this.showHeatmapToggleChip = true,
+    this.onToggleHeatmap,
+    this.bottomBar,
   });
 
   @override
@@ -59,23 +155,56 @@ class WorkspaceMapViewer extends StatefulWidget {
 }
 
 class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
-  final TransformationController _controller = TransformationController();
+  late final TransformationController _internalController;
+  TransformationController get controller => widget.controller ?? _internalController;
+  TransformationController get _controller => controller;
+
   // Track the last viewport size we initialized for — reinit if size changes
   Size? _lastViewportSize;
   Map<String, _RoomBounds> _savedRoomBounds = {};
   Map<String, Rect> _savedDeskBounds = {};
   Map<String, String> _savedDeskRooms = {};
+  Map<String, RoomOccupancyStats> _savedRoomOccupancy = {};
   bool _isInitialTransformSet = false;
+  late bool _showRoomHeatmap;
+
+  /// Statistiques d'occupation de chaque pièce calculées sur le plan
+  Map<String, RoomOccupancyStats> get roomOccupancy => _savedRoomOccupancy;
+
+  /// Indique si la coloration thermique des pièces est active
+  bool get showRoomHeatmap => _showRoomHeatmap;
+
+  /// Bascule la coloration thermique des pièces
+  void toggleHeatmap([bool? value]) {
+    setState(() {
+      _showRoomHeatmap = value ?? !_showRoomHeatmap;
+    });
+    widget.onToggleHeatmap?.call(_showRoomHeatmap);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _showRoomHeatmap = widget.showRoomHeatmap;
+    if (widget.controller == null) {
+      _internalController = TransformationController();
+    }
+  }
 
   @override
   void dispose() {
-    _controller.dispose();
+    if (widget.controller == null) {
+      _internalController.dispose();
+    }
     super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant WorkspaceMapViewer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.showRoomHeatmap != widget.showRoomHeatmap) {
+      _showRoomHeatmap = widget.showRoomHeatmap;
+    }
     if (oldWidget.focusedRoom != widget.focusedRoom) {
       _handleFocusedRoomChanged();
     }
@@ -386,6 +515,8 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
         final Map<String, _RoomBounds> roomBounds = {};
         final Map<String, Rect> deskBounds = {};
         final Map<String, String> deskRooms = {};
+        final Map<String, int> roomTotalDesks = {};
+        final Map<String, int> roomOccupiedDesks = {};
         final List<Widget> featureWidgets = [];
 
         // Build quick lookup maps
@@ -548,6 +679,14 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
               roomBounds
                   .putIfAbsent(roomName, () => _RoomBounds())
                   .addRect(renderLeft, renderTop, renderWidth, renderHeight);
+
+              if (width > 0 || height > 0) {
+                roomTotalDesks[roomName] = (roomTotalDesks[roomName] ?? 0) + 1;
+                if (occupant != null) {
+                  roomOccupiedDesks[roomName] =
+                      (roomOccupiedDesks[roomName] ?? 0) + 1;
+                }
+              }
             }
           } else if (!isDesk) {
             final roomWs = wsId != null ? allWsMap[wsId] : null;
@@ -839,6 +978,13 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
         _savedRoomBounds = roomBounds;
         _savedDeskBounds = deskBounds;
         _savedDeskRooms = deskRooms;
+        _savedRoomOccupancy = {
+          for (final entry in roomBounds.entries)
+            entry.key: RoomOccupancyStats(
+              totalDesks: roomTotalDesks[entry.key] ?? 0,
+              occupiedDesks: roomOccupiedDesks[entry.key] ?? 0,
+            ),
+        };
 
         // ── 4. Room group outlines ────────────────────────────────────────────
         final List<Widget> roomWidgets = [];
@@ -848,16 +994,37 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
               widget.focusedRoom!.isNotEmpty &&
               name.toLowerCase() != widget.focusedRoom!.toLowerCase();
 
+          final totalCount = roomTotalDesks[name] ?? 0;
+          final occupiedCount = roomOccupiedDesks[name] ?? 0;
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+
+          final Color roomBgColor;
+          if (_showRoomHeatmap && totalCount > 0) {
+            final heatmapTint = WorkspaceMapViewer.getRoomHeatmapColor(
+              occupiedDesks: occupiedCount,
+              totalDesks: totalCount,
+              isDark: isDark,
+            );
+            final baseFloor = Theme.of(context)
+                .colorScheme
+                .surface
+                .withValues(alpha: isDark ? 0.45 : 0.65);
+            roomBgColor = Color.alphaBlend(heatmapTint, baseFloor);
+          } else {
+            roomBgColor = Theme.of(context)
+                .colorScheme
+                .surface
+                .withValues(alpha: 0.55);
+          }
+
           Widget roomBox = Container(
+            key: ValueKey('room_box_$name'),
             decoration: BoxDecoration(
               border: Border.all(
                   color: Theme.of(context).colorScheme.outlineVariant,
                   width: 1.5),
               borderRadius: BorderRadius.circular(8),
-              color: Theme.of(context)
-                  .colorScheme
-                  .surface
-                  .withValues(alpha: 0.55),
+              color: roomBgColor,
             ),
             child: Align(
               alignment: Alignment.topCenter,
@@ -871,16 +1038,34 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                       .withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 10,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 10,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    if (_showRoomHeatmap && totalCount > 0) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        "${totalCount - occupiedCount}/$totalCount",
+                        style: TextStyle(
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
@@ -1048,12 +1233,12 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                 boundaryMargin: const EdgeInsets.all(double.infinity),
                 minScale: 0.1,
                 maxScale: 5.0,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: widget.onBackgroundTapped,
-                  child: SizedBox(
-                    width: mapWidth,
-                    height: mapHeight,
+                child: SizedBox(
+                  width: mapWidth,
+                  height: mapHeight,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: widget.onBackgroundTapped,
                     child: ColoredBox(
                       color: Theme.of(context)
                           .colorScheme
@@ -1067,10 +1252,41 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                 ),
               ),
             ),
+            if (widget.showHeatmapToggleChip)
+              Positioned(
+                top: 12,
+                left: 12,
+                child: Material(
+                  color: Colors.transparent,
+                  child: FilterChip(
+                    key: const ValueKey('toggle_heatmap_chip'),
+                    avatar: Icon(
+                      Icons.thermostat_rounded,
+                      size: 16,
+                      color: _showRoomHeatmap
+                          ? const Color(0xFFF59E0B)
+                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    label: const Text(
+                      'Thermique',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    selected: _showRoomHeatmap,
+                    selectedColor: Theme.of(context)
+                        .colorScheme
+                        .primaryContainer
+                        .withValues(alpha: 0.85),
+                    onSelected: (val) {
+                      toggleHeatmap(val);
+                    },
+                  ),
+                ),
+              ),
+            if (widget.bottomBar != null) widget.bottomBar!,
             Positioned(
               bottom: 16,
               right: 16,
-              child: Column(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   FloatingActionButton.small(
@@ -1078,7 +1294,7 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                     onPressed: _zoomIn,
                     child: const Icon(Icons.add),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(width: 8),
                   FloatingActionButton.small(
                     heroTag: "zoomOut",
                     onPressed: _zoomOut,
@@ -1087,6 +1303,27 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
                 ],
               ),
             ),
+            if (widget.showMiniMap && mapWidth > 0 && mapHeight > 0)
+              Positioned(
+                bottom: 16,
+                left: 16,
+                child: MiniMapOverlay(
+                  expansionAlignment: Alignment.bottomLeft,
+                  transformationController: _controller,
+                  viewportSize: Size(viewW, viewH),
+                  mapSize: Size(mapWidth, mapHeight),
+                  rooms: roomBounds.values
+                      .where((b) => b.minX != double.infinity)
+                      .map((b) => Rect.fromLTWH(
+                            b.minX - 16.0,
+                            b.minY - 28.0,
+                            (b.maxX - b.minX) + 32.0,
+                            (b.maxY - b.minY) + 44.0,
+                          ))
+                      .toList(),
+                  desks: deskBounds.values.toSet().toList(),
+                ),
+              ),
           ],
         );
       },
