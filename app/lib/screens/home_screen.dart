@@ -28,6 +28,7 @@ import '../notification_service.dart';
 import '../models/colleague.dart';
 import '../models/booking_result.dart';
 import '../widgets/colleague_selection_dialog.dart';
+import '../utils/delegation_display_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   final StorageService? storageService;
@@ -1300,10 +1301,12 @@ class _HomeScreenState extends State<HomeScreen> {
         bool isDelegated = _delegatedBookingsMap.containsKey(dateStr) && _showDelegatedReservations;
         String delegateName = "Quelqu'un";
         String delegateLocation = "";
+        String? delegateCreator;
         if (isDelegated) {
            final parts = _delegatedBookingsMap[dateStr]!.split('|');
            delegateName = parts.length > 1 ? parts[1] : parts[0];
            if (parts.length > 2) delegateLocation = parts[2];
+           if (parts.length > 5 && parts[5].isNotEmpty) delegateCreator = parts[5];
         }
         bool isOccupiedByOthers = !isBooked && !isElsewhere && !isDelegated && _occupiedByOthers.containsKey(dateStr);
         bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday) && _showAllReservations;
@@ -1313,7 +1316,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (_isVacation(date)) isRecurring = false;
 
       if (isDelegated) {
-        upcoming.add({"date": date, "source": "Délégué", "isBooked": true, "name": delegateName, "location": delegateLocation});
+        upcoming.add({"date": date, "source": "Délégué", "isBooked": true, "name": delegateName, "location": delegateLocation, "creator": delegateCreator});
       }
       
         if (isElsewhere) {
@@ -1378,7 +1381,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 builder: (context) {
                   final isDark = Theme.of(context).brightness == Brightness.dark;
                   return Text(
-                    source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Délégué' ? 'Réservé pour ${item["name"]}${item["location"] != null && item["location"].toString().isNotEmpty ? ' (${item["location"]})' : ''}' : (source == 'Occupé' ? 'Indisponible (réservé par ${item["name"] ?? "qqn d'autre"})' : (isBooked ? 'Déjà réservé' : (source == 'Calendrier' && item["name"] != null && item["name"].toString().isNotEmpty ? 'Programmé en attente (${item["name"]})' : 'Sera réservé (Automatique)')))),
+                    source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Délégué' ? DelegationDisplayHelper.formatDelegatedHomeSubtitle(delegateName: item["name"]?.toString() ?? "Quelqu'un", location: item["location"]?.toString(), creatorName: item["creator"]?.toString()) : (source == 'Occupé' ? DelegationDisplayHelper.formatOccupiedHomeSubtitle(item["name"]) : (isBooked ? 'Déjà réservé' : (source == 'Calendrier' && item["name"] != null && item["name"].toString().isNotEmpty ? 'Programmé en attente (${item["name"]})' : 'Sera réservé (Automatique)')))),
                     style: TextStyle(color: source == 'Ailleurs' ? (isDark ? Colors.orange.shade300 : Colors.orange.shade900) : (source == 'Délégué' ? (isDark ? Colors.purple.shade300 : Colors.purple.shade900) : (source == 'Occupé' ? (isDark ? Colors.grey.shade400 : Colors.grey.shade700) : (isBooked ? (isDark ? Colors.green.shade400 : Colors.green) : (isDark ? Colors.blue.shade300 : Colors.blue)))), fontSize: _compactMode ? 10 : 12),
                   );
                 }
@@ -1628,7 +1631,25 @@ class _HomeScreenState extends State<HomeScreen> {
       bgColor = Colors.lightBlue.withValues(alpha: isDark ? 0.2 : 0.3);
     }
 
-    return Stack(
+    String? cellTooltip;
+    if (isOccupiedByOthers) {
+      cellTooltip = DelegationDisplayHelper.formatOccupiedCalendarTooltip(_occupiedByOthers[dateStr]!);
+    } else if (isDelegated) {
+      final parts = _delegatedBookingsMap[dateStr]?.split('|') ?? [];
+      final dName = parts.length > 1 ? parts[1] : 'un collègue';
+      final dCreator = parts.length > 5 && parts[5].isNotEmpty ? parts[5] : null;
+      cellTooltip = DelegationDisplayHelper.formatDelegationLabel(creator: dCreator, bookedFor: dName);
+    } else if (isBooked) {
+      cellTooltip = 'Réservé';
+    } else if (isElsewhere) {
+      cellTooltip = 'Réservé sur un autre bureau (${_bookedElsewhereMap[dateStr] ?? "Ailleurs"})';
+    } else if (isRequested) {
+      cellTooltip = 'Programmé en attente';
+    } else if (isIgnored) {
+      cellTooltip = 'Bloqué';
+    }
+
+    final cell = Stack(
       alignment: Alignment.center,
       children: [
         Container(
@@ -1677,6 +1698,17 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
       ],
     );
+
+    if (cellTooltip != null) {
+      return Tooltip(
+        message: cellTooltip,
+        child: Semantics(
+          label: cellTooltip,
+          child: cell,
+        ),
+      );
+    }
+    return cell;
   }
 
   Widget _buildLegend(Color color, String text) {
@@ -2077,6 +2109,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final dParts = _delegatedBookingsMap[dateStr]?.split('|') ?? [];
     final dName = dParts.length > 1 ? dParts[1] : 'votre collègue';
     final dLoc = dParts.length > 2 ? dParts[2] : '';
+    final dCreator = dParts.length > 5 && dParts[5].isNotEmpty ? dParts[5] : null;
     
     final myWsId = await _storage.getWorkspaceId();
     if (!mounted) return;
@@ -2098,7 +2131,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     ListTile(
                       leading: Icon(Icons.group_off, color: Theme.of(context).brightness == Brightness.dark ? Colors.purple.shade300 : Colors.purple.shade900),
                       title: Text('Annuler la délégation', style: TextStyle(color: Theme.of(context).brightness == Brightness.dark ? Colors.purple.shade300 : Colors.purple.shade900, fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: Text("Annule la réservation faite pour $dName${dLoc.isNotEmpty ? " sur $dLoc" : ""} ce jour-là.", style: const TextStyle(fontSize: 11)),
+                      subtitle: Text(
+                        dCreator != null && dCreator.toLowerCase() != dName.toLowerCase()
+                            ? "Réservé pour $dName par $dCreator${dLoc.isNotEmpty ? " sur $dLoc" : ""} ce jour-là."
+                            : "Annule la réservation faite pour $dName${dLoc.isNotEmpty ? " sur $dLoc" : ""} ce jour-là.",
+                        style: const TextStyle(fontSize: 11),
+                      ),
                       onTap: () => Navigator.pop(context, 'cancel_delegation'),
                       ),
               if (!isBooked && !isRequested)
@@ -2106,7 +2144,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ListTile(
                     leading: const Icon(Icons.person_off, color: Colors.grey),
                     title: const Text('Place indisponible', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
-                    subtitle: Text("Réservé par ${_occupiedByOthers[dateStr]}.", style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                    subtitle: Text(
+                      DelegationDisplayHelper.formatOccupiedSubtitle(_occupiedByOthers[dateStr]!),
+                      style: const TextStyle(color: Colors.grey, fontSize: 11),
+                    ),
                   )
                 else if (isWeekendAndHidden)
                   const ListTile(
@@ -2235,7 +2276,7 @@ class _HomeScreenState extends State<HomeScreen> {
             } else if (result.isSuccess) {
               final eventId = result.eventId ?? '';
               _delegatedBookingsMap[dateStr] =
-                  '$workspaceId|${colleague.name}|${_workspaceName ?? ""}|$eventId|${colleague.id}';
+                  '$workspaceId|${colleague.name}|${_workspaceName ?? ""}|$eventId|${colleague.id}|vous';
               await _storage.saveDelegatedBookingsMap(_delegatedBookingsMap);
               _requestedDates.remove(dateStr);
               await _storage.saveRequestedDates(_requestedDates.toList());

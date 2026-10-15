@@ -10,6 +10,9 @@ class DeskOccupant {
   final String? occupantEmail;
   final bool isMe;
   final bool isDelegated;
+  final bool isDelegatedByMe;
+  final bool isDelegatedForMe;
+  final bool isDelegatedOther;
   final String? bookedByName;
 
   const DeskOccupant({
@@ -18,9 +21,16 @@ class DeskOccupant {
     this.occupantId,
     this.occupantEmail,
     this.isMe = false,
-    this.isDelegated = false,
+    bool isDelegated = false,
+    this.isDelegatedByMe = false,
+    this.isDelegatedForMe = false,
+    bool? isDelegatedOther,
     this.bookedByName,
-  });
+  })  : isDelegated = isDelegated || isDelegatedByMe || isDelegatedForMe || (isDelegatedOther == true),
+        isDelegatedOther = isDelegatedOther ??
+            ((isDelegated || isDelegatedByMe || isDelegatedForMe) &&
+                !isDelegatedByMe &&
+                !isDelegatedForMe);
 
   /// Extracts two-letter initials from [occupantName] for avatar display.
   String get initials {
@@ -60,6 +70,11 @@ class DeskOccupant {
 
   /// Deserializes a [DeskOccupant] from JSON.
   factory DeskOccupant.fromJson(Map<String, dynamic> json) {
+    final rawDelegated = json['isDelegated'] == true;
+    final isDelegatedByMe = json['isDelegatedByMe'] == true;
+    final isDelegatedForMe = json['isDelegatedForMe'] == true;
+    final isDelegatedOther = json['isDelegatedOther'] == true ||
+        (rawDelegated && !isDelegatedByMe && !isDelegatedForMe);
     return DeskOccupant(
       workspaceId: json['workspaceId']?.toString() ?? '',
       occupantName: json['occupantName']?.toString() ??
@@ -70,7 +85,10 @@ class DeskOccupant {
       occupantId: json['occupantId']?.toString() ?? json['id']?.toString() ?? json['userId']?.toString(),
       occupantEmail: json['occupantEmail']?.toString() ?? json['email']?.toString() ?? json['mail']?.toString(),
       isMe: json['isMe'] == true,
-      isDelegated: json['isDelegated'] == true,
+      isDelegated: rawDelegated || isDelegatedByMe || isDelegatedForMe || isDelegatedOther,
+      isDelegatedByMe: isDelegatedByMe,
+      isDelegatedForMe: isDelegatedForMe,
+      isDelegatedOther: isDelegatedOther,
       bookedByName: json['bookedByName']?.toString(),
     );
   }
@@ -83,6 +101,9 @@ class DeskOccupant {
         if (occupantEmail != null) 'occupantEmail': occupantEmail,
         'isMe': isMe,
         'isDelegated': isDelegated,
+        'isDelegatedByMe': isDelegatedByMe,
+        'isDelegatedForMe': isDelegatedForMe,
+        'isDelegatedOther': isDelegatedOther,
         if (bookedByName != null) 'bookedByName': bookedByName,
       };
 
@@ -93,6 +114,9 @@ class DeskOccupant {
     String? occupantEmail,
     bool? isMe,
     bool? isDelegated,
+    bool? isDelegatedByMe,
+    bool? isDelegatedForMe,
+    bool? isDelegatedOther,
     String? bookedByName,
   }) {
     return DeskOccupant(
@@ -102,6 +126,9 @@ class DeskOccupant {
       occupantEmail: occupantEmail ?? this.occupantEmail,
       isMe: isMe ?? this.isMe,
       isDelegated: isDelegated ?? this.isDelegated,
+      isDelegatedByMe: isDelegatedByMe ?? this.isDelegatedByMe,
+      isDelegatedForMe: isDelegatedForMe ?? this.isDelegatedForMe,
+      isDelegatedOther: isDelegatedOther ?? this.isDelegatedOther,
       bookedByName: bookedByName ?? this.bookedByName,
     );
   }
@@ -116,6 +143,9 @@ class DeskOccupant {
         other.occupantEmail == occupantEmail &&
         other.isMe == isMe &&
         other.isDelegated == isDelegated &&
+        other.isDelegatedByMe == isDelegatedByMe &&
+        other.isDelegatedForMe == isDelegatedForMe &&
+        other.isDelegatedOther == isDelegatedOther &&
         other.bookedByName == bookedByName;
   }
 
@@ -127,10 +157,13 @@ class DeskOccupant {
         occupantEmail,
         isMe,
         isDelegated,
+        isDelegatedByMe,
+        isDelegatedForMe,
+        isDelegatedOther,
         bookedByName,
       );
 
   @override
   String toString() =>
-      'DeskOccupant(workspaceId: $workspaceId, occupantName: $occupantName, occupantId: $occupantId, isMe: $isMe, isDelegated: $isDelegated, bookedByName: $bookedByName)';
+      'DeskOccupant(workspaceId: $workspaceId, occupantName: $occupantName, occupantId: $occupantId, isMe: $isMe, isDelegated: $isDelegated, isDelegatedByMe: $isDelegatedByMe, isDelegatedForMe: $isDelegatedForMe, isDelegatedOther: $isDelegatedOther, bookedByName: $bookedByName)';
 }

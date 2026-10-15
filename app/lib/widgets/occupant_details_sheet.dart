@@ -172,7 +172,7 @@ class OccupantDetailsSheet extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
-                                "Réservé par ${occupant.bookedByName ?? 'un collègue'}",
+                                _delegationBadgeText(occupant),
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: theme.colorScheme.onTertiaryContainer,
@@ -242,6 +242,7 @@ class OccupantDetailsSheet extends StatelessWidget {
             // Action Buttons
             if (occupant.isMe && onCancelMyBooking != null) ...[
               ElevatedButton.icon(
+                key: const ValueKey('cancel_my_booking_button'),
                 icon: const Icon(Icons.event_busy_rounded, color: Colors.white),
                 label: const Text(
                   "Libérer ma place",
@@ -260,8 +261,9 @@ class OccupantDetailsSheet extends StatelessWidget {
               ),
               const SizedBox(height: 8),
             ],
-            if (onCancelDelegatedBooking != null) ...[
+            if (occupant.isDelegatedByMe && onCancelDelegatedBooking != null) ...[
               ElevatedButton.icon(
+                key: const ValueKey('cancel_delegated_booking_button'),
                 icon: const Icon(Icons.person_remove_rounded, color: Colors.white),
                 label: const Text(
                   "Libérer la place du collègue",
@@ -282,6 +284,7 @@ class OccupantDetailsSheet extends StatelessWidget {
             ],
             if (!occupant.isMe && onToggleFavorite != null)
               OutlinedButton.icon(
+                key: const ValueKey('toggle_favorite_button'),
                 icon: Icon(isFavorite ? Icons.star_border : Icons.star),
                 label: Text(isFavorite ? "Retirer des favoris" : "Ajouter aux favoris"),
                 onPressed: () {
@@ -291,6 +294,7 @@ class OccupantDetailsSheet extends StatelessWidget {
               ),
             const SizedBox(height: 8),
             TextButton(
+              key: const ValueKey('close_occupant_details_button'),
               onPressed: () => Navigator.pop(context),
               child: const Text("Fermer"),
             ),
@@ -298,6 +302,18 @@ class OccupantDetailsSheet extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _delegationBadgeText(DeskOccupant occupant) {
+    if (occupant.isDelegatedByMe) {
+      return "Réservé par vous";
+    } else if (occupant.isDelegatedForMe) {
+      final by = occupant.bookedByName ?? 'un collègue';
+      return "Réservé pour vous par $by";
+    } else {
+      final by = occupant.bookedByName ?? 'un collègue';
+      return "Réservé pour ${occupant.occupantName} par $by";
+    }
   }
 
   String _extractRoomName(String name) {
