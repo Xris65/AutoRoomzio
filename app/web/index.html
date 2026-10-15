@@ -31,8 +31,216 @@
 
   <title>auto_roomzio</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- Garde défensif pour les environnements d'entreprise où WebAssembly est désactivé par GPO -->
+  <script>
+    if (typeof window.WebAssembly === 'undefined') {
+      window.WebAssembly = {
+        validate: function() { return false; },
+        compile: function() { return Promise.reject(new Error("WebAssembly désactivé par la politique du navigateur")); },
+        compileStreaming: function() { return Promise.reject(new Error("WebAssembly désactivé par la politique du navigateur")); },
+        instantiate: function() { return Promise.reject(new Error("WebAssembly désactivé par la politique du navigateur")); },
+        instantiateStreaming: function() { return Promise.reject(new Error("WebAssembly désactivé par la politique du navigateur")); }
+      };
+    }
+  </script>
+
+  <style>
+    #enterprise-fallback-banner {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 999999;
+      background: #ffffff;
+      border-bottom: 3px solid #f59e0b;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      padding: 16px 20px;
+      color: #1e293b;
+      box-sizing: border-box;
+      animation: slideDownBanner 0.3s ease-out;
+    }
+    @keyframes slideDownBanner {
+      from { transform: translateY(-100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .efb-container {
+      max-width: 900px;
+      margin: 0 auto;
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .efb-icon {
+      flex-shrink: 0;
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: #fef3c7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+    .efb-content {
+      flex-grow: 1;
+    }
+    .efb-title {
+      margin: 0 0 6px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #92400e;
+    }
+    .efb-text {
+      margin: 0 0 10px 0;
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: #475569;
+    }
+    .efb-box {
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: #334155;
+      border: 1px solid #e2e8f0;
+      line-height: 1.5;
+    }
+    .efb-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .efb-btn-primary {
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .efb-btn-primary:hover {
+      background: #1d4ed8;
+    }
+    .efb-btn-secondary {
+      background: transparent;
+      color: #64748b;
+      border: 1px solid #cbd5e1;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .efb-btn-secondary:hover {
+      background: #f1f5f9;
+    }
+  </style>
 </head>
 <body>
+  <!-- Bandeau d'information gracieux pour environnements d'entreprise (Mode de Sécurité Renforcée / WebAssembly restreint) -->
+  <div id="enterprise-fallback-banner">
+    <div class="efb-container">
+      <div class="efb-icon">⚠️</div>
+      <div class="efb-content">
+        <h3 class="efb-title">Moteur graphique restreint (WebAssembly / CanvasKit)</h3>
+        <p class="efb-text">
+          AutoRoomzio n'a pas pu démarrer le moteur graphique <strong>CanvasKit</strong>. Dans les environnements d'entreprise, ceci survient généralement lorsque <strong>WebAssembly</strong> est bloqué par le <strong>Mode de Sécurité Renforcée de Microsoft Edge</strong> ou par une stratégie de groupe (GPO).
+        </p>
+        <div class="efb-box">
+          <strong>Actions recommandées :</strong>
+          <ul style="margin: 6px 0 0 0; padding-left: 20px;">
+            <li><strong>Microsoft Edge :</strong> Rendez-vous sur <code>edge://settings/privacy</code> et configurez le <em>« Mode de sécurité renforcée »</em> pour ajouter cette URL en exception ou le désactiver temporairement pour ce site.</li>
+            <li><strong>Navigateurs d'entreprise :</strong> Autorisez l'URL dans vos paramètres de confiance ou contactez votre support informatique si une GPO bloque WebAssembly.</li>
+          </ul>
+        </div>
+        <div class="efb-actions">
+          <button class="efb-btn-primary" onclick="window.location.reload()">↻ Recharger la page</button>
+          <button class="efb-btn-secondary" onclick="document.getElementById('enterprise-fallback-banner').style.display='none'">Ignorer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      var bannerShown = false;
+      function showFallbackBanner(reason) {
+        if (bannerShown) return;
+        bannerShown = true;
+        var banner = document.getElementById('enterprise-fallback-banner');
+        if (banner) {
+          banner.style.display = 'block';
+        }
+        if (reason) {
+          console.warn('[AutoRoomzio Enterprise Guard] Fallback affiché :', reason);
+        }
+      }
+
+      // 1. Écoute des erreurs globales liées à WebAssembly / CanvasKit
+      window.addEventListener('error', function(event) {
+        var msg = (event && (event.message || (event.error && event.error.message))) || '';
+        if (typeof msg === 'string' && (
+          msg.indexOf('WebAssembly') !== -1 ||
+          msg.indexOf('CanvasKit') !== -1 ||
+          msg.indexOf('canvaskit') !== -1 ||
+          msg.indexOf('wasm') !== -1 ||
+          msg.indexOf('instantiate') !== -1
+        )) {
+          showFallbackBanner(msg);
+        }
+      });
+
+      // 2. Écoute des rejets de promesses non gérés
+      window.addEventListener('unhandledrejection', function(event) {
+        var reason = event && (event.reason ? (event.reason.message || event.reason) : '');
+        var str = String(reason || '');
+        if (
+          str.indexOf('WebAssembly') !== -1 ||
+          str.indexOf('CanvasKit') !== -1 ||
+          str.indexOf('canvaskit') !== -1 ||
+          str.indexOf('wasm') !== -1 ||
+          str.indexOf('instantiate') !== -1 ||
+          str.indexOf('politique du navigateur') !== -1
+        ) {
+          showFallbackBanner(str);
+        }
+      });
+
+      // 3. Timeout de sécurité (10s) : si aucun conteneur Flutter ne s'est initialisé
+      var timeoutId = setTimeout(function() {
+        var flutterElement = document.querySelector('flutter-view, flt-glass-pane');
+        if (!flutterElement) {
+          showFallbackBanner('Timeout : Flutter/CanvasKit ne s\'est pas initialisé après 10s');
+        }
+      }, 10000);
+
+      // 4. Masquer le bandeau et annuler le timeout dès que Flutter s'affiche avec succès
+      var observer = new MutationObserver(function() {
+        if (document.querySelector('flutter-view, flt-glass-pane')) {
+          clearTimeout(timeoutId);
+          var banner = document.getElementById('enterprise-fallback-banner');
+          if (banner && !bannerShown) {
+            banner.style.display = 'none';
+          }
+          observer.disconnect();
+        }
+      });
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+      } else {
+        document.addEventListener('DOMContentLoaded', function() {
+          observer.observe(document.body, { childList: true, subtree: true });
+        });
+      }
+    })();
+  </script>
+
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
