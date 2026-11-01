@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models/colleague.dart';
+import 'models/desk_occupant.dart';
 
 /// Uses FlutterSecureStorage for sensitive credentials (refresh token)
 /// and shared_preferences for app settings and cache.
@@ -406,9 +407,13 @@ class StorageService {
   Future<Map<String, String>> getDelegatedBookingsMap() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString('delegated_bookings_map');
-    if (jsonStr != null) {
-      final Map<String, dynamic> decoded = jsonDecode(jsonStr);
-      return decoded.map((k, v) => MapEntry(k, v.toString()));
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final dynamic decoded = jsonDecode(jsonStr);
+        if (decoded is Map) {
+          return decoded.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
+        }
+      } catch (_) {}
     }
     return {};
   }
@@ -522,6 +527,177 @@ class StorageService {
   Future<List<String>> getBookedElsewhereDates() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getStringList('booked_elsewhere_dates') ?? [];
+  }
+
+  // ── Personal Elsewhere Reservations Map ───────────────────────────────────
+  Future<void> saveBookedElsewhereMap(Map<String, String> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('booked_elsewhere_map', jsonEncode(map));
+    await prefs.setStringList('booked_elsewhere_dates', map.keys.toList());
+  }
+
+  Future<Map<String, String>> getBookedElsewhereMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('booked_elsewhere_map');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final Map<String, dynamic> decoded = jsonDecode(jsonStr);
+        return decoded.map((k, v) => MapEntry(k, v.toString()));
+      } catch (_) {}
+    }
+    // Fallback to legacy string list if map not yet saved
+    final legacyDates = prefs.getStringList('booked_elsewhere_dates') ?? [];
+    return {for (var d in legacyDates) d: 'Ailleurs'};
+  }
+
+  // ── Enriched User Reservations Map per Date ──────────────────────────────
+  static const String _userReservationsMapKey = 'user_reservations_map';
+
+  /// Retrieves the enriched reservations map: { "YYYY-MM-DD": { "workspaceId": "...", "workspaceName": "..." } }
+  /// Falls back to legacy keys ('booked_dates', 'workspace_id', 'workspace_name', 'booked_elsewhere_map') if absent.
+  Future<Map<String, Map<String, String>>> getUserReservationsMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString(_userReservationsMapKey);
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final dynamic decoded = jsonDecode(jsonStr);
+        if (decoded is Map) {
+          final Map<String, Map<String, String>> result = {};
+          decoded.forEach((key, val) {
+            if (val is Map) {
+              result[key.toString()] = val.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
+            }
+          });
+          return result;
+        }
+      } catch (_) {}
+    }
+
+    // Fallback & auto-migration from legacy keys
+    final result = <String, Map<String, String>>{};
+    final currentWsId = await getWorkspaceId() ?? '';
+    final currentWsName = await getWorkspaceName() ?? 'Mon bureau';
+    final booked = await getBookedDates();
+    for (final d in booked) {
+      result[d] = {
+        'workspaceId': currentWsId,
+        'workspaceName': currentWsName,
+      };
+    }
+    final elsewhere = await getBookedElsewhereMap();
+    for (final entry in elsewhere.entries) {
+      if (!result.containsKey(entry.key)) {
+        result[entry.key] = {
+          'workspaceId': '',
+          'workspaceName': entry.value,
+        };
+      }
+    }
+    final elsewhereDates = await getBookedElsewhereDates();
+    for (final d in elsewhereDates) {
+      if (!result.containsKey(d)) {
+        result[d] = {
+          'workspaceId': '',
+          'workspaceName': elsewhere[d] ?? 'Ailleurs',
+        };
+      }
+    }
+    return result;
+  }
+
+  /// Persists the enriched reservations map and keeps legacy compatibility keys
+  /// ('booked_dates', 'booked_elsewhere_dates', 'booked_elsewhere_map') perfectly synchronized.
+  Future<void> saveUserReservationsMap(Map<String, Map<String, String>> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_userReservationsMapKey, jsonEncode(map));
+
+    final currentWsId = await getWorkspaceId();
+    final List<String> hereDates = [];
+    final Map<String, String> elsewhereMap = {};
+
+    for (final entry in map.entries) {
+      final wsId = entry.value['workspaceId'];
+      final wsName = entry.value['workspaceName'] ?? 'Ailleurs';
+      if (currentWsId != null &&
+          currentWsId.isNotEmpty &&
+          wsId != null &&
+          wsId.isNotEmpty &&
+          wsId.toLowerCase() == currentWsId.toLowerCase()) {
+        hereDates.add(entry.key);
+      } else {
+        elsewhereMap[entry.key] = (wsName.isNotEmpty) ? wsName : 'Ailleurs';
+      }
+    }
+
+    await saveBookedDates(hereDates);
+    await saveBookedElsewhereMap(elsewhereMap);
+  }
+
+  /// Saves or updates a single user reservation.
+  Future<void> saveUserReservation(String date, String workspaceId, String workspaceName) async {
+    final map = await getUserReservationsMap();
+    map[date] = {
+      'workspaceId': workspaceId,
+      'workspaceName': workspaceName,
+    };
+    await saveUserReservationsMap(map);
+  }
+
+  /// Removes a single user reservation.
+  Future<void> removeUserReservation(String date) async {
+    final map = await getUserReservationsMap();
+    map.remove(date);
+    await saveUserReservationsMap(map);
+  }
+
+  /// Dynamically partitions all cached reservations against the provided [currentWorkspaceId]:
+  /// - `here`: set of dates booked at the current workspace ID.
+  /// - `elsewhere`: map of `dateStr -> workspaceName` for all other workspaces.
+  Future<({Set<String> here, Map<String, String> elsewhere})> partitionUserReservations(String? currentWorkspaceId) async {
+    final map = await getUserReservationsMap();
+    final currentWsName = await getWorkspaceName() ?? 'Mon bureau';
+    final Set<String> here = {};
+    final Map<String, String> elsewhere = {};
+
+    for (final entry in map.entries) {
+      final wsId = entry.value['workspaceId'];
+      final wsName = entry.value['workspaceName'];
+      final matchesId = currentWorkspaceId != null &&
+          currentWorkspaceId.isNotEmpty &&
+          wsId != null &&
+          wsId.isNotEmpty &&
+          wsId.toLowerCase() == currentWorkspaceId.toLowerCase();
+      final matchesNameOnly = (currentWorkspaceId == null || currentWorkspaceId.isEmpty) &&
+          currentWsName.isNotEmpty &&
+          wsName != null &&
+          wsName.isNotEmpty &&
+          wsName.toLowerCase() == currentWsName.toLowerCase();
+
+      if (matchesId || matchesNameOnly) {
+        here.add(entry.key);
+      } else {
+        elsewhere[entry.key] = (wsName != null && wsName.isNotEmpty) ? wsName : 'Ailleurs';
+      }
+    }
+    return (here: here, elsewhere: elsewhere);
+  }
+
+  // ── Calendar Occupied by Others Map ───────────────────────────────────────
+  Future<void> saveOccupiedByOthers(Map<String, String> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('occupied_by_others_map', jsonEncode(map));
+  }
+
+  Future<Map<String, String>> getOccupiedByOthers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('occupied_by_others_map');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final Map<String, dynamic> decoded = jsonDecode(jsonStr);
+        return decoded.map((k, v) => MapEntry(k, v.toString()));
+      } catch (_) {}
+    }
+    return {};
   }
 
   // ── Days (recurring) ──────────────────────────────────────────────────────
@@ -954,4 +1130,107 @@ class StorageService {
     return current.any((c) => c.id == colleagueId);
   }
 
+  // ── Floor Occupants Persistence ───────────────────────────────────────────
+  Future<void> saveFloorOccupants(
+    String floorId,
+    String date,
+    Map<String, DeskOccupant> occupants,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonMap = occupants.map((k, v) => MapEntry(k, v.toJson()));
+    await prefs.setString('floor_occupants_${floorId}_$date', jsonEncode(jsonMap));
+  }
+
+  Future<Map<String, DeskOccupant>> getFloorOccupants(
+    String floorId,
+    String date,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('floor_occupants_${floorId}_$date');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final Map<String, dynamic> decoded = jsonDecode(jsonStr);
+        return decoded.map((k, v) => MapEntry(
+          k,
+          DeskOccupant.fromJson(Map<String, dynamic>.from(v as Map)),
+        ));
+      } catch (_) {}
+    }
+    return {};
+  }
+
+  // ── Floor Plan & Workspaces Persistence ───────────────────────────────────
+  Future<void> saveFloorPlanData(String floorId, dynamic planData) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('floor_plan_$floorId', jsonEncode(planData));
+  }
+
+  Future<dynamic> getFloorPlanData(String floorId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('floor_plan_$floorId');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        return jsonDecode(jsonStr);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<void> saveFloorWorkspaces(
+    String floorId,
+    List<Map<String, dynamic>> workspaces,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('floor_workspaces_$floorId', jsonEncode(workspaces));
+  }
+
+  Future<List<Map<String, dynamic>>> getFloorWorkspaces(String floorId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('floor_workspaces_$floorId');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final List<dynamic> list = jsonDecode(jsonStr);
+        return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      } catch (_) {}
+    }
+    return [];
+  }
+
+  // ── Cached Sites & Floors Persistence ─────────────────────────────────────
+  Future<void> saveCachedSites(List<Map<String, dynamic>> sites) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('cached_sites', jsonEncode(sites));
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedSites() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('cached_sites');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final List<dynamic> list = jsonDecode(jsonStr);
+        return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      } catch (_) {}
+    }
+    return [];
+  }
+
+  Future<void> saveCachedFloors(
+    String siteId,
+    List<Map<String, dynamic>> floors,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('cached_floors_$siteId', jsonEncode(floors));
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedFloors(String siteId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('cached_floors_$siteId');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final List<dynamic> list = jsonDecode(jsonStr);
+        return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      } catch (_) {}
+    }
+    return [];
+  }
 }

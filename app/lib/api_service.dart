@@ -6,18 +6,19 @@ import 'models/colleague.dart';
 import 'models/booking_result.dart';
 import 'models/desk_occupant.dart';
 import 'storage_service.dart';
+import 'offline_state_manager.dart';
 import 'token_crypto.dart';
 import 'utils/delegation_display_helper.dart';
 
 class RoomzApiService {
   final StorageService _storage;
-  final http.Client? _customClient;
-
-  http.Client get _client => _customClient ?? http.Client();
+  final http.Client _client;
 
   RoomzApiService({StorageService? storage, http.Client? client})
       : _storage = storage ?? StorageService(),
-        _customClient = client;
+        _client = client != null
+            ? (client is OfflineAwareHttpClient ? client : OfflineAwareHttpClient(client))
+            : OfflineAwareHttpClient();
 
   static String get _loginUrl => kIsWeb ? "https://roomzioproxy.krisdhim2.workers.dev/https://login.roomz.io/connect/token" : "https://login.roomz.io/connect/token";
   static String get _apiBase => kIsWeb ? "https://roomzioproxy.krisdhim2.workers.dev/https://api.my.roomz.io" : "https://api.my.roomz.io";
@@ -301,7 +302,16 @@ class RoomzApiService {
   /// Returns a record with:
   ///   - `here`: dates booked at the given workspaceId
   ///   - `elsewhere`: dates booked at ANY other workspace (same user, different desk)
-  Future<({Set<String> here, Map<String, String> elsewhere, Map<String, String> delegated, String? myUserId})> getMyReservations(
+  ///   - `delegated`: map of delegated reservations
+  ///   - `myUserId`: current user ID
+  ///   - `allReservations`: map of all personal reservations with desk details: { date: { workspaceId: ..., workspaceName: ... } }
+  Future<({
+    Set<String> here,
+    Map<String, String> elsewhere,
+    Map<String, String> delegated,
+    String? myUserId,
+    Map<String, Map<String, String>> allReservations,
+  })> getMyReservations(
         String token, String workspaceId) async {
       try {
         final response = await _client.get(
@@ -315,6 +325,7 @@ class RoomzApiService {
           final Set<String> here = {};
           final Map<String, String> elsewhere = {};
           final Map<String, String> delegated = {};
+          final Map<String, Map<String, String>> allReservations = {};
           
           String? foundUserId;
             for (final b in bookings) {
@@ -365,11 +376,13 @@ class RoomzApiService {
                }
             }
             
-            final wsName = b['workspaceName']?.toString() ?? b['workspaceTitle']?.toString() ?? b['workspace']?['name']?.toString() ?? "Ailleurs";
+            final wsId = b['workspaceId']?.toString() ?? '';
+            final rawWsName = b['workspaceName']?.toString() ?? b['workspaceTitle']?.toString() ?? b['workspace']?['name']?.toString();
+            final wsName = (rawWsName != null && rawWsName.isNotEmpty)
+                ? rawWsName
+                : (wsId.isNotEmpty && wsId.toLowerCase() == workspaceId.toLowerCase() ? "Mon bureau" : "Ailleurs");
             
             if (isDelegated) {
-               final wsId = b['workspaceId']?.toString() ?? '';
-               // Always use the real desk name (workspaceName from API) as location
                final location = wsName;
                // eventId in API has format "workspaceId/eventUUID" — extract just the UUID part
                final rawEventId = b['eventId']?.toString() ?? '';
@@ -381,19 +394,38 @@ class RoomzApiService {
                if (!delegated.containsKey(dateStr) || wsId.toLowerCase() == workspaceId.toLowerCase()) {
                  delegated[dateStr] = entryVal;
                }
-            } else if (b['workspaceId'] == workspaceId) {
-              here.add(dateStr);
             } else {
-              elsewhere[dateStr] = wsName;
+              allReservations[dateStr] = {
+                'workspaceId': wsId,
+                'workspaceName': wsName,
+              };
+              if (wsId.isNotEmpty && wsId.toLowerCase() == workspaceId.toLowerCase()) {
+                here.add(dateStr);
+              } else {
+                elsewhere[dateStr] = wsName;
+              }
             }
           }
-          return (here: here, elsewhere: elsewhere, delegated: delegated, myUserId: foundUserId);
+          return (
+            here: here,
+            elsewhere: elsewhere,
+            delegated: delegated,
+            myUserId: foundUserId,
+            allReservations: allReservations,
+          );
         }
         debugPrint("❌ getMyReservations ${response.statusCode}");
       } catch (e) {
+        OfflineStateManager.instance.reportException(e);
         debugPrint("❌ Exception getMyReservations: $e");
       }
-      return (here: <String>{}, elsewhere: <String, String>{}, delegated: <String, String>{}, myUserId: null);
+      return (
+        here: <String>{},
+        elsewhere: <String, String>{},
+        delegated: <String, String>{},
+        myUserId: null,
+        allReservations: <String, Map<String, String>>{},
+      );
     }
 
   /// Finds a booking on a specific date (any workspace) and cancels it.
@@ -477,7 +509,7 @@ class RoomzApiService {
     final Map<String, String> delegated = {};
     final Set<String> delegatedHere = {};
     final Set<String> delegatedElsewhere = {};
-    final client = _customClient ?? http.Client(); // Use custom client if provided (testing), else persistent client
+    final client = _client;
     try {
       // Execute in parallel chunks of 15 to avoid overwhelming the server
       for (int i = 0; i < dates.length; i += 15) {

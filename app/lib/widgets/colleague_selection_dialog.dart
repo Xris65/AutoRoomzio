@@ -4,6 +4,8 @@ import 'package:shimmer/shimmer.dart';
 import '../models/colleague.dart';
 import '../storage_service.dart';
 import '../api_service.dart';
+import '../offline_state_manager.dart';
+import '../utils/error_sanitizer.dart';
 
 /// Modal dialog allowing users to pick a colleague for desk reservation.
 /// Features local favorites filtering, debounced remote directory search,
@@ -209,6 +211,18 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
         : (colleague.email.isNotEmpty ? colleague.email : colleague.name);
     if (_pendingFavoriteIds.contains(key)) return;
 
+    final isExternal = colleague.id.startsWith('ext_');
+    if (!isExternal && OfflineStateManager.instance.isOffline) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Modification impossible hors-ligne : une connexion Internet est requise pour modifier vos favoris."),
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _pendingFavoriteIds.add(key));
 
     try {
@@ -228,7 +242,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
 
       if (isFav) {
         final deleteTargetId = existingFav?.favoriteId ?? colleague.favoriteId ?? colleague.id;
-        if (token != null && token.isNotEmpty && deleteTargetId.isNotEmpty) {
+        if (token != null && token.isNotEmpty && deleteTargetId.isNotEmpty && !isExternal) {
           await _api.deleteFavorite(token, deleteTargetId);
         }
         if (colleague.id.isNotEmpty) {
@@ -248,7 +262,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
             (colleague.name.isNotEmpty && c.name.isNotEmpty && c.name.toLowerCase() == colleague.name.toLowerCase()));
       } else {
         String? newFavId;
-        if (token != null && token.isNotEmpty && colleague.id.isNotEmpty) {
+        if (token != null && token.isNotEmpty && colleague.id.isNotEmpty && !isExternal) {
           newFavId = await _api.addFavoriteWithId(token, colleague.id);
         }
         final updated = Colleague(
@@ -275,9 +289,10 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
         _filteredFavorites = List.from(_favorites);
       }
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erreur lors de la mise à jour des favoris: $e")),
+          SnackBar(content: Text(sanitizeErrorMessage(e, fallback: "Erreur lors de la mise à jour des favoris."))),
         );
       }
     } finally {

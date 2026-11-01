@@ -54,11 +54,31 @@ class _SetupScreenState extends State<SetupScreen> {
     _loadInitialData();
   }
 
+    List<Map<String, dynamic>> _parseFloorFeatures(dynamic rawFeatures) {
+    if (rawFeatures is List) {
+      return rawFeatures.whereType<Map<String, dynamic>>().toList();
+    } else if (rawFeatures is Map) {
+      final raw = rawFeatures['features'] ?? rawFeatures['data'] ?? [];
+      return raw is List ? raw.whereType<Map<String, dynamic>>().toList() : [];
+    }
+    return [];
+  }
+
   Future<void> _loadInitialData() async {
     setState(() => _loadingSites = true);
     
     try {
-      final sites = await _api.getSites(widget.accessToken);
+      List<Map<String, dynamic>> sites = [];
+      try {
+        sites = await _api.getSites(widget.accessToken);
+        if (sites.isNotEmpty) {
+          await _storage.saveCachedSites(sites);
+        } else {
+          sites = await _storage.getCachedSites();
+        }
+      } catch (_) {
+        sites = await _storage.getCachedSites();
+      }
       
       final savedSiteId = await _storage.getSiteId();
       final savedFloorId = await _storage.getFloorId();
@@ -74,16 +94,43 @@ class _SetupScreenState extends State<SetupScreen> {
       if (savedSiteId != null) {
         try {
           initialSite = sites.firstWhere((s) => s['id'].toString() == savedSiteId);
-          initialFloors = await _api.getFloors(widget.accessToken, savedSiteId);
+          try {
+            initialFloors = await _api.getFloors(widget.accessToken, savedSiteId);
+            if (initialFloors.isNotEmpty) {
+              await _storage.saveCachedFloors(savedSiteId, initialFloors);
+            } else {
+              initialFloors = await _storage.getCachedFloors(savedSiteId);
+            }
+          } catch (_) {
+            initialFloors = await _storage.getCachedFloors(savedSiteId);
+          }
           
           if (savedFloorId != null) {
             initialFloor = initialFloors.firstWhere((f) => f['id'].toString() == savedFloorId);
-            final results = await Future.wait([
-              _api.getAllWorkspaces(widget.accessToken, savedSiteId, savedFloorId),
-              _api.getFloorPlanData(widget.accessToken, savedSiteId, savedFloorId),
-            ]);
-            final allWs = results[0];
-            final initialFeatures = results[1];
+            List<Map<String, dynamic>> allWs = [];
+            dynamic initialFeatures;
+            try {
+              final results = await Future.wait([
+                _api.getAllWorkspaces(widget.accessToken, savedSiteId, savedFloorId),
+                _api.getFloorPlanData(widget.accessToken, savedSiteId, savedFloorId),
+              ]);
+              allWs = (results[0] as List).whereType<Map<String, dynamic>>().toList();
+              initialFeatures = results[1];
+              if (allWs.isNotEmpty) {
+                await _storage.saveFloorWorkspaces(savedFloorId, allWs);
+              } else {
+                allWs = await _storage.getFloorWorkspaces(savedFloorId);
+              }
+              if ((initialFeatures is List && initialFeatures.isNotEmpty) ||
+                  (initialFeatures is Map && initialFeatures.isNotEmpty)) {
+                await _storage.saveFloorPlanData(savedFloorId, initialFeatures);
+              } else {
+                initialFeatures = await _storage.getFloorPlanData(savedFloorId);
+              }
+            } catch (_) {
+              allWs = await _storage.getFloorWorkspaces(savedFloorId);
+              initialFeatures = await _storage.getFloorPlanData(savedFloorId);
+            }
             
             final workspaces = allWs.where((ws) {
               if (ws['isReservable'] == false) return false;
@@ -95,7 +142,7 @@ class _SetupScreenState extends State<SetupScreen> {
             }).toList();
             
             if (mounted) {
-               _floorFeatures = initialFeatures;
+               _floorFeatures = _parseFloorFeatures(initialFeatures);
                _allWorkspaces = allWs;
             }
             
@@ -147,6 +194,8 @@ class _SetupScreenState extends State<SetupScreen> {
           _loadingSites = false;
           if (sites.isEmpty) {
             _errorMessage = 'Aucun bâtiment trouvé. Vérifiez votre compte MyRoomz.';
+          } else {
+            _errorMessage = null;
           }
         });
       }
@@ -170,6 +219,8 @@ class _SetupScreenState extends State<SetupScreen> {
   String _roomSearch = '';
 
   Future<void> _onSiteSelected(Map<String, dynamic> site) async {
+    final siteId = site['id'].toString();
+    await _storage.saveSiteId(siteId);
     setState(() {
       _selectedSite = site;
       _selectedFloor = null;
@@ -181,7 +232,17 @@ class _SetupScreenState extends State<SetupScreen> {
       _loadingFloors = true;
       _currentStep = 1;
     });
-    final floors = await _api.getFloors(widget.accessToken, site['id'].toString());
+    List<Map<String, dynamic>> floors = [];
+    try {
+      floors = await _api.getFloors(widget.accessToken, siteId);
+      if (floors.isNotEmpty) {
+        await _storage.saveCachedFloors(siteId, floors);
+      } else {
+        floors = await _storage.getCachedFloors(siteId);
+      }
+    } catch (_) {
+      floors = await _storage.getCachedFloors(siteId);
+    }
     if (mounted) {
       setState(() {
         _floors = floors;
@@ -191,6 +252,8 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Future<void> _onFloorSelected(Map<String, dynamic> floor) async {
+    final floorId = floor['id'].toString();
+    await _storage.saveFloorId(floorId);
     setState(() {
       _selectedFloor = floor;
       _selectedRoomPrefix = null;
@@ -202,15 +265,31 @@ class _SetupScreenState extends State<SetupScreen> {
     });
     
     final siteId = _selectedSite!['id'].toString();
-    final floorId = floor['id'].toString();
     
-    // Un seul appel API, on filtre localement
-    final results = await Future.wait([
-      _api.getAllWorkspaces(widget.accessToken, siteId, floorId),
-      _api.getFloorPlanData(widget.accessToken, siteId, floorId),
-    ]);
-    final allWs = results[0];
-    final features = results[1];
+    List<Map<String, dynamic>> allWs = [];
+    dynamic features;
+    try {
+      final results = await Future.wait([
+        _api.getAllWorkspaces(widget.accessToken, siteId, floorId),
+        _api.getFloorPlanData(widget.accessToken, siteId, floorId),
+      ]);
+      allWs = (results[0] as List).whereType<Map<String, dynamic>>().toList();
+      features = results[1];
+      if (allWs.isNotEmpty) {
+        await _storage.saveFloorWorkspaces(floorId, allWs);
+      } else {
+        allWs = await _storage.getFloorWorkspaces(floorId);
+      }
+      if ((features is List && features.isNotEmpty) ||
+          (features is Map && features.isNotEmpty)) {
+        await _storage.saveFloorPlanData(floorId, features);
+      } else {
+        features = await _storage.getFloorPlanData(floorId);
+      }
+    } catch (_) {
+      allWs = await _storage.getFloorWorkspaces(floorId);
+      features = await _storage.getFloorPlanData(floorId);
+    }
 
     final bookable = allWs.where((ws) {
       if (ws['isReservable'] == false) return false;
@@ -238,7 +317,7 @@ class _SetupScreenState extends State<SetupScreen> {
     if (mounted) {
       setState(() {
         _rooms = grouped;
-        _floorFeatures = features;
+        _floorFeatures = _parseFloorFeatures(features);
         _allWorkspaces = allWs;
         _loadingWorkspaces = false;
       });

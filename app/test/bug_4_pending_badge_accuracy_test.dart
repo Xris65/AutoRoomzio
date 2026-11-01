@@ -245,7 +245,10 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
-      final futureDate = DateTime.now().add(const Duration(days: 20));
+      var futureDate = DateTime.now().add(const Duration(days: 20));
+      while (futureDate.weekday == DateTime.saturday || futureDate.weekday == DateTime.sunday) {
+        futureDate = futureDate.add(const Duration(days: 1));
+      }
       final dateStr = '${futureDate.year}-${futureDate.month.toString().padLeft(2, '0')}-${futureDate.day.toString().padLeft(2, '0')}';
 
       SharedPreferences.setMockInitialValues({

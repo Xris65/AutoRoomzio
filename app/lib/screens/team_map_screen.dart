@@ -12,6 +12,8 @@ import '../widgets/occupant_details_sheet.dart';
 import '../widgets/colleague_selection_dialog.dart';
 import '../widgets/action_loading_overlay.dart';
 import '../widgets/time_slider_bar.dart';
+import '../offline_state_manager.dart';
+import '../utils/error_sanitizer.dart';
 
 class _RoomSummary {
   final String roomName;
@@ -105,6 +107,14 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     if (widget.hideWeekends != null) {
       _hideWeekends = widget.hideWeekends!;
     }
+    if (_hideWeekends) {
+      if (_selectedDate.weekday == DateTime.saturday) {
+        _selectedDate = _selectedDate.add(const Duration(days: 2));
+      } else if (_selectedDate.weekday == DateTime.sunday) {
+        _selectedDate = _selectedDate.add(const Duration(days: 1));
+      }
+    }
+    _loadCacheFirst();
     _colleagueSearchController.addListener(() {
       if (mounted) {
         setState(() {
@@ -206,6 +216,33 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
+    Future<void> _loadCacheFirst() async {
+    final floorId = widget.initialFloorId ?? await _storage.getFloorId();
+    final dateStr = _formatDateIso(_selectedDate);
+    final results = await Future.wait([
+      _storage.getBookedDates(),
+      _storage.getBookedElsewhereDates(),
+      _storage.getUserReservationsMap(),
+      if (floorId != null) _storage.getFloorOccupants(floorId, dateStr) else Future.value(<String, DeskOccupant>{}),
+    ]);
+    final booked = (results[0] is List ? (results[0] as List).whereType<String>().toSet() : (results[0] as Iterable).map((e) => e.toString()).toSet());
+    final elsewhere = (results[1] is List ? (results[1] as List).whereType<String>().toSet() : (results[1] as Iterable).map((e) => e.toString()).toSet());
+    final userRes = (results[2] as Map<String, dynamic>);
+    final occs = (results[3] as Map<String, DeskOccupant>);
+    final allBooked = {...booked, ...elsewhere, ...userRes.keys};
+    if (occs.values.any((o) => o.isMe)) {
+      allBooked.add(dateStr);
+    }
+    if (mounted) {
+      setState(() {
+        _bookedDates.addAll(allBooked);
+        if (occs.isNotEmpty && _occupants.isEmpty) {
+          _occupants = occs;
+        }
+      });
+    }
+  }
+
   Future<void> _loadInitialData() async {
     setState(() {
       _isLoading = true;
@@ -214,16 +251,24 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
     try {
       final hw = await _storage.getHideWeekends();
+      final effectiveHide = widget.hideWeekends ?? hw;
+      _hideWeekends = effectiveHide;
+      if (effectiveHide) {
+        if (_selectedDate.weekday == DateTime.saturday) {
+          _selectedDate = _selectedDate.add(const Duration(days: 2));
+        } else if (_selectedDate.weekday == DateTime.sunday) {
+          _selectedDate = _selectedDate.add(const Duration(days: 1));
+        }
+      }
       if (mounted) {
-        setState(() {
-          _hideWeekends = widget.hideWeekends ?? hw;
-        });
-      } else {
-        _hideWeekends = widget.hideWeekends ?? hw;
+        setState(() {});
       }
       _requestedDates = (await _storage.getRequestedDates()).toSet();
       _requestedWorkspacesMap = await _storage.getRequestedWorkspacesMap();
-      _bookedDates = (await _storage.getBookedDates()).toSet();
+      final booked = await _storage.getBookedDates();
+      final bookedElsewhere = await _storage.getBookedElsewhereDates();
+      final userRes = await _storage.getUserReservationsMap();
+      _bookedDates = {...booked, ...bookedElsewhere, ...userRes.keys};
 
       await _loadFavorites();
 
@@ -254,14 +299,37 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
       // If site or floor not stored, fetch from API
       if (_siteId == null || _siteId!.isEmpty) {
-        final sites = await _api.getSites(token);
-        if (sites.isNotEmpty) {
-          _siteId = sites.first['id']?.toString();
+        try {
+          final sites = await _api.getSites(token);
+          if (sites.isNotEmpty) {
+            _siteId = sites.first['id']?.toString();
+            await _storage.saveCachedSites(sites);
+          } else {
+            final cachedSites = await _storage.getCachedSites();
+            if (cachedSites.isNotEmpty) {
+              _siteId = cachedSites.first['id']?.toString();
+            }
+          }
+        } catch (_) {
+          final cachedSites = await _storage.getCachedSites();
+          if (cachedSites.isNotEmpty) {
+            _siteId = cachedSites.first['id']?.toString();
+          }
         }
       }
 
       if (_siteId != null && _siteId!.isNotEmpty) {
-        _floors = await _api.getFloors(token, _siteId!);
+        try {
+          final fetchedFloors = await _api.getFloors(token, _siteId!);
+          if (fetchedFloors.isNotEmpty) {
+            _floors = fetchedFloors;
+            await _storage.saveCachedFloors(_siteId!, fetchedFloors);
+          } else {
+            _floors = await _storage.getCachedFloors(_siteId!);
+          }
+        } catch (_) {
+          _floors = await _storage.getCachedFloors(_siteId!);
+        }
         if (_floorId == null || _floorId!.isEmpty) {
           if (_floors.isNotEmpty) {
             _floorId = _floors.first['id']?.toString();
@@ -282,7 +350,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = "Erreur de chargement: $e";
+          _errorMessage = sanitizeErrorMessage(e, fallback: "Erreur de chargement.");
         });
       }
     }
@@ -290,11 +358,16 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Future<void> _loadFloorMapAndOccupancy(
       String token, String siteId, String floorId) async {
-    try {
-      final dateStr = _formatDateIso(_selectedDate);
-      final delegatedMap = await _storage.getDelegatedBookingsMap();
-      final savedEmail = await _storage.getSavedEmail();
+    final dateStr = _formatDateIso(_selectedDate);
+    final delegatedMap = await _storage.getDelegatedBookingsMap();
+    final savedEmail = await _storage.getSavedEmail();
 
+    dynamic planData;
+    List<Map<String, dynamic>> allWs = [];
+    Map<String, DeskOccupant> occs = {};
+    Object? lastError;
+
+    try {
       final futures = await Future.wait<dynamic>([
         _api.getFloorPlanData(token, siteId, floorId),
         _api.getAllWorkspaces(token, siteId, floorId),
@@ -307,71 +380,89 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         ),
       ]);
 
-      final planData = futures[0];
-      final List<Map<String, dynamic>> allWs = futures[1] is List
+      planData = futures[0];
+      allWs = futures[1] is List
           ? (futures[1] as List).whereType<Map<String, dynamic>>().toList()
           : <Map<String, dynamic>>[];
-      final Map<String, DeskOccupant> occs = futures[2] is Map
+      occs = futures[2] is Map
           ? Map<String, DeskOccupant>.from(futures[2] as Map)
           : <String, DeskOccupant>{};
 
-      List<Map<String, dynamic>> features;
-      if (planData is List) {
-        features = planData.whereType<Map<String, dynamic>>().toList();
-      } else if (planData is Map) {
-        final raw = planData['features'] ?? planData['data'] ?? [];
-        if (raw is List) {
-          features = raw.whereType<Map<String, dynamic>>().toList();
-        } else {
-          features = [];
-        }
+      if ((planData is List && planData.isNotEmpty) || (planData is Map && planData.isNotEmpty)) {
+        await _storage.saveFloorPlanData(floorId, planData);
+      } else {
+        planData = await _storage.getFloorPlanData(floorId);
+      }
+
+      if (allWs.isNotEmpty) {
+        await _storage.saveFloorWorkspaces(floorId, allWs);
+      } else {
+        allWs = await _storage.getFloorWorkspaces(floorId);
+      }
+
+      if (occs.isNotEmpty) {
+        await _storage.saveFloorOccupants(floorId, dateStr, occs);
+      } else {
+        occs = await _storage.getFloorOccupants(floorId, dateStr);
+      }
+    } catch (e) {
+      lastError = e;
+      planData = await _storage.getFloorPlanData(floorId);
+      allWs = await _storage.getFloorWorkspaces(floorId);
+      occs = await _storage.getFloorOccupants(floorId, dateStr);
+    }
+
+    if (lastError != null &&
+        (planData == null || (planData is List && planData.isEmpty) || (planData is Map && planData.isEmpty)) &&
+        allWs.isEmpty &&
+        occs.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isOccupancyLoading = false;
+          _errorMessage = sanitizeErrorMessage(lastError, fallback: "Erreur lors du chargement de l'étage.");
+        });
+      }
+      return;
+    }
+
+    List<Map<String, dynamic>> features;
+    if (planData is List) {
+      features = planData.whereType<Map<String, dynamic>>().toList();
+    } else if (planData is Map) {
+      final raw = planData['features'] ?? planData['data'] ?? [];
+      if (raw is List) {
+        features = raw.whereType<Map<String, dynamic>>().toList();
       } else {
         features = [];
       }
-      final bookable = allWs.where((w) {
-        return w['isReservable'] == true ||
-            w['bookable'] == true ||
-            w['isBookable'] == true;
-      }).toList();
+    } else {
+      features = [];
+    }
+    final bookable = allWs.where((w) {
+      return w['isReservable'] == true ||
+          w['bookable'] == true ||
+          w['isBookable'] == true;
+    }).toList();
 
-      if (mounted) {
-        final dateStr = _formatDateIso(_selectedDate);
-        if (_floorId != null) {
-          _occupancyCache["${_floorId}_$dateStr"] = occs;
-        }
-        final hasMe = occs.values.any((o) => o.isMe);
-        if (hasMe) {
-          _bookedDates.add(dateStr);
-        }
-        setState(() {
-          _features = features;
-          _allWorkspaces = allWs;
-          _workspaces = bookable;
-          _occupants = occs;
-          _isLoading = false;
-          _isOccupancyLoading = false;
-        });
-        _preloadWeekOccupancy(_selectedDate);
+    if (mounted) {
+      if (_floorId != null) {
+        _occupancyCache["${_floorId}_$dateStr"] = occs;
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _isOccupancyLoading = false;
-          if (_features.isEmpty) {
-            _errorMessage = "Erreur lors du chargement de l'étage: $e";
-          }
-        });
-        if (_features.isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("Erreur de mise à jour: $e"),
-              duration: const Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
+      final hasMe = occs.values.any((o) => o.isMe);
+      if (hasMe) {
+        _bookedDates.add(dateStr);
       }
+      setState(() {
+        _features = features;
+        _allWorkspaces = allWs;
+        _workspaces = bookable;
+        _occupants = occs;
+        _isLoading = false;
+        _isOccupancyLoading = false;
+        _errorMessage = null;
+      });
+      _preloadWeekOccupancy(_selectedDate);
     }
   }
 
@@ -411,15 +502,22 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       if (token != null && token.isNotEmpty && floorId != null) {
         final delegatedMap = await _storage.getDelegatedBookingsMap();
         final savedEmail = await _storage.getSavedEmail();
-        final occs = await _api.getFloorOccupants(
+        var occs = await _api.getFloorOccupants(
           token,
           floorId,
           dateStr,
           myUserEmail: savedEmail,
           delegatedBookingsMap: delegatedMap,
         );
+        if (occs.isEmpty) {
+          occs = await _storage.getFloorOccupants(floorId, dateStr);
+        } else {
+          await _storage.saveFloorOccupants(floorId, dateStr, occs);
+        }
         if (mounted && requestId == _occupancyRequestId) {
-          _occupancyCache["${floorId}_$dateStr"] = occs;
+          if (!OfflineStateManager.instance.isOffline || occs.isNotEmpty) {
+            _occupancyCache["${floorId}_$dateStr"] = occs;
+          }
           final hasMe = occs.values.any((o) => o.isMe);
           if (hasMe) {
             _bookedDates.add(dateStr);
@@ -436,11 +534,27 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         }
       }
     } catch (e) {
+      if (floorId != null) {
+        final cached = await _storage.getFloorOccupants(floorId, dateStr);
+        if (mounted && requestId == _occupancyRequestId) {
+          if (cached.isNotEmpty) {
+            _occupancyCache["${floorId}_$dateStr"] = cached;
+            if (cached.values.any((o) => o.isMe)) {
+              _bookedDates.add(dateStr);
+            }
+          }
+          setState(() {
+            _occupants = cached;
+            _isOccupancyLoading = false;
+          });
+          return;
+        }
+      }
       if (mounted && requestId == _occupancyRequestId) {
         setState(() => _isOccupancyLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Impossible de charger les présences : $e"),
+            content: Text(sanitizeErrorMessage(e, fallback: "Impossible de charger les présences.")),
             duration: const Duration(seconds: 2),
             behavior: SnackBarBehavior.floating,
           ),
@@ -472,14 +586,21 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     await Future.wait(missingDays.map((d) async {
       try {
         final dStr = _formatDateIso(d);
-        final occs = await _api.getFloorOccupants(
+        var occs = await _api.getFloorOccupants(
           token,
           floorId,
           dStr,
           myUserEmail: savedEmail,
           delegatedBookingsMap: delegatedMap,
         );
-        _occupancyCache["${floorId}_$dStr"] = occs;
+        if (occs.isEmpty) {
+          occs = await _storage.getFloorOccupants(floorId, dStr);
+        } else {
+          await _storage.saveFloorOccupants(floorId, dStr, occs);
+        }
+        if (occs.isNotEmpty) {
+          _occupancyCache["${floorId}_$dStr"] = occs;
+        }
         if (occs.values.any((o) => o.isMe)) {
           _bookedDates.add(dStr);
         }
@@ -509,7 +630,6 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   Future<void> _refreshData() async {
-    _occupancyCache.clear();
     setState(() => _isLoading = true);
     try {
       final hw = await _storage.getHideWeekends();
@@ -519,11 +639,42 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _hideWeekends = widget.hideWeekends ?? hw;
       }
       String? token = await _api.refreshMyToken(force: true);
+      if (token == null && OfflineStateManager.instance.isOffline) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Row(
+                children: [
+                  Icon(Icons.wifi_off_rounded, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text("Impossible d'actualiser : pas de connexion Internet. Données du cache conservées."),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      _occupancyCache.clear();
       token ??= await _storage.getRefreshToken();
       _cachedAccessToken = token;
       _requestedDates = (await _storage.getRequestedDates()).toSet();
       _requestedWorkspacesMap = await _storage.getRequestedWorkspacesMap();
+
+      if (token != null && token.isNotEmpty) {
+        try {
+          final apiFavs = await _api.getFavorites(token);
+          if (apiFavs.isNotEmpty) {
+            await _storage.mergeFavoriteColleagues(apiFavs);
+          }
+        } catch (_) {}
+      }
       await _loadFavorites();
+
       if (token != null && token.isNotEmpty && _siteId != null && _floorId != null) {
         await _loadFloorMapAndOccupancy(token, _siteId!, _floorId!);
       } else {
@@ -532,9 +683,29 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erreur lors de l'actualisation: $e")),
-        );
+        if (OfflineStateManager.instance.isOffline ||
+            e.toString().contains('SocketException') ||
+            e.toString().contains('Offline') ||
+            e.toString().contains('ClientException')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Row(
+                children: [
+                  Icon(Icons.wifi_off_rounded, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text("Impossible d'actualiser : pas de connexion Internet. Données du cache conservées."),
+                  ),
+                ],
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Erreur lors de l'actualisation: $e")),
+          );
+        }
       }
     }
   }
@@ -555,7 +726,18 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   void _changeDate(int offsetDays) {
-    final newDate = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day + offsetDays);
+    var newDate = _selectedDate.add(Duration(days: offsetDays));
+    if (_hideWeekends) {
+      if (offsetDays > 0) {
+        while (newDate.weekday == DateTime.saturday || newDate.weekday == DateTime.sunday) {
+          newDate = newDate.add(const Duration(days: 1));
+        }
+      } else if (offsetDays < 0) {
+        while (newDate.weekday == DateTime.saturday || newDate.weekday == DateTime.sunday) {
+          newDate = newDate.subtract(const Duration(days: 1));
+        }
+      }
+    }
     setState(() {
       _selectedDate = newDate;
     });
@@ -584,6 +766,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Future<void> _changeFloor(String newFloorId) async {
     if (newFloorId == _floorId) return;
+    await _storage.saveFloorId(newFloorId);
     setState(() {
       _floorId = newFloorId;
       _isLoading = true;
@@ -614,11 +797,23 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   Future<void> _toggleFavorite(DeskOccupant occupant) async {
+    final occId = occupant.occupantId ?? '';
+    final isExternal = occId.startsWith('ext_');
+    if (!isExternal && OfflineStateManager.instance.isOffline) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Modification impossible hors-ligne : une connexion Internet est requise pour modifier vos favoris."),
+          ),
+        );
+      }
+      return;
+    }
+
     try {
       final isFav = _isOccupantFavorite(occupant);
       String? token = await _api.refreshMyToken();
       token ??= await _storage.getRefreshToken();
-      final occId = occupant.occupantId ?? '';
 
       if (isFav) {
         if (token != null && token.isNotEmpty && occId.isNotEmpty) {
@@ -751,6 +946,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }
 
       if (success) {
+        await _storage.removeUserReservation(dateStr);
         _bookedDates.remove(dateStr);
         final bookedDates = await _storage.getBookedDates();
         bookedDates.remove(dateStr);
@@ -783,7 +979,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Erreur lors de l'annulation: $e"),
+            content: Text(sanitizeErrorMessage(e, fallback: "Erreur lors de l'annulation.")),
             backgroundColor: Colors.red,
           ),
         );
@@ -1372,6 +1568,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
       final success = await _api.reserveWorkspace(dateStr, token, wsId);
       if (success) {
+        await _storage.saveUserReservation(dateStr, wsId, deskName);
         _bookedDates.add(dateStr);
         final isDefault = _defaultWorkspaceId != null &&
             wsId.toLowerCase() == _defaultWorkspaceId!.toLowerCase();
@@ -1435,7 +1632,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Erreur lors de la réservation: $e"),
+            content: Text(sanitizeErrorMessage(e, fallback: "Erreur lors de la réservation.")),
             backgroundColor: Colors.red,
           ),
         );
@@ -1568,7 +1765,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Erreur lors de la réservation: $e"),
+            content: Text(sanitizeErrorMessage(e, fallback: "Erreur lors de la réservation.")),
             backgroundColor: Colors.red,
           ),
         );

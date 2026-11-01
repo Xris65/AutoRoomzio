@@ -2,6 +2,20 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.6.2] - 2026-11-01
+
+### Nouveautés
+- **Mode hors-ligne transparent** : Consultation fluide de vos réservations, de votre planning et du plan d'équipe même sans connexion Internet.
+- **Bandeau d'information hors-ligne** : Affichage d'un bandeau discret vous prévenant dès la perte de réseau et confirmant que vos données locales restent disponibles.
+- **Gestion multi-bureaux hors-ligne** : Mémorisation fidèle de chaque bureau réservé, sans perte de nom et sans libellé générique « Ailleurs » lors d'un changement de place sans réseau.
+
+### Correctifs
+- **Messages d'erreur conviviaux** : Remplacement des erreurs techniques et des adresses web internes par des messages simples et compréhensibles.
+- **Fiabilisation du calendrier** : Une réservation échouée en raison d'une coupure réseau n'est plus marquée à tort comme « En attente ».
+- **Retour visuel sur les réservations rapides** : Les boutons « Réserver aujourd'hui » et « Réserver demain » indiquent désormais clairement la cause si une réservation ne peut aboutir.
+- **Navigation des week-ends sur le plan d'équipe** : Respect strict du masquage des samedis et dimanches avec bascule automatique sur le lundi suivant.
+- **Synchronisation immédiate au retour du réseau** : Le bouton d'actualisation du plan d'équipe rétablit instantanément la synchronisation dès que la connexion Internet est retrouvée.
+
 ## [1.6.1] - 2026-10-15
 
 ### Nouveautés & Évolutions Carte 2D

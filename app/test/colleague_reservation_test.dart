@@ -955,6 +955,14 @@ void main() {
         await tester.pumpAndSettle();
       }
 
+      if (targetDay.month != now.month) {
+        final chevron = find.byIcon(Icons.chevron_right);
+        if (chevron.evaluate().isNotEmpty) {
+          await tester.tap(chevron.first);
+          await tester.pumpAndSettle();
+        }
+      }
+
       final dayFinder = find.text(targetDayNum).first;
       await tester.tap(dayFinder);
       await tester.pumpAndSettle();

@@ -50,7 +50,7 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
 
   List<DateTime> get _days {
     final monday = _monday;
-    final count = (widget.hideWeekends && widget.selectedDate.weekday <= 5) ? 5 : 7;
+    final count = widget.hideWeekends ? 5 : 7;
     return List.generate(
       count,
       (i) => DateTime(monday.year, monday.month, monday.day + i),
@@ -173,9 +173,15 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                   icon: const Icon(Icons.chevron_left),
                   tooltip: "Jour précédent",
                   onPressed: widget.onPreviousDay ??
-                      () => widget.onDateSelected(
-                            widget.selectedDate.subtract(const Duration(days: 1)),
-                          ),
+                      () {
+                        var prev = widget.selectedDate.subtract(const Duration(days: 1));
+                        if (widget.hideWeekends) {
+                          while (prev.weekday == DateTime.saturday || prev.weekday == DateTime.sunday) {
+                            prev = prev.subtract(const Duration(days: 1));
+                          }
+                        }
+                        widget.onDateSelected(prev);
+                      },
                 ),
                 Flexible(
                   child: InkWell(
@@ -270,9 +276,15 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                       icon: const Icon(Icons.chevron_right),
                       tooltip: "Jour suivant",
                       onPressed: widget.onNextDay ??
-                          () => widget.onDateSelected(
-                                widget.selectedDate.add(const Duration(days: 1)),
-                              ),
+                          () {
+                            var next = widget.selectedDate.add(const Duration(days: 1));
+                            if (widget.hideWeekends) {
+                              while (next.weekday == DateTime.saturday || next.weekday == DateTime.sunday) {
+                                next = next.add(const Duration(days: 1));
+                              }
+                            }
+                            widget.onDateSelected(next);
+                          },
                     ),
                   ],
                 ),

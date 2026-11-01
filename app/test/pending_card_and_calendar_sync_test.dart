@@ -108,6 +108,13 @@ void main() {
       await tester.pumpAndSettle();
 
       // Tap on the target day in the TableCalendar
+      if (targetDate.month != DateTime.now().month) {
+        final chevron = find.byIcon(Icons.chevron_right);
+        if (chevron.evaluate().isNotEmpty) {
+          await tester.tap(chevron.first);
+          await tester.pumpAndSettle();
+        }
+      }
       final dayCell = find.text('${targetDate.day}');
       expect(dayCell, findsWidgets);
       await tester.tap(dayCell.first);

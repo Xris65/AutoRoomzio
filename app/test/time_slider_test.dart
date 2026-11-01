@@ -65,23 +65,86 @@ void main() {
       expect(find.text('Dim 25'), findsOneWidget);
     });
 
-    testWidgets('3. Always displays weekend if selectedDate is on a weekend even with hideWeekends=true', (tester) async {
+    testWidgets('3. Excludes weekends stably when hideWeekends is true, even if selectedDate is on a weekend', (tester) async {
       final saturday = DateTime(2026, 10, 24);
+      DateTime? selected;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: TimeSliderBar(
               selectedDate: saturday,
               hideWeekends: true,
-              onDateSelected: (_) {},
+              onDateSelected: (d) => selected = d,
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Sam 24'), findsOneWidget);
-      expect(find.text('Dim 25'), findsOneWidget);
+      // Weekends should NOT be visible when hideWeekends is true
+      expect(find.text('Sam 24'), findsNothing);
+      expect(find.text('Dim 25'), findsNothing);
+
+      // Weekdays of that week should be visible
+      expect(find.text('Lun 19'), findsOneWidget);
+      expect(find.text('Mar 20'), findsOneWidget);
+      expect(find.text('Mer 21'), findsOneWidget);
+      expect(find.text('Jeu 22'), findsOneWidget);
+      expect(find.text('Ven 23'), findsOneWidget);
+
+      // Tapping a weekday slot selects it without changing slider length or abruptly hiding days
+      await tester.tap(find.text('Lun 19'));
+      await tester.pumpAndSettle();
+
+      expect(selected, isNotNull);
+      expect(selected!.day, equals(19));
+      expect(find.text('Sam 24'), findsNothing);
+      expect(find.text('Dim 25'), findsNothing);
+      expect(find.text('Lun 19'), findsOneWidget);
+    });
+
+    testWidgets('3b. Selecting days in slider never recalculates day count asymmetrically', (tester) async {
+      DateTime currentSelected = DateTime(2026, 10, 24); // Saturday
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (context, setState) {
+            return MaterialApp(
+              home: Scaffold(
+                body: TimeSliderBar(
+                  selectedDate: currentSelected,
+                  hideWeekends: true,
+                  onDateSelected: (d) => setState(() => currentSelected = d),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Lun 19'), findsOneWidget);
+      expect(find.text('Ven 23'), findsOneWidget);
+      expect(find.text('Sam 24'), findsNothing);
+      expect(find.text('Dim 25'), findsNothing);
+
+      // Select Wednesday
+      await tester.tap(find.text('Mer 21'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Lun 19'), findsOneWidget);
+      expect(find.text('Mer 21'), findsOneWidget);
+      expect(find.text('Ven 23'), findsOneWidget);
+      expect(find.text('Sam 24'), findsNothing);
+      expect(find.text('Dim 25'), findsNothing);
+
+      // Select Friday
+      await tester.tap(find.text('Ven 23'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Lun 19'), findsOneWidget);
+      expect(find.text('Ven 23'), findsOneWidget);
+      expect(find.text('Sam 24'), findsNothing);
+      expect(find.text('Dim 25'), findsNothing);
     });
 
     testWidgets('4. Tapping a day slot triggers onDateSelected callback', (tester) async {

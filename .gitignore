@@ -42,3 +42,7 @@ app/test/*.py
 
 # ── Teamwork Agent Metadata ───────────────────────────────────────────────────
 .agents/
+
+# ── Local Agent & Orchestration Rules ──────────────────────────────────────────
+AGENTS.md
+GEMINI.md

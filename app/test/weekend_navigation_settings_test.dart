@@ -61,7 +61,7 @@ void main() {
   }
 
   group('1. Navigation par flèches < et > sur le plan d\'équipe', () {
-    testWidgets('< et > avancent/reculent TOUJOURS d\'un jour sans jamais sauter les weekends (même si hideWeekends = true)', (tester) async {
+    testWidgets('< et > sautent les weekends (Vendredi -> Lundi, Lundi -> Vendredi) quand hideWeekends = true', (tester) async {
       tester.view.physicalSize = const Size(800, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -70,7 +70,47 @@ void main() {
         'site_id': 'site-1',
         'floor_id': 'fl-1',
         'refresh_token': 'mock-refresh-token',
-        'hide_weekends': true, // Même avec l'option activée, < et > ne sautent jamais les weekends
+        'hide_weekends': true,
+      });
+
+      final api = createMockApi();
+      final storage = StorageService();
+
+      await tester.pumpWidget(MaterialApp(
+        home: TeamMapScreen(
+          initialDate: friday, // Vendredi 6 nov.
+          storageService: storage,
+          apiService: api,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Vendredi 6 nov.'), findsOneWidget);
+
+      final nextBtn = find.byTooltip('Jour suivant');
+      final prevBtn = find.byTooltip('Jour précédent');
+
+      // Click > : Vendredi 6 nov. -> saute directement au Lundi 9 nov.
+      await tester.tap(nextBtn);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Lundi 9 nov.'), findsOneWidget);
+
+      // Click < : Lundi 9 nov. -> saute directement au Vendredi 6 nov.
+      await tester.tap(prevBtn);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Vendredi 6 nov.'), findsOneWidget);
+    });
+
+    testWidgets('< et > avancent/reculent d\'un jour incluant le weekend quand hideWeekends = false', (tester) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      SharedPreferences.setMockInitialValues({
+        'site_id': 'site-1',
+        'floor_id': 'fl-1',
+        'refresh_token': 'mock-refresh-token',
+        'hide_weekends': false,
       });
 
       final api = createMockApi();
@@ -100,25 +140,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Dimanche 8 nov.'), findsOneWidget);
 
-      // Click > : Dimanche 8 nov. -> Lundi 9 nov.
-      await tester.tap(nextBtn);
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Lundi 9 nov.'), findsOneWidget);
-
-      // Click < : Lundi 9 nov. -> Dimanche 8 nov.
-      await tester.tap(prevBtn);
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Dimanche 8 nov.'), findsOneWidget);
-
       // Click < : Dimanche 8 nov. -> Samedi 7 nov.
       await tester.tap(prevBtn);
       await tester.pumpAndSettle();
       expect(find.textContaining('Samedi 7 nov.'), findsOneWidget);
-
-      // Click < : Samedi 7 nov. -> Vendredi 6 nov.
-      await tester.tap(prevBtn);
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Vendredi 6 nov.'), findsOneWidget);
     });
   });
 
@@ -178,7 +203,7 @@ void main() {
       expect(reserveCalled, isTrue);
     });
 
-    testWidgets('Si "Masquer les weekends" est ACTIVÉ (true) : la réservation le weekend est BLOQUÉE avec mention', (tester) async {
+    testWidgets('Si "Masquer les weekends" est ACTIVÉ (true) : la date initiale weekend est basculée automatiquement sur le lundi suivant', (tester) async {
       tester.view.physicalSize = const Size(800, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -207,17 +232,13 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
+      final expectedMonday = saturdayDate.add(const Duration(days: 2));
       final deskFinder = find.text('01');
       expect(deskFinder, findsWidgets);
-      await tester.tap(deskFinder.first);
-      await tester.pumpAndSettle();
 
-      // "Réservations fermées le weekend" DOIT être affiché
-      expect(find.text("Réservations fermées le weekend"), findsOneWidget);
-
-      // Les boutons de réservation sont bloqués
-      expect(find.text("Réserver ce bureau pour moi"), findsNothing);
-      expect(find.text("Réserver ce bureau pour un collègue"), findsNothing);
+      // Le plan affiche le lundi à venir (aucun samedi affiché)
+      expect(find.textContaining('Samedi'), findsNothing);
+      expect(find.textContaining('${expectedMonday.day}'), findsWidgets);
     });
   });
 }

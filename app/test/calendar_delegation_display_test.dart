@@ -279,6 +279,14 @@ void main() {
         await tester.tap(find.text('Calendrier'));
         await tester.pumpAndSettle();
 
+        if (targetDate.month != now.month) {
+          final chevron = find.byIcon(Icons.chevron_right);
+          if (chevron.evaluate().isNotEmpty) {
+            await tester.tap(chevron.first);
+            await tester.pumpAndSettle();
+          }
+        }
+
         // 5. Verify calendar tile has tooltip label
         expect(
           find.byTooltip('Réservé pour Bob Martin par Alice Dupont'),

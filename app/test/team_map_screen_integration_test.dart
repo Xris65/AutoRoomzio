@@ -8,6 +8,7 @@ import 'package:auto_roomzio/api_service.dart';
 import 'package:auto_roomzio/storage_service.dart';
 import 'package:auto_roomzio/widgets/action_loading_overlay.dart';
 import 'package:auto_roomzio/screens/team_map_screen.dart';
+import 'package:auto_roomzio/offline_state_manager.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -87,6 +88,81 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tokenCalls, greaterThan(initialTokens));
+    });
+
+    testWidgets('Sync button triggers real API calls and restores online status when network is restored', (tester) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      int tokenCalls = 0;
+      final client = MockClient((req) async {
+        final path = req.url.path;
+        if (path.contains('/connect/token')) {
+          tokenCalls++;
+          return http.Response(jsonEncode({'access_token': 'mock-access', 'refresh_token': 'mock-refresh'}), 200);
+        }
+        if (path.contains('/floors') && path.contains('/data')) {
+          return http.Response(jsonEncode({
+            'features': [
+              {
+                'type': 'Feature',
+                'properties': {'workspaceId': 'ws-1', 'workspaceType': 'Desk', 'name': 'B01-01'},
+                'geometry': {
+                  'type': 'Polygon',
+                  'coordinates': [
+                    [[10.0, 10.0], [40.0, 10.0], [40.0, 40.0], [10.0, 40.0], [10.0, 10.0]]
+                  ]
+                }
+              }
+            ]
+          }), 200);
+        }
+        if (path.contains('/floors') && path.contains('/workspaces/calendars')) {
+          return http.Response(jsonEncode({'data': []}), 200);
+        }
+        if (path.contains('/workspaces')) {
+          return http.Response(jsonEncode([
+            {'id': 'ws-1', 'name': 'B01-01', 'isBookable': true}
+          ]), 200);
+        }
+        if (path.contains('/buildings') && path.contains('/floors')) {
+          return http.Response(jsonEncode([
+            {'id': 'fl-1', 'name': 'Étage 1'}
+          ]), 200);
+        }
+        return http.Response('[]', 200);
+      });
+
+      final api = RoomzApiService(client: client);
+      final storage = StorageService();
+
+      await tester.pumpWidget(MaterialApp(
+        home: TeamMapScreen(
+          apiService: api,
+          storageService: storage,
+          initialSiteId: 'site-1',
+          initialFloorId: 'fl-1',
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // Simulate network having gone offline previously
+      OfflineStateManager.instance.markOffline();
+      expect(OfflineStateManager.instance.isOffline, isTrue);
+
+      final syncButton = find.byTooltip('Actualiser');
+      expect(syncButton, findsOneWidget);
+
+      final initialTokens = tokenCalls;
+      // Tap sync/refresh button now that connection is restored
+      await tester.tap(syncButton);
+      await tester.pumpAndSettle();
+
+      // Unconditionally triggered API calls without short-circuit (R1)
+      expect(tokenCalls, greaterThan(initialTokens));
+      // Network response immediately restored online state (R2)
+      expect(OfflineStateManager.instance.isOffline, isFalse);
     });
 
     testWidgets('ActionLoadingOverlay is present in body hierarchy', (tester) async {
@@ -274,25 +350,15 @@ void main() {
       final nextButton = find.byTooltip('Jour suivant');
       final prevButton = find.byTooltip('Jour précédent');
 
-      // Advance: Friday -> Saturday 7 nov.
-      await tester.tap(nextButton);
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Samedi 7 nov.'), findsOneWidget);
-
-      // Advance: Saturday -> Sunday 8 nov.
-      await tester.tap(nextButton);
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Dimanche 8 nov.'), findsOneWidget);
-
-      // Advance: Sunday -> Monday 9 nov.
+      // Advance: Friday 6 nov. -> Monday 9 nov. (skips weekend when hideWeekends=true)
       await tester.tap(nextButton);
       await tester.pumpAndSettle();
       expect(find.textContaining('Lundi 9 nov.'), findsOneWidget);
 
-      // Previous button: Monday -> Sunday 8 nov.
+      // Previous button: Monday 9 nov. -> Friday 6 nov. (skips weekend)
       await tester.tap(prevButton);
       await tester.pumpAndSettle();
-      expect(find.textContaining('Dimanche 8 nov.'), findsOneWidget);
+      expect(find.textContaining('Vendredi 6 nov.'), findsOneWidget);
     });
 
     testWidgets('Free desk sheet on date > J+13 allows advance programming and disables colleague booking', (tester) async {
@@ -385,7 +451,7 @@ void main() {
       expect(updatedReq.contains(isoDate), isFalse);
     });
 
-    testWidgets('Retour #1: Weekend displays "Réservations fermées le weekend" on free desk', (tester) async {
+    testWidgets('Retour #1: Saturday initialDate automatically redirects to upcoming Monday when hideWeekends is active', (tester) async {
       tester.view.physicalSize = const Size(800, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -436,16 +502,17 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
+      // Automatically redirected to Monday 12 oct.
+      expect(find.textContaining('Lundi 12 oct.'), findsOneWidget);
+
       // Tap on the desk
       final deskWidget = find.text('99');
       expect(deskWidget, findsOneWidget);
       await tester.tap(deskWidget);
       await tester.pumpAndSettle();
 
-      // Should show weekend closed message and NO reservation buttons
-      expect(find.text("Réservations fermées le weekend"), findsOneWidget);
-      expect(find.text("Réserver ce bureau pour moi"), findsNothing);
-      expect(find.text("Programmer ce bureau (En attente)"), findsNothing);
+      // Weekend blocked message is NOT displayed because it redirected to Monday
+      expect(find.text("Réservations fermées le weekend"), findsNothing);
     });
 
     testWidgets('Retour #1: DatePicker opens cleanly even when initialDate is a weekend', (tester) async {

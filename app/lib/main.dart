@@ -9,6 +9,8 @@ import 'notification_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'api_service.dart';
+import 'offline_state_manager.dart';
+import 'widgets/offline_ribbon.dart';
 
 import 'package:google_fonts/google_fonts.dart';
 
@@ -116,7 +118,17 @@ class MyApp extends StatelessWidget {
                         final targetScale = (mediaQuery.textScaler.scale(1.0) * uiScale).clamp(0.75, 1.35);
                         return MediaQuery(
                           data: mediaQuery.copyWith(textScaler: TextScaler.linear(targetScale)),
-                          child: child ?? const SizedBox.shrink(),
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: OfflineStateManager.instance.isOfflineNotifier,
+                            builder: (context, isOffline, _) {
+                              return Column(
+                                children: [
+                                  Expanded(child: child ?? const SizedBox.shrink()),
+                                  if (isOffline) const OfflineRibbon(),
+                                ],
+                              );
+                            },
+                          ),
                         );
                       },
                       scrollBehavior: const MaterialScrollBehavior().copyWith(

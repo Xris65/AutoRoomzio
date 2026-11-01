@@ -1,89 +1,136 @@
-# Project: AutoRoomzio v1.6.0
+# Project: AutoRoomzio v1.6.2 (Reactive Offline Mode & Cache Persistence)
 
 ## Architecture
-AutoRoomzio is a multi-platform Flutter application (Android, Windows, Web) for desk booking and presence management.
-- **Presentation Layer**:
-  - `LoginScreen` (`app/lib/screens/login_screen.dart`): Authentication, Web Form with regex validation, email remembering.
-  - `HomeScreen` (`app/lib/screens/home_screen.dart`): Navigation bar, dynamic tab rendering (Home, Calendar, Automate, Stats, Settings), multi-platform auto-updates.
-  - `TeamMapScreen` (`app/lib/screens/team_map_screen.dart`): 2D interactive floor plan view, date navigation, presence filter panel, free desk booking & cancellation bottom sheets.
-  - `WorkspaceMapViewer` (`app/lib/widgets/workspace_map_viewer.dart`): Custom SVG/canvas floor rendering, `TransformationController` camera centering & zooming, desk tap dispatching.
-  - `OccupantDetailsSheet` (`app/lib/widgets/occupant_details_sheet.dart`): Colleague detail card, favorite toggle, own-desk booking cancellation button.
-- **Service Layer**:
-  - `StorageService` (`app/lib/storage_service.dart`): Local persistence via `SharedPreferences` and `FlutterSecureStorage`, preserving remembered email across `clearAllData()` / `clearTokens()`.
-  - `ApiService` (`app/lib/api_service.dart`): Direct and delegated booking API endpoints, roomzauth worker calls.
+AutoRoomzio is a multi-platform Flutter application for desk booking and presence management.
+In v1.6.2, AutoRoomzio introduces a reactive, non-blocking offline mode with global fixed ribbon and comprehensive local cache persistence:
+- **Network & State Layer**:
+  - `OfflineStateManager` (`app/lib/offline_state_manager.dart`): Central singleton exposing reactive `ValueNotifier<bool> isOfflineNotifier`. Starts with `isOffline == false` (R1).
+  - `OfflineAwareHttpClient` (`app/lib/offline_state_manager.dart`): Extends `http.BaseClient`, intercepts `SocketException`, `TimeoutException`, `ClientException` to flip `isOffline = true` (R2). On successful HTTP response (2xx), flips `isOffline = false`. Unconditionally forwards all requests without blocking or short-circuiting (R1).
+  - `RoomzApiService` (`app/lib/api_service.dart`): Uses `OfflineAwareHttpClient` for standard and batch parallel HTTP queries. Propagates network errors to prevent destructive cache wiping.
+- **Persistence Layer**:
+  - `StorageService` (`app/lib/storage_service.dart`): Persistent cache using `SharedPreferences`. In v1.6.2, extended with persistence for `booked_elsewhere_map`, `occupied_by_others_map`, `floor_occupants_${floorId}_$date`, `floor_plan_$floorId`, and `floor_workspaces_$floorId`.
+  - Non-destructive caching in `HomeScreen` and `TeamMapScreen`: In case of network failure or offline mode, cached personal reservations, delegated reservations, calendar days, and map occupants are strictly preserved and never overwritten with empty collections (R3).
+- **Presentation & Global Ribbon Layer**:
+  - `OfflineRibbon` (`app/lib/widgets/offline_ribbon.dart`): Fixed, discrete ribbon displaying exact text: `"Hors ligne • Affichage des dernières données synchronisées"`. Styled with Amber theme and WCAG AAA compliant text contrast.
+  - `MaterialApp.builder` (`app/lib/main.dart`): Root shell wrapper mounting `OfflineRibbon` via `ValueListenableBuilder<bool>` above/below the root `Navigator` (`child`), guaranteeing universal presence across all screens, dialogs, and navigation routes without modifying individual screen files (R2).
+- **Quality & Test Track**:
+  - `flutter analyze`: 0 issues found.
+  - Comprehensive unit & widget test suite in `app/test/` validating offline state transitions, ribbon rendering, cache persistence, and screen resilience.
+  - Strict local branch execution on `version-1.6.2` without remote push.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | R1.1 Web Form & TextFormField | Replace simple TextFields with Form & GlobalKey<FormState> in LoginScreen for Web | M1 | ORIGINAL_REQUEST §R1 |
-| 2 | R1.2 Strict Email Regex Validation | Enforce non-empty, trimmed, regex `^[^\s@]+@[^\s@]+\.[^\s@]+$` with explicit error message | M1 | ORIGINAL_REQUEST §R1 |
-| 3 | R1.3 Password Min-Length Validation | Enforce non-empty, min 6 characters with error message under password field | M1 | ORIGINAL_REQUEST §R1 |
-| 4 | R1.4 Network Call Blocking | Prevent any call to `_api.login()` or Cloudflare Worker if form validation fails | M1 | ORIGINAL_REQUEST §R1 |
-| 5 | R1.5 Remember My Email Option | Checkbox "Se souvenir de mon email" (default true), persist in StorageService, preserve on logout if checked, erase if unchecked | M1 | ORIGINAL_REQUEST §R1 |
-| 6 | R2.1 Web Auto-Update Disable | Skip `_checkUpdatesOnStartup()` on Web (`kIsWeb`) | M2 | ORIGINAL_REQUEST §R2 |
-| 7 | R2.2 Windows Auto-Update Target | Find asset ending in `.zip` (or html_url fallback) and launch via `launchUrl(..., mode: LaunchMode.externalApplication)` on Windows | M2 | ORIGINAL_REQUEST §R2 |
-| 8 | R2.3 Android Auto-Update Target | Target asset ending in `.apk` on Android using `DownloadDialog` + `OpenFilex` | M2 | ORIGINAL_REQUEST §R2 |
-| 9 | R3.1 Web Stats Banner Clean-up | Hide or adapt "Rythme de Présence Paramétré" banner on Web when `_selectedDays` is empty, avoiding mention of hidden Automate tab | M2 | ORIGINAL_REQUEST §R3 |
-| 10 | R3.2 Settings Tab Index Fix | Deterministic `_currentIndex` calculation when toggling Automate and Stats switches, preventing RangeError / tab shift | M2 | ORIGINAL_REQUEST §R3 |
-| 11 | R4.1 Free Desk Tap & BottomSheet | Wire `WorkspaceMapViewer.onSelected`, open bottom sheet displaying desk, room, and date info | M3 | ORIGINAL_REQUEST §R4 |
-| 12 | R4.2 Booking Date Guard | Show non-availability message if date is in the past or beyond J+13 | M3 | ORIGINAL_REQUEST §R4 |
-| 13 | R4.3 Reserve For Me (Direct) | Reserve workspace without overriding default favorite desk, update local state and refresh floor occupancy | M3 | ORIGINAL_REQUEST §R4 |
-| 14 | R4.4 Reserve For Colleague (Delegated) | Open `ColleagueSelectionDialog`, call `reserveWorkspaceForColleague`, persist delegation, refresh occupancy | M3 | ORIGINAL_REQUEST §R4 |
-| 15 | R4.5 Cancel Own Reservation from Map | Show "Libérer ma place" button in `OccupantDetailsSheet` when `occupant.isMe == true`, call cancellation API and refresh map | M3 | ORIGINAL_REQUEST §R4 |
-| 16 | R5.1 Desk Camera Centering & Zoom | Implement camera focus on desk coordinates via `TransformationController` in `WorkspaceMapViewer` | M3 | ORIGINAL_REQUEST §R5 |
-| 17 | R5.2 Colleagues Search & Filter | Add search field in "Collègues présents" panel in `TeamMapScreen` filtering by name or room | M3 | ORIGINAL_REQUEST §R5 |
-| 18 | R5.3 Colleague Tap to Camera Focus | Tapping a colleague focuses/zooms the camera on their desk and opens their `OccupantDetailsSheet` | M3 | ORIGINAL_REQUEST §R5 |
-| 19 | R6.1 Version Bump 1.5.2 | Update `version: 1.5.2` in `app/pubspec.yaml` | M4 | ORIGINAL_REQUEST §R6 |
-| 20 | R6.2 CHANGELOG 1.5.2 Entry | Add `## [1.5.2] - 2026-10-11` entry at top of root `CHANGELOG.md` | M4 | ORIGINAL_REQUEST §R6 |
-| 21 | R6.3 Static Analysis Clean-up | Resolve existing linter issues in `lib/` and `test/` to achieve `flutter analyze` exit 0 (No issues found!) | M4 | ORIGINAL_REQUEST §R6 |
-| 22 | R6.4 Test Suite & 100% Pass Rate | Add/update comprehensive unit & widget tests covering R1-R5, ensure `flutter test` passes 100% | M5 | ORIGINAL_REQUEST §R6 |
-| 23 | R6.5 Strict Git Conformance | Work strictly on local branch `version-1.5.2`, 0 remote pushes, no changes to main/develop | M4 | ORIGINAL_REQUEST §R6 |
+| 1 | R1.1 Online Startup Default | App starts by default with `isOffline == false` and hidden ribbon | M1 | ORIGINAL_REQUEST §R1 |
+| 2 | R1.2 Continuous Unblocked API Requests | All user actions, navigation, and refreshes trigger real API requests without being blocked or short-circuited when offline | M1 | ORIGINAL_REQUEST §R1 |
+| 3 | R2.1 Reactive Offline Detection | Switch `isOffline = true` immediately upon network connectivity error (`SocketException`, `TimeoutException`, `ClientException`) | M1 | ORIGINAL_REQUEST §R2 |
+| 4 | R2.2 Reactive Online Restoration | Switch `isOffline = false` immediately upon any successful API response (2xx) and hide ribbon | M1 | ORIGINAL_REQUEST §R2 |
+| 5 | R2.3 Global Fixed Offline Ribbon | Persistent discrete ribbon with exact text: `"Hors ligne • Affichage des dernières données synchronisées"` mounted globally in `MaterialApp.builder` | M3 | ORIGINAL_REQUEST §R2 |
+| 6 | R3.1 Personal Reservations Cache Persistence | Preserve personal reservations in `StorageService` and `HomeScreen` without clearing to empty list on network failure | M2 | ORIGINAL_REQUEST §R3 |
+| 7 | R3.2 Delegated Reservations Cache Persistence | Preserve delegated reservations in `StorageService` and `HomeScreen` without clearing to empty list on network failure | M2 | ORIGINAL_REQUEST §R3 |
+| 8 | R3.3 Calendar Days Cache Persistence | Preserve calendar days, requested dates, and third-party occupancy in `StorageService` and `HomeScreen` without clearing on network failure | M2 | ORIGINAL_REQUEST §R3 |
+| 9 | R3.4 Map Occupants Cache Persistence | Implement `saveFloorOccupants` / `getFloorOccupants` in `StorageService` and preserve occupants in `TeamMapScreen` without clearing on network failure | M2 | ORIGINAL_REQUEST §R3 |
+| 10 | R4.1 Version Bump & Metadata Alignment | Bump `pubspec.yaml` to `version: 1.6.2` | M2 | ORIGINAL_REQUEST §R4 |
+| 11 | R4.2 Unit & Widget Test Suite | Comprehensive tests in `app/test/` covering offline reactivity, ribbon visibility, and cache persistence | M4 | ORIGINAL_REQUEST §R4 |
+| 12 | R4.3 Static Analysis Cleanliness | `flutter analyze` passes with 0 issues | M4 | ORIGINAL_REQUEST §R4 |
+| 13 | R4.4 Git Local Branch Conformance | Work exclusively on `version-1.6.2` with 0 remote pushes | M4 | ORIGINAL_REQUEST §R4 |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Web Login Form & Email Remember | R1.1, R1.2, R1.3, R1.4, R1.5 | None | DONE |
-| M2 | Multi-Platform Update & Web Stats/Settings | R2.1, R2.2, R2.3, R3.1, R3.2 | None | DONE |
-| M3 | 2D Team Map Booking, Cancel, Focus & Search | R4.1–R4.5, R5.1–R5.3 | None | DONE |
-| M4 | Version 1.5.2, CHANGELOG & Linter Clean-up | R6.1, R6.2, R6.3, R6.5 | M1, M2, M3 | DONE |
-| M5 | Comprehensive Testing Track & Verification Gate | R6.4 (Tiers 1-4 tests, Challenger & Auditor) | M1, M2, M3, M4 | DONE (Streamlined per user directive) |
+| M1 | Reactive Offline Network Layer | R1.1, R1.2, R2.1, R2.2 | None | DONE (`OfflineStateManager`, `OfflineAwareHttpClient`, 62/62 tests passed) |
+| M2 | StorageService Persistence & Screen Protection | R3.1, R3.2, R3.3, R3.4, R4.1 | None (uses OfflineStateManager contract) | DONE (`StorageService`, `HomeScreen`, `TeamMapScreen`, `pubspec.yaml` 1.6.2, 45/45 tests passed) |
+| M3 | Global Fixed Offline Ribbon & App Shell | R2.3 | None (uses OfflineStateManager contract) | DONE (`OfflineRibbon`, `main.dart` builder, 13/13 tests passed) |
+| M4 | Comprehensive Testing Track & Verification Gate | R4.2, R4.3, R4.4 | M1, M2, M3 | DONE (59/59 E2E tests, 27/27 stress tests, Gate PASS: 2x APPROVE, 2x CHALLENGE PASS, CLEAN AUDIT) |
+
 
 ## Interface Contracts
-### `app/lib/storage_service.dart` (M1)
-- `Future<void> saveRememberEmail(bool remember)`
-- `Future<bool> getRememberEmail()`
-- `Future<void> saveSavedEmail(String email)`
-- `Future<String?> getSavedEmail()`
-- `Future<void> clearAll()` / `clearAllData()`: Must preserve `saved_email` and `remember_email` if `remember_email == true`; if `false`, remove both.
 
-### `app/lib/screens/login_screen.dart` (M1)
-- Form validation via `final _formKey = GlobalKey<FormState>()`.
-- Regex: `RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')`.
-- Password: min 6 chars.
+### `app/lib/offline_state_manager.dart` (M1)
+```dart
+class OfflineStateManager {
+  OfflineStateManager._();
+  static final OfflineStateManager instance = OfflineStateManager._();
 
-### `app/lib/screens/home_screen.dart` (M2)
-- Updates check:
-  - If `kIsWeb`, return immediately.
-  - If Android (`Platform.isAndroid`), filter asset ending in `.apk`.
-  - If Windows (`Platform.isWindows`), filter asset ending in `.zip` or fallback `html_url`, call `launchUrl(..., mode: LaunchMode.externalApplication)`.
-- Tab indexing:
-  - `_currentIndex = 2 + (_showAutomation && !kIsWeb ? 1 : 0) + (_showStats ? 1 : 0)` when switches toggle.
+  final ValueNotifier<bool> isOfflineNotifier = ValueNotifier<bool>(false);
+  bool get isOffline => isOfflineNotifier.value;
 
-### `app/lib/widgets/workspace_map_viewer.dart` ↔ `app/lib/screens/team_map_screen.dart` (M3)
-- `WorkspaceMapViewer`:
-  - `final String? focusedWorkspaceId;` (or `void focusWorkspace(String workspaceId)`)
-  - Calculates desk center and applies `TransformationController` matrix with zoom factor ~1.8.
-  - `onSelected: (Workspace ws) => void` triggered when free desk tapped.
-- `OccupantDetailsSheet`:
-  - `final VoidCallback? onCancelMyBooking;`
-  - Shows "Libérer ma place" button when `occupant.isMe == true` and `onCancelMyBooking != null`.
+  void markOffline();
+  void markOnline();
+  void reset(); // For testing: resets to false
+  bool isConnectivityError(Object error);
+}
+
+class OfflineAwareHttpClient extends http.BaseClient {
+  final http.Client _inner;
+  OfflineAwareHttpClient([http.Client? inner]);
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request);
+}
+```
+
+### `app/lib/storage_service.dart` (M2)
+```dart
+// Personal elsewhere reservations map
+Future<void> saveBookedElsewhereMap(Map<String, String> map);
+Future<Map<String, String>> getBookedElsewhereMap();
+
+// Calendar third-party occupancy map
+Future<void> saveOccupiedByOthers(Map<String, String> map);
+Future<Map<String, String>> getOccupiedByOthers();
+
+// Delegated reservations map (save during calendar sync)
+Future<void> saveDelegatedBookingsMap(Map<String, String> map);
+Future<Map<String, String>> getDelegatedBookingsMap();
+
+// Floor occupants persistence
+Future<void> saveFloorOccupants(String floorId, String date, Map<String, DeskOccupant> occupants);
+Future<Map<String, DeskOccupant>> getFloorOccupants(String floorId, String date);
+
+// Floor plan and workspaces persistence
+Future<void> saveFloorPlanData(String floorId, dynamic planData);
+Future<dynamic> getFloorPlanData(String floorId);
+Future<void> saveFloorWorkspaces(String floorId, List<Map<String, dynamic>> workspaces);
+Future<List<Map<String, dynamic>>> getFloorWorkspaces(String floorId);
+```
+
+### `app/lib/widgets/offline_ribbon.dart` ↔ `app/lib/main.dart` (M3)
+```dart
+class OfflineRibbon extends StatelessWidget {
+  const OfflineRibbon({super.key});
+  static const String ribbonText = "Hors ligne • Affichage des dernières données synchronisées";
+  @override
+  Widget build(BuildContext context);
+}
+
+// In MaterialApp.builder (main.dart):
+builder: (context, child) {
+  final mediaQuery = MediaQuery.of(context);
+  final targetScale = (mediaQuery.textScaler.scale(1.0) * uiScale).clamp(0.75, 1.35);
+  return MediaQuery(
+    data: mediaQuery.copyWith(textScaler: TextScaler.linear(targetScale)),
+    child: ValueListenableBuilder<bool>(
+      valueListenable: OfflineStateManager.instance.isOfflineNotifier,
+      builder: (context, isOffline, _) {
+        return Column(
+          children: [
+            Expanded(child: child ?? const SizedBox.shrink()),
+            if (isOffline) const OfflineRibbon(),
+          ],
+        );
+      },
+    ),
+  );
+}
+```
 
 ## Code Layout
-- `app/lib/screens/login_screen.dart`: Owned exclusively by Milestone 1 Worker
-- `app/lib/storage_service.dart`: Owned exclusively by Milestone 1 Worker
+- `app/lib/offline_state_manager.dart`: Owned exclusively by Milestone 1 Worker
+- `app/lib/api_service.dart`: Owned exclusively by Milestone 1 Worker
+- `app/lib/storage_service.dart`: Owned exclusively by Milestone 2 Worker
 - `app/lib/screens/home_screen.dart`: Owned exclusively by Milestone 2 Worker
-- `app/lib/screens/team_map_screen.dart`: Owned exclusively by Milestone 3 Worker
-- `app/lib/widgets/workspace_map_viewer.dart`: Owned exclusively by Milestone 3 Worker
-- `app/lib/widgets/occupant_details_sheet.dart`: Owned exclusively by Milestone 3 Worker
-- `app/pubspec.yaml`, `CHANGELOG.md`, lint fixes in `app/lib/`: Owned by Milestone 4 Worker
-- `app/test/`: Owned by Milestone 5 Worker / Test Writer
+- `app/lib/screens/team_map_screen.dart`: Owned exclusively by Milestone 2 Worker
+- `app/pubspec.yaml`: Owned exclusively by Milestone 2 Worker
+- `app/lib/widgets/offline_ribbon.dart`: Owned exclusively by Milestone 3 Worker
+- `app/lib/main.dart`: Owned exclusively by Milestone 3 Worker
+- `app/test/`: Owned by Milestone 4 Testing Track & Test Writer

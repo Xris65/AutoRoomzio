@@ -29,6 +29,8 @@ import '../models/colleague.dart';
 import '../models/booking_result.dart';
 import '../widgets/colleague_selection_dialog.dart';
 import '../utils/delegation_display_helper.dart';
+import '../offline_state_manager.dart';
+import '../utils/error_sanitizer.dart';
 
 class HomeScreen extends StatefulWidget {
   final StorageService? storageService;
@@ -111,7 +113,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showTopToast(String message, {bool isError = false}) {
-    if (!isError) return;
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars(); // Cancels previous to avoid infinite queue
     
@@ -119,12 +120,12 @@ class _HomeScreenState extends State<HomeScreen> {
       SnackBar(
         content: Row(
           children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            Icon(isError ? Icons.error_outline : Icons.check_circle_outline, color: Colors.white, size: 20),
             const SizedBox(width: 12),
             Expanded(child: Text(message, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
           ],
         ),
-        backgroundColor: Colors.red.shade600,
+        backgroundColor: isError ? Colors.red.shade600 : Colors.green.shade600,
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
         elevation: 6,
@@ -232,9 +233,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final requested = await _storage.getRequestedDates();
     final requestedWorkspaces = await _storage.getRequestedWorkspacesMap();
     final requestedNames = await _storage.getRequestedWorkspaceNamesMap();
-    final booked = await _storage.getBookedDates();
     final ignored = await _storage.getIgnoredDates();
-    final elsewhere = await _storage.getBookedElsewhereDates();
+    final wsId = await _storage.getWorkspaceId();
+    final partition = await _storage.partitionUserReservations(wsId);
     final autoEnabled = await _storage.getAutomationEnabled();
     final autoTimeMap = await _storage.getAutomationTime();
     final showAuto = await _storage.getShowAutomation();
@@ -257,9 +258,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _requestedDates = requested.toSet();
         _requestedWorkspacesMap = requestedWorkspaces;
         _requestedWorkspaceNamesMap = requestedNames;
-        _bookedDates = booked.toSet();
+        _bookedDates = partition.here;
         _ignoredDates = ignored.toSet();
-        _bookedElsewhereMap = {for (var d in elsewhere) d: "Ailleurs"};
+        _bookedElsewhereMap = partition.elsewhere;
         _delegatedBookingsMap = delegated;
         _allTimeBookedDates = allTimeBooked.toSet();
         _allTimeElsewhereDates = allTimeElsewhere.toSet();
@@ -786,7 +787,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _wrapWithPtr(Widget child) {
     if (_pullToRefreshEnabled) {
       return RefreshIndicator(
-        onRefresh: _syncCalendar,
+        onRefresh: () => _syncCalendar(isManual: true),
         child: child,
       );
     }
@@ -1182,6 +1183,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                       _storage.saveBookedDates(_bookedDates.toList());
                                       _storage.saveRequestedDates(_requestedDates.toList());
                                       _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
+                                      for (final dateStr in toCleanLocally) {
+                                        await _storage.removeUserReservation(dateStr);
+                                      }
                                     }
                                   }
                                   
@@ -1464,7 +1468,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           IconButton(
                             icon: const Icon(Icons.sync),
                             tooltip: 'Synchroniser avec MyRoomz',
-                            onPressed: _syncCalendar,
+                            onPressed: () => _syncCalendar(isManual: true),
                           ),
                         ],
                       ),
@@ -1812,6 +1816,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
 
       if (isBooked) {
+        await _storage.removeUserReservation(dateStr);
         await _storage.removeRequestedDate(dateStr);
         await _storage.saveRequestedDates(_requestedDates.toList());
         await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
@@ -1913,7 +1918,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _syncCalendar() async {
+  Future<void> _syncCalendar({bool isManual = false}) async {
     if (_isCalendarBusy) return;
 
     final workspaceId = await _storage.getWorkspaceId();
@@ -1923,12 +1928,34 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    void showOfflineNotice() {
+      if (isManual && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Row(
+              children: [
+                Icon(Icons.wifi_off_rounded, color: Colors.white),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text("Impossible de synchroniser : pas de connexion Internet. Données du cache conservées."),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+
     setState(() => _isCalendarBusy = true);
 
     try {
       if (_isLoading) _loadingTextNotifier.value = "Connexion aux serveurs MyRoomz...";
       final accessToken = await _api.refreshMyToken();
-      if (accessToken == null) return;
+      if (accessToken == null) {
+        showOfflineNotice();
+        return;
+      }
 
       if (_isLoading) _loadingTextNotifier.value = "Vérification de la configuration du bureau...";
       
@@ -1950,7 +1977,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
 
       // Fetch the user's specific bookings — here (this desk) + elsewhere (other desks)
-            if (_isLoading) _loadingTextNotifier.value = "Récupération de l'occupation du bureau...";
+      if (_isLoading) _loadingTextNotifier.value = "Récupération de l'occupation du bureau...";
       
       // La réservation manuelle par d'autres est limitée à J+13. On ne vérifie que cette période !
       List<String> visibleDates = [];
@@ -1962,32 +1989,37 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       
       final floorId = await _storage.getFloorId();
-              final myBookings = await _api.getMyReservations(accessToken, workspaceId);
-        final myUserId = myBookings.myUserId ?? await _api.getCurrentUserId(accessToken);
+      final myBookings = await _api.getMyReservations(accessToken, workspaceId);
+      final myUserId = myBookings.myUserId ?? await _api.getCurrentUserId(accessToken);
         
-                final occResult = floorId != null ? await _api.getWorkspaceOccupancy(accessToken, workspaceId, floorId, visibleDates, myUserId, myBookings.elsewhere) : (occupiedByOthers: <String, String>{}, delegatedBookings: <String, String>{}, delegatedHere: <String>{}, delegatedElsewhere: <String>{});
-        final occupiedDates = occResult.occupiedByOthers;
-        // Use myBookings.delegated as source of truth — it comes from /users/current/bookings
-        // which has the real workspaceName. Format: "organizerName (wsName)"
-        // We merge with occResult.delegatedBookings for dates not covered by myBookings
-        final mergedDelegated = Map<String, String>.from(occResult.delegatedBookings);
-        myBookings.delegated.forEach((date, value) => mergedDelegated[date] = value);
-        _delegatedBookingsMap = mergedDelegated;
-        
-        final bookedHere = myBookings.here;
-        final bookedElsewhere = myBookings.elsewhere;
-        
-        for (final d in occResult.delegatedHere) {
-           bookedHere.remove(d);
-        }
-        for (final d in occResult.delegatedElsewhere) {
-           bookedElsewhere.remove(d);
-        }
+      final occResult = floorId != null
+          ? await _api.getWorkspaceOccupancy(accessToken, workspaceId, floorId, visibleDates, myUserId, myBookings.elsewhere)
+          : (occupiedByOthers: <String, String>{}, delegatedBookings: <String, String>{}, delegatedHere: <String>{}, delegatedElsewhere: <String>{});
+      final occupiedDates = occResult.occupiedByOthers;
+      // Use myBookings.delegated as source of truth — it comes from /users/current/bookings
+      // which has the real workspaceName. Format: "organizerName (wsName)"
+      // We merge with occResult.delegatedBookings for dates not covered by myBookings
+      final mergedDelegated = Map<String, String>.from(occResult.delegatedBookings);
+      myBookings.delegated.forEach((date, value) => mergedDelegated[date] = value);
+      _delegatedBookingsMap = mergedDelegated;
+      
+      final bookedHere = myBookings.here;
+      final bookedElsewhere = myBookings.elsewhere;
+      final allUserReservations = Map<String, Map<String, String>>.from(myBookings.allReservations);
+      
+      for (final d in occResult.delegatedHere) {
+         bookedHere.remove(d);
+         allUserReservations.remove(d);
+      }
+      for (final d in occResult.delegatedElsewhere) {
+         bookedElsewhere.remove(d);
+         allUserReservations.remove(d);
+      }
 
-        _allTimeBookedDates.addAll(bookedHere);
-        _allTimeElsewhereDates.addAll(bookedElsewhere.keys);
-        await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
-        await _storage.saveAllTimeElsewhereDates(_allTimeElsewhereDates.toList());
+      _allTimeBookedDates.addAll(bookedHere);
+      _allTimeElsewhereDates.addAll(bookedElsewhere.keys);
+      await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
+      await _storage.saveAllTimeElsewhereDates(_allTimeElsewhereDates.toList());
 
       Set<String> newBookedDates = {};
       Set<String> newRequestedDates = Set.from(_requestedDates);
@@ -2015,6 +2047,13 @@ class _HomeScreenState extends State<HomeScreen> {
         await Future.delayed(const Duration(milliseconds: 1000));
       }
 
+      // En mode offline ou en cas d'erreur de connectivité, ne jamais écraser le cache local
+      if (OfflineStateManager.instance.isOffline) {
+        debugPrint("ℹ️ _syncCalendar: offline detected, aborting state overwrite to preserve local cache.");
+        showOfflineNotice();
+        return;
+      }
+
       if (mounted) {
         setState(() {
           _bookedDates = newBookedDates;
@@ -2024,16 +2063,20 @@ class _HomeScreenState extends State<HomeScreen> {
           _ignoredDates = newIgnoredDates;
           _bookedElsewhereMap = bookedElsewhere; // reuse field for "booked elsewhere by me"
         });
-          setState(() { _occupiedByOthers = occupiedDates; });
-        _storage.saveBookedDates(_bookedDates.toList());
-        _storage.saveRequestedDates(_requestedDates.toList());
-        _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
-        _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
-        _storage.saveIgnoredDates(_ignoredDates.toList());
-        _storage.saveBookedElsewhereDates(_bookedElsewhereMap.keys.toList());
-        _storage.saveLastSyncTime(); // Cache TTL
-          await _refreshStats();
-        }
+        setState(() { _occupiedByOthers = occupiedDates; });
+        await _storage.saveUserReservationsMap(allUserReservations);
+        await _storage.saveRequestedDates(_requestedDates.toList());
+        await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+        await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
+        await _storage.saveIgnoredDates(_ignoredDates.toList());
+        await _storage.saveLastSyncTime(); // Cache TTL
+        await _refreshStats();
+      }
+    } catch (e) {
+      OfflineStateManager.instance.reportException(e);
+      debugPrint("❌ _syncCalendar error: $e");
+      showOfflineNotice();
+      return;
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
     }
@@ -2055,28 +2098,40 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final workspaceId = await _storage.getWorkspaceId();
-    if (workspaceId == null) return;
+    if (workspaceId == null || workspaceId.isEmpty) {
+      _showTopToast("Veuillez d'abord configurer votre bureau.", isError: true);
+      return;
+    }
 
     setState(() => _isCalendarBusy = true);
     try {
       final token = await _api.refreshMyToken();
-      if (token == null) return;
+      if (token == null || token.isEmpty) {
+        _showTopToast("Impossible de réserver : vérifiez votre connexion Internet.", isError: true);
+        return;
+      }
       
       final success = await _api.reserveWorkspace(dateStr, token, workspaceId);
       if (success) {
         await _storage.recordBookingStat(false);
-              await _refreshStats();
+        await _refreshStats();
         setState(() {
           _bookedDates.add(dateStr);
-          _requestedDates.add(dateStr);
+          _requestedDates.remove(dateStr);
           _ignoredDates.remove(dateStr);
         });
-        _storage.saveBookedDates(_bookedDates.toList());
-        _storage.saveRequestedDates(_requestedDates.toList());
-        _storage.saveIgnoredDates(_ignoredDates.toList());
+        await _storage.saveBookedDates(_bookedDates.toList());
+        await _storage.removeRequestedDate(dateStr);
+        await _storage.saveRequestedDates(_requestedDates.toList());
+        await _storage.saveIgnoredDates(_ignoredDates.toList());
+        await _storage.saveUserReservation(dateStr, workspaceId, _workspaceName ?? 'Mon bureau');
+        _showTopToast('Réservation confirmée !');
       } else {
-        _showTopToast('Échec de la réservation.', isError: true);
+        _showTopToast("Ce bureau n'est plus disponible pour cette date.", isError: true);
       }
+    } catch (e) {
+      OfflineStateManager.instance.reportException(e);
+      _showTopToast(sanitizeErrorMessage(e, fallback: "Impossible de réserver : vérifiez votre connexion Internet."), isError: true);
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
     }
@@ -2292,8 +2347,12 @@ class _HomeScreenState extends State<HomeScreen> {
             }
           }
         } catch (e) {
+          OfflineStateManager.instance.reportException(e);
           if (mounted) {
-            _showTopToast('Erreur lors de la réservation : $e', isError: true);
+            _showTopToast(
+              sanitizeErrorMessage(e, fallback: 'Erreur lors de la réservation : connexion indisponible.'),
+              isError: true,
+            );
           }
         } finally {
           if (mounted) setState(() => _isCalendarBusy = false);
@@ -2309,21 +2368,38 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       if (action == 'reserve') {
-          if (_bookedDates.contains(dateStr) || _bookedElsewhereMap.containsKey(dateStr)) {
-            if (mounted) _showTopToast('Place déjà réservée (filtre désactivé)', isError: true);
-            return;
-          }
-        setState(() {
-          _ignoredDates.remove(dateStr);
-          _requestedDates.add(dateStr);
-        });
-        _storage.saveRequestedDates(_requestedDates.toList());
-        _storage.saveIgnoredDates(_ignoredDates.toList());
+        if (_bookedDates.contains(dateStr) || _bookedElsewhereMap.containsKey(dateStr)) {
+          if (mounted) _showTopToast('Place déjà réservée (filtre désactivé)', isError: true);
+          return;
+        }
 
         if (isBookableNow) {
-          final accessToken = await _api.refreshMyToken();
-          final workspaceId = await _storage.getWorkspaceId();
-          if (accessToken != null && workspaceId != null) {
+          // Réservation directe immédiate : NE JAMAIS ajouter à _requestedDates !
+          // Nettoyage préventif garanti pour que la date ne soit jamais en attente
+          setState(() {
+            _ignoredDates.remove(dateStr);
+            _requestedDates.remove(dateStr);
+          });
+          await _storage.removeRequestedDate(dateStr);
+          await _storage.saveIgnoredDates(_ignoredDates.toList());
+
+          try {
+            final accessToken = await _api.refreshMyToken();
+            if (accessToken == null || accessToken.isEmpty) {
+              if (mounted) {
+                _showTopToast('Impossible de réserver : vérifiez votre connexion Internet.', isError: true);
+              }
+              return;
+            }
+
+            final workspaceId = await _storage.getWorkspaceId();
+            if (workspaceId == null || workspaceId.isEmpty) {
+              if (mounted) {
+                _showTopToast("Veuillez d'abord configurer votre bureau.", isError: true);
+              }
+              return;
+            }
+
             final targetWsId = _requestedWorkspacesMap[dateStr] ?? workspaceId;
             final success = await _api.reserveWorkspace(dateStr, accessToken, targetWsId);
             if (success) {
@@ -2338,16 +2414,59 @@ class _HomeScreenState extends State<HomeScreen> {
               });
               await _storage.saveBookedDates(_bookedDates.toList());
               await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
+              await _storage.removeRequestedDate(dateStr);
               await _storage.saveRequestedDates(_requestedDates.toList());
               await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
               await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
+              final wsName = _requestedWorkspaceNamesMap[dateStr] ?? _workspaceName ?? 'Mon bureau';
+              await _storage.saveUserReservation(dateStr, targetWsId, wsName);
+              if (mounted) {
+                _showTopToast('Réservation confirmée !');
+              }
             } else {
-              if (mounted) _showTopToast('Ce bureau n\'est plus disponible à cette date', isError: true);
+              if (mounted) {
+                _showTopToast("Ce bureau n'est plus disponible à cette date", isError: true);
+              }
             }
-          } else if (accessToken == null) {
+          } catch (e) {
+            OfflineStateManager.instance.reportException(e);
             if (mounted) {
-              _showTopToast('Action impossible : serveur temporairement indisponible.', isError: true);
+              _showTopToast(
+                sanitizeErrorMessage(e, fallback: 'Impossible de réserver : vérifiez votre connexion Internet.'),
+                isError: true,
+              );
             }
+          } finally {
+            // Garantie absolue : si la réservation immédiate échoue ou n'est pas confirmée,
+            // la date ne doit JAMAIS basculer en attente et doit rester totalement neutre
+            if (!_bookedDates.contains(dateStr)) {
+              if (mounted) {
+                setState(() {
+                  _requestedDates.remove(dateStr);
+                  _requestedWorkspacesMap.remove(dateStr);
+                  _requestedWorkspaceNamesMap.remove(dateStr);
+                });
+              } else {
+                _requestedDates.remove(dateStr);
+                _requestedWorkspacesMap.remove(dateStr);
+                _requestedWorkspaceNamesMap.remove(dateStr);
+              }
+              await _storage.removeRequestedDate(dateStr);
+              await _storage.saveRequestedDates(_requestedDates.toList());
+              await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+              await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
+            }
+          }
+        } else {
+          // Réservation future au-delà de la fenêtre (J+14) : mise en attente pour l'automatisation
+          setState(() {
+            _ignoredDates.remove(dateStr);
+            _requestedDates.add(dateStr);
+          });
+          await _storage.saveRequestedDates(_requestedDates.toList());
+          await _storage.saveIgnoredDates(_ignoredDates.toList());
+          if (mounted) {
+            _showTopToast('Date programmée en attente');
           }
         }
       } else if (action == 'cancel' || action == 'block') {
@@ -2379,6 +2498,7 @@ class _HomeScreenState extends State<HomeScreen> {
         await _storage.saveBookedDates(_bookedDates.toList());
         await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
         await _storage.saveIgnoredDates(_ignoredDates.toList());
+        await _storage.removeUserReservation(dateStr);
         if (action == 'cancel') {
           if (mounted) setState(() => _isCalendarBusy = false);
           await _syncCalendar();
@@ -2390,6 +2510,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (token != null) {
           final success = await _api.cancelBookingByDate(token, dateStr);
           if (success) {
+            await _storage.removeUserReservation(dateStr);
             setState(() {
                _bookedElsewhereMap.remove(dateStr);
                _allTimeElsewhereDates.remove(dateStr);
@@ -2403,6 +2524,14 @@ class _HomeScreenState extends State<HomeScreen> {
       } else if (action == 'unblock') {
         setState(() => _ignoredDates.remove(dateStr));
         _storage.saveIgnoredDates(_ignoredDates.toList());
+      }
+    } catch (e) {
+      OfflineStateManager.instance.reportException(e);
+      if (mounted) {
+        _showTopToast(
+          sanitizeErrorMessage(e, fallback: "Erreur lors de l'opération."),
+          isError: true,
+        );
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
