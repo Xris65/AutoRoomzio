@@ -152,8 +152,11 @@ class RoomzApiService {
     _checkAuthResponse(response);
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      if (data is List) return List<Map<String, dynamic>>.from(data);
-      return List<Map<String, dynamic>>.from(data['data'] ?? []);
+      if (data is List) {
+        return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      } else if (data is Map && data['data'] is List) {
+        return (data['data'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      }
     }
     debugPrint("❌ getSites ${response.statusCode}: ${response.body}");
     return [];
@@ -168,8 +171,11 @@ class RoomzApiService {
     _checkAuthResponse(response);
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      if (data is List) return List<Map<String, dynamic>>.from(data);
-      return List<Map<String, dynamic>>.from(data['data'] ?? []);
+      if (data is List) {
+        return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      } else if (data is Map && data['data'] is List) {
+        return (data['data'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      }
     }
     debugPrint("❌ getFloors ${response.statusCode}: ${response.body}");
     return [];
@@ -197,10 +203,21 @@ class RoomzApiService {
           final data = jsonDecode(response.body);
           lastApiKeys = "GET 200 /workspaces/all";
           
-          final list = data is List
-              ? List<Map<String, dynamic>>.from(data)
-              : List<Map<String, dynamic>>.from(
-                  data['data'] ?? data['workspaces'] ?? data['items'] ?? data['results'] ?? data['value'] ?? []);
+          final List rawList = data is List
+              ? data
+              : (data is Map
+                  ? (data['data'] as List? ??
+                      data['workspaces'] as List? ??
+                      data['items'] as List? ??
+                      data['results'] as List? ??
+                      data['value'] as List? ??
+                      [])
+                  : []);
+                  
+          final list = rawList
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
                   
           allWorkspaces.addAll(list);
           
@@ -252,8 +269,16 @@ class RoomzApiService {
       _checkAuthResponse(response);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        if (data['features'] != null) {
-          return List<Map<String, dynamic>>.from(data['features']);
+        if (data is Map && data['features'] is List) {
+          return (data['features'] as List)
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        } else if (data is List) {
+          return data
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
         }
       }
       debugPrint("❌ getFloorPlanData ${response.statusCode}: ${response.body}");
@@ -321,7 +346,9 @@ class RoomzApiService {
         _checkAuthResponse(response);
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
-          final bookings = data['bookings'] as List? ?? [];
+          final List bookings = data is List
+              ? data
+              : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
           final Set<String> here = {};
           final Map<String, String> elsewhere = {};
           final Map<String, String> delegated = {};
@@ -440,7 +467,9 @@ class RoomzApiService {
       _checkAuthResponse(response);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final bookings = data['bookings'] as List? ?? [];
+        final List bookings = data is List
+            ? data
+            : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
         for (final b in bookings) {
           if (b['type'] != 'Reserved') continue;
           final bDate = b['eventDate']?.toString().split('T').first;
@@ -533,7 +562,11 @@ class RoomzApiService {
             );
             if (response.statusCode == 200) {
               final data = jsonDecode(response.body);
-              final items = data['data'] ?? data['items'] ?? data['workspaces'] ?? data;
+              final items = data is List
+                  ? data
+                  : (data is Map
+                      ? (data['data'] ?? data['items'] ?? data['workspaces'])
+                      : null);
               if (items is List) {
                 for (final item in items) {
                     final isMyDesk = (item['workspaceId'] == workspaceId || item['id'] == workspaceId);
@@ -656,7 +689,9 @@ class RoomzApiService {
       if (getResp.statusCode == 200) {
         final data = jsonDecode(getResp.body);
         debugPrint("🔥 BOOKINGS DUMP: ${getResp.body}");
-        final bookings = data['bookings'] as List? ?? [];
+        final List bookings = data is List
+            ? data
+            : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
         for (final b in bookings) {
           if (b['type'] != 'Reserved') continue;
           final bDate = b['eventDate']?.toString().split('T').first;
@@ -1165,7 +1200,9 @@ class RoomzApiService {
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final bookings = data['bookings'] as List? ?? (data is List ? data : []);
+        final List bookings = data is List
+            ? data
+            : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
         for (final b in bookings) {
           if (b is! Map) continue;
           if (currentUserId == null && b['creator'] is Map && b['creator']['id'] != null) {
@@ -1224,8 +1261,12 @@ class RoomzApiService {
         );
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
-          final items = data['data'] ?? data['items'] ?? data['workspaces'] ?? (data is List ? data : []);
-          if (items is List) {
+          final List items = data is List
+              ? data
+              : (data is Map
+                  ? (data['data'] as List? ?? data['items'] as List? ?? data['workspaces'] as List? ?? [])
+                  : []);
+          if (items.isNotEmpty) {
             for (final item in items) {
               if (item is! Map) continue;
               final wsName = item['workspaceName']?.toString() ?? item['name']?.toString();
@@ -1272,37 +1313,8 @@ class RoomzApiService {
     return harvested;
   }
 
-  /// Fetches favorite colleagues from MyRoomz API.
-  /// Tries `/users/current/favorites`, `/favorites`, and as a reliable fallback,
-  /// harvests recent colleagues/occupants so favorites are NEVER empty if colleagues exist.
+  /// Fetches favorite colleagues from MyRoomz API (/favorites).
   Future<List<Colleague>> getFavorites(String token) async {
-    // 1. Try /users/current/favorites
-    try {
-      final response = await _client.get(
-        Uri.parse("$_apiBase/users/current/favorites"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
-      );
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final list = data is List
-            ? data
-            : (data['favorites'] ?? data['data'] ?? data['users'] ?? data['items'] ?? []);
-        if (list is List && list.isNotEmpty) {
-          return list
-              .whereType<Map<String, dynamic>>()
-              .map((j) => Colleague.fromJson({
-                    ...j,
-                    'isFavorite': true,
-                    'favoriteId': j['favoriteId'] ?? j['id'],
-                  }))
-              .toList();
-        }
-      }
-    } catch (e) {
-      debugPrint("⚠️ Exception in getFavorites (/users/current/favorites): $e");
-    }
-
-    // 2. Try /favorites
     try {
       final response = await _client.get(
         Uri.parse("$_apiBase/favorites"),
@@ -1310,14 +1322,20 @@ class RoomzApiService {
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final list = data is List
+        final List rawList = data is List
             ? data
-            : (data['favorites'] ?? data['data'] ?? data['users'] ?? data['items'] ?? []);
-        if (list is List && list.isNotEmpty) {
-          return list
-              .whereType<Map<String, dynamic>>()
+            : (data is Map
+                ? (data['favorites'] as List? ??
+                    data['data'] as List? ??
+                    data['users'] as List? ??
+                    data['items'] as List? ??
+                    [])
+                : []);
+        if (rawList.isNotEmpty) {
+          return rawList
+              .whereType<Map>()
               .map((j) => Colleague.fromJson({
-                    ...j,
+                    ...Map<String, dynamic>.from(j),
                     'isFavorite': true,
                     'favoriteId': j['favoriteId'] ?? j['id'],
                   }))
@@ -1327,17 +1345,6 @@ class RoomzApiService {
     } catch (e) {
       debugPrint("⚠️ Exception in getFavorites (/favorites): $e");
     }
-
-    // 3. Fallback: harvest recent colleagues/occupants from floor data or bookings
-    try {
-      final harvested = await harvestColleagues(token);
-      if (harvested.isNotEmpty) {
-        return harvested.map((c) => c.copyWith(isFavorite: true)).toList();
-      }
-    } catch (e) {
-      debugPrint("⚠️ Exception in getFavorites fallback harvesting: $e");
-    }
-
     return [];
   }
 
@@ -1364,11 +1371,13 @@ class RoomzApiService {
         final data = jsonDecode(response.body);
         final list = data is List
             ? data
-            : (data['users'] ?? data['data'] ?? data['items'] ?? data['results'] ?? []);
+            : (data is Map
+                ? (data['users'] ?? data['data'] ?? data['items'] ?? data['results'] ?? [])
+                : []);
         if (list is List) {
           final results = list
-              .whereType<Map<String, dynamic>>()
-              .map((j) => Colleague.fromJson(j))
+              .whereType<Map>()
+              .map((j) => Colleague.fromJson(Map<String, dynamic>.from(j)))
               .toList();
           if (results.isNotEmpty) return results;
         }
@@ -1549,8 +1558,12 @@ class RoomzApiService {
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
-          final items = data['data'] ?? data['items'] ?? data['workspaces'] ?? (data is List ? data : []);
-          if (items is! List || items.isEmpty) break;
+          final List items = data is List
+              ? data
+              : (data is Map
+                  ? (data['data'] as List? ?? data['items'] as List? ?? data['workspaces'] as List? ?? [])
+                  : []);
+          if (items.isEmpty) break;
 
           for (final item in items) {
             if (item is! Map) continue;

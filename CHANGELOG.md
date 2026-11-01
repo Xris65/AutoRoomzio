@@ -2,6 +2,12 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.6.3] - 2026-11-01
+
+### Correctifs
+- **Stabilité Web du plan d'équipe** : Résolution du plantage à l'affichage (`NoSuchMethodError`) sous Flutter Web grâce à un typage défensif sur les données d'étage et de pièces.
+- **Synchronisation des favoris** : Rétablissement de la récupération des collègues favoris sur l'adresse officielle `/favorites` et suppression définitive des requêtes 404 inutiles.
+
 ## [1.6.2] - 2026-11-01
 
 ### Nouveautés

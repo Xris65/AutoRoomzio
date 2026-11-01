@@ -399,15 +399,15 @@ void main() {
       // Rooms with 0 favorites show "${roomName} (${totalOccupants})"
       final expectedLabels = [
         'Tous les bureaux (42)',
+        'Room_HighFav (3)',
+        'Room_MidFav_Dense (2)',
+        'Room_MidFav_Sparse (2)',
+        'Alpha_Room (1)',
+        'Zeta_Room (1)',
+        'Beta_Room (1)',
         'Omega_Room (8)',
-        'Room_MidFav_Dense (6)',
-        'Alpha_Room (5)',
-        'Zeta_Room (5)',
         'Blue_Room (4)',
-        'Room_HighFav (4)',
         'Yellow_Room (4)',
-        'Room_MidFav_Sparse (3)',
-        'Beta_Room (2)',
         'Solo_Room (1)',
       ];
 

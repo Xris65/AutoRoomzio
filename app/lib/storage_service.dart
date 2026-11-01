@@ -1033,10 +1033,13 @@ class StorageService {
     final jsonStr = prefs.getString('favorite_colleagues');
     if (jsonStr != null && jsonStr.isNotEmpty) {
       try {
-        final List<dynamic> decoded = jsonDecode(jsonStr);
-        return decoded
-            .map((item) => Colleague.fromJson(Map<String, dynamic>.from(item as Map)))
-            .toList();
+        final dynamic decoded = jsonDecode(jsonStr);
+        if (decoded is List) {
+          return decoded
+              .whereType<Map>()
+              .map((item) => Colleague.fromJson(Map<String, dynamic>.from(item)))
+              .toList();
+        }
       } catch (_) {
         return [];
       }

@@ -205,6 +205,9 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
     if (oldWidget.showRoomHeatmap != widget.showRoomHeatmap) {
       _showRoomHeatmap = widget.showRoomHeatmap;
     }
+    if (oldWidget.features != widget.features) {
+      _isInitialTransformSet = false;
+    }
     if (oldWidget.focusedRoom != widget.focusedRoom) {
       _handleFocusedRoomChanged();
     }

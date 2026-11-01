@@ -55,8 +55,8 @@ class TeamMapScreen extends StatefulWidget {
 }
 
 class _TeamMapScreenState extends State<TeamMapScreen> {
-  late final StorageService _storage = widget.storageService ?? StorageService();
-  late final RoomzApiService _api = widget.apiService ?? RoomzApiService();
+  late final StorageService _storage;
+  late final RoomzApiService _api;
 
   late DateTime _selectedDate;
   String? _siteId;
@@ -103,6 +103,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   @override
   void initState() {
     super.initState();
+    _storage = widget.storageService ?? StorageService();
+    _api = widget.apiService ?? RoomzApiService();
     _selectedDate = widget.initialDate ?? DateTime.now();
     if (widget.hideWeekends != null) {
       _hideWeekends = widget.hideWeekends!;
@@ -216,30 +218,122 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
-    Future<void> _loadCacheFirst() async {
-    final floorId = widget.initialFloorId ?? await _storage.getFloorId();
-    final dateStr = _formatDateIso(_selectedDate);
-    final results = await Future.wait([
-      _storage.getBookedDates(),
-      _storage.getBookedElsewhereDates(),
-      _storage.getUserReservationsMap(),
-      if (floorId != null) _storage.getFloorOccupants(floorId, dateStr) else Future.value(<String, DeskOccupant>{}),
-    ]);
-    final booked = (results[0] is List ? (results[0] as List).whereType<String>().toSet() : (results[0] as Iterable).map((e) => e.toString()).toSet());
-    final elsewhere = (results[1] is List ? (results[1] as List).whereType<String>().toSet() : (results[1] as Iterable).map((e) => e.toString()).toSet());
-    final userRes = (results[2] as Map<String, dynamic>);
-    final occs = (results[3] as Map<String, DeskOccupant>);
-    final allBooked = {...booked, ...elsewhere, ...userRes.keys};
-    if (occs.values.any((o) => o.isMe)) {
-      allBooked.add(dateStr);
-    }
-    if (mounted) {
-      setState(() {
-        _bookedDates.addAll(allBooked);
-        if (occs.isNotEmpty && _occupants.isEmpty) {
-          _occupants = occs;
+  Future<void> _loadCacheFirst() async {
+    try {
+      final floorId = widget.initialFloorId ?? await _storage.getFloorId();
+      final dateStr = _formatDateIso(_selectedDate);
+      final results = await Future.wait([
+        _storage.getBookedDates(),
+        _storage.getBookedElsewhereDates(),
+        _storage.getUserReservationsMap(),
+        if (floorId != null) _storage.getFloorOccupants(floorId, dateStr) else Future.value(<String, DeskOccupant>{}),
+        if (floorId != null) _storage.getFloorPlanData(floorId) else Future.value(null),
+        if (floorId != null) _storage.getFloorWorkspaces(floorId) else Future.value(<Map<String, dynamic>>[]),
+      ]);
+      final Set<String> booked = results[0] is Iterable
+          ? (results[0] as Iterable).map((e) => e.toString()).toSet()
+          : <String>{};
+      final Set<String> elsewhere = results[1] is Iterable
+          ? (results[1] as Iterable).map((e) => e.toString()).toSet()
+          : <String>{};
+      final Map userRes = results[2] is Map ? (results[2] as Map) : const {};
+      final Map<String, DeskOccupant> occs = {};
+      if (results.length > 3 && results[3] is Map) {
+        (results[3] as Map).forEach((k, v) {
+          if (v is DeskOccupant) {
+            occs[k.toString()] = v;
+          } else if (v is Map) {
+            try {
+              occs[k.toString()] = DeskOccupant.fromJson(Map<String, dynamic>.from(v));
+            } catch (_) {}
+          }
+        });
+      }
+      final allBooked = {...booked, ...elsewhere, ...userRes.keys.map((k) => k.toString())};
+      if (occs.values.any((o) => o.isMe)) {
+        allBooked.add(dateStr);
+      }
+
+      dynamic planData = results.length > 4 ? results[4] : null;
+      List<Map<String, dynamic>> allWs = [];
+      if (results.length > 5 && results[5] is List) {
+        allWs = (results[5] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+
+      List<Map<String, dynamic>> features = [];
+      if (planData is List) {
+        features = planData.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      } else if (planData is Map) {
+        final raw = planData['features'] ?? planData['data'] ?? [];
+        if (raw is List) {
+          features = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
         }
-      });
+      }
+
+      if (features.isEmpty && allWs.isNotEmpty) {
+        int col = 0;
+        int row = 0;
+        const int desksPerRow = 6;
+        for (final ws in allWs) {
+          final wsId = ws['id']?.toString() ?? '';
+          final wsName = ws['name']?.toString() ?? wsId;
+          final x = 50.0 + (col * 85.0);
+          final y = 50.0 + (row * 65.0);
+          features.add({
+            'type': 'Feature',
+            'properties': {
+              'workspaceId': wsId,
+              'id': wsId,
+              'name': wsName,
+              'workspaceType': ws['type']?.toString() ?? 'Desk',
+            },
+            'geometry': {
+              'type': 'Polygon',
+              'coordinates': [
+                [
+                  [x, y],
+                  [x + 72.0, y],
+                  [x + 72.0, y + 48.0],
+                  [x, y + 48.0],
+                  [x, y],
+                ]
+              ]
+            }
+          });
+          col++;
+          if (col >= desksPerRow) {
+            col = 0;
+            row++;
+          }
+        }
+      }
+
+      final bookable = allWs.where((w) {
+        return w['isReservable'] == true ||
+            w['bookable'] == true ||
+            w['isBookable'] == true;
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _bookedDates.addAll(allBooked);
+          if (occs.isNotEmpty && _occupants.isEmpty) {
+            _occupants = occs;
+          }
+          if (features.isNotEmpty && _features.isEmpty) {
+            _features = features;
+          }
+          if (allWs.isNotEmpty && _allWorkspaces.isEmpty) {
+            _allWorkspaces = allWs;
+            _workspaces = bookable;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("⚠️ _loadCacheFirst exception: $e");
     }
   }
 
@@ -268,7 +362,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       final booked = await _storage.getBookedDates();
       final bookedElsewhere = await _storage.getBookedElsewhereDates();
       final userRes = await _storage.getUserReservationsMap();
-      _bookedDates = {...booked, ...bookedElsewhere, ...userRes.keys};
+      _bookedDates = {...booked, ...bookedElsewhere, ...userRes.keys.map((k) => k.toString())};
 
       await _loadFavorites();
 
@@ -303,19 +397,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           final sites = await _api.getSites(token);
           if (sites.isNotEmpty) {
             _siteId = sites.first['id']?.toString();
-            await _storage.saveCachedSites(sites);
-          } else {
-            final cachedSites = await _storage.getCachedSites();
-            if (cachedSites.isNotEmpty) {
-              _siteId = cachedSites.first['id']?.toString();
-            }
           }
-        } catch (_) {
-          final cachedSites = await _storage.getCachedSites();
-          if (cachedSites.isNotEmpty) {
-            _siteId = cachedSites.first['id']?.toString();
-          }
-        }
+        } catch (_) {}
       }
 
       if (_siteId != null && _siteId!.isNotEmpty) {
@@ -323,7 +406,6 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           final fetchedFloors = await _api.getFloors(token, _siteId!);
           if (fetchedFloors.isNotEmpty) {
             _floors = fetchedFloors;
-            await _storage.saveCachedFloors(_siteId!, fetchedFloors);
           } else {
             _floors = await _storage.getCachedFloors(_siteId!);
           }
@@ -347,11 +429,27 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
       await _loadFloorMapAndOccupancy(token, _siteId!, _floorId!);
     } catch (e) {
+      debugPrint("⚠️ Exception in _loadInitialData: $e");
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = sanitizeErrorMessage(e, fallback: "Erreur de chargement.");
-        });
+        if (_features.isNotEmpty || _allWorkspaces.isNotEmpty || _workspaces.isNotEmpty) {
+          setState(() {
+            _isLoading = false;
+            _errorMessage = null;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text(
+                sanitizeErrorMessage(e, fallback: "Mode hors-ligne : données du cache affichées."),
+              ),
+            ),
+          );
+        } else {
+          setState(() {
+            _isLoading = false;
+            _errorMessage = sanitizeErrorMessage(e, fallback: "Erreur de chargement.");
+          });
+        }
       }
     }
   }
@@ -369,38 +467,60 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
     try {
       final futures = await Future.wait<dynamic>([
-        _api.getFloorPlanData(token, siteId, floorId),
-        _api.getAllWorkspaces(token, siteId, floorId),
+        _api.getFloorPlanData(token, siteId, floorId).catchError((e) {
+          debugPrint("⚠️ getFloorPlanData error: $e");
+          lastError = e;
+          return <Map<String, dynamic>>[];
+        }),
+        _api.getAllWorkspaces(token, siteId, floorId).catchError((e) {
+          debugPrint("⚠️ getAllWorkspaces error: $e");
+          lastError ??= e;
+          return <Map<String, dynamic>>[];
+        }),
         _api.getFloorOccupants(
           token,
           floorId,
           dateStr,
           myUserEmail: savedEmail,
           delegatedBookingsMap: delegatedMap,
-        ),
+        ).catchError((e) {
+          debugPrint("⚠️ getFloorOccupants error: $e");
+          lastError ??= e;
+          return <String, DeskOccupant>{};
+        }),
       ]);
 
-      planData = futures[0];
-      allWs = futures[1] is List
-          ? (futures[1] as List).whereType<Map<String, dynamic>>().toList()
-          : <Map<String, dynamic>>[];
-      occs = futures[2] is Map
-          ? Map<String, DeskOccupant>.from(futures[2] as Map)
-          : <String, DeskOccupant>{};
-
-      if ((planData is List && planData.isNotEmpty) || (planData is Map && planData.isNotEmpty)) {
+      final dynamic rawPlan = futures[0];
+      if (rawPlan is List && rawPlan.isNotEmpty) {
+        planData = rawPlan.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+        await _storage.saveFloorPlanData(floorId, planData);
+      } else if (rawPlan is Map && rawPlan.isNotEmpty) {
+        planData = Map<String, dynamic>.from(rawPlan);
         await _storage.saveFloorPlanData(floorId, planData);
       } else {
         planData = await _storage.getFloorPlanData(floorId);
       }
 
-      if (allWs.isNotEmpty) {
+      final dynamic rawWs = futures[1];
+      if (rawWs is List && rawWs.isNotEmpty) {
+        allWs = rawWs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
         await _storage.saveFloorWorkspaces(floorId, allWs);
       } else {
         allWs = await _storage.getFloorWorkspaces(floorId);
       }
 
-      if (occs.isNotEmpty) {
+      final dynamic rawOccs = futures[2];
+      if (rawOccs is Map && rawOccs.isNotEmpty) {
+        occs = {};
+        rawOccs.forEach((k, v) {
+          if (v is DeskOccupant) {
+            occs[k.toString()] = v;
+          } else if (v is Map) {
+            try {
+              occs[k.toString()] = DeskOccupant.fromJson(Map<String, dynamic>.from(v));
+            } catch (_) {}
+          }
+        });
         await _storage.saveFloorOccupants(floorId, dateStr, occs);
       } else {
         occs = await _storage.getFloorOccupants(floorId, dateStr);
@@ -412,8 +532,72 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       occs = await _storage.getFloorOccupants(floorId, dateStr);
     }
 
+    List<Map<String, dynamic>> features;
+    if (planData is List) {
+      features = planData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } else if (planData is Map) {
+      final raw = planData['features'] ?? planData['data'] ?? [];
+      if (raw is List) {
+        features = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      } else {
+        features = [];
+      }
+    } else {
+      features = [];
+    }
+
+    if (features.isEmpty && allWs.isNotEmpty) {
+      int col = 0;
+      int row = 0;
+      const int desksPerRow = 6;
+      for (final ws in allWs) {
+        final wsId = ws['id']?.toString() ?? '';
+        final wsName = ws['name']?.toString() ?? wsId;
+        final x = 50.0 + (col * 85.0);
+        final y = 50.0 + (row * 65.0);
+        features.add({
+          'type': 'Feature',
+          'properties': {
+            'workspaceId': wsId,
+            'id': wsId,
+            'name': wsName,
+            'workspaceType': ws['type']?.toString() ?? 'Desk',
+          },
+          'geometry': {
+            'type': 'Polygon',
+            'coordinates': [
+              [
+                [x, y],
+                [x + 72.0, y],
+                [x + 72.0, y + 48.0],
+                [x, y + 48.0],
+                [x, y],
+              ]
+            ]
+          }
+        });
+        col++;
+        if (col >= desksPerRow) {
+          col = 0;
+          row++;
+        }
+      }
+    }
+
+    final bookable = allWs.where((w) {
+      return w['isReservable'] == true ||
+          w['bookable'] == true ||
+          w['isBookable'] == true;
+    }).toList();
+
     if (lastError != null &&
-        (planData == null || (planData is List && planData.isEmpty) || (planData is Map && planData.isEmpty)) &&
+        features.isEmpty &&
         allWs.isEmpty &&
         occs.isEmpty) {
       if (mounted) {
@@ -425,25 +609,6 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }
       return;
     }
-
-    List<Map<String, dynamic>> features;
-    if (planData is List) {
-      features = planData.whereType<Map<String, dynamic>>().toList();
-    } else if (planData is Map) {
-      final raw = planData['features'] ?? planData['data'] ?? [];
-      if (raw is List) {
-        features = raw.whereType<Map<String, dynamic>>().toList();
-      } else {
-        features = [];
-      }
-    } else {
-      features = [];
-    }
-    final bookable = allWs.where((w) {
-      return w['isReservable'] == true ||
-          w['bookable'] == true ||
-          w['isBookable'] == true;
-    }).toList();
 
     if (mounted) {
       if (_floorId != null) {
@@ -463,6 +628,17 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _errorMessage = null;
       });
       _preloadWeekOccupancy(_selectedDate);
+
+      if (lastError != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              "Données partielles affichées : ${sanitizeErrorMessage(lastError, fallback: "certaines informations n'ont pu être actualisées.")}",
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -703,7 +879,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Erreur lors de l'actualisation: $e")),
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text(
+                "Erreur lors de l'actualisation: ${sanitizeErrorMessage(e, fallback: "Impossible d'actualiser les données.")}",
+              ),
+            ),
           );
         }
       }
@@ -766,19 +947,111 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Future<void> _changeFloor(String newFloorId) async {
     if (newFloorId == _floorId) return;
-    await _storage.saveFloorId(newFloorId);
-    setState(() {
-      _floorId = newFloorId;
-      _isLoading = true;
-      _focusedRoom = null;
-    });
-    String? token = _cachedAccessToken;
-    if (token == null || token.isEmpty) {
-      token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
-      _cachedAccessToken = token;
-    }
-    if (token != null && _siteId != null) {
-      await _loadFloorMapAndOccupancy(token, _siteId!, newFloorId);
+    try {
+      await _storage.saveFloorId(newFloorId);
+      if (!mounted) return;
+      setState(() {
+        _floorId = newFloorId;
+        _isLoading = true;
+        _focusedRoom = null;
+      });
+
+      final cachedPlan = await _storage.getFloorPlanData(newFloorId);
+      final cachedWs = await _storage.getFloorWorkspaces(newFloorId);
+      final dateStr = _formatDateIso(_selectedDate);
+      final cachedOccs = await _storage.getFloorOccupants(newFloorId, dateStr);
+
+      if (mounted && (cachedPlan != null || cachedWs.isNotEmpty)) {
+        List<Map<String, dynamic>> cachedFeatures = [];
+        if (cachedPlan is List) {
+          cachedFeatures = cachedPlan.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+        } else if (cachedPlan is Map) {
+          final raw = cachedPlan['features'] ?? cachedPlan['data'] ?? [];
+          if (raw is List) {
+            cachedFeatures = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          }
+        }
+        if (cachedFeatures.isEmpty && cachedWs.isNotEmpty) {
+          int col = 0;
+          int row = 0;
+          const int desksPerRow = 6;
+          for (final ws in cachedWs) {
+            final wsId = ws['id']?.toString() ?? '';
+            final wsName = ws['name']?.toString() ?? wsId;
+            final x = 50.0 + (col * 85.0);
+            final y = 50.0 + (row * 65.0);
+            cachedFeatures.add({
+              'type': 'Feature',
+              'properties': {
+                'workspaceId': wsId,
+                'id': wsId,
+                'name': wsName,
+                'workspaceType': ws['type']?.toString() ?? 'Desk',
+              },
+              'geometry': {
+                'type': 'Polygon',
+                'coordinates': [
+                  [
+                    [x, y],
+                    [x + 72.0, y],
+                    [x + 72.0, y + 48.0],
+                    [x, y + 48.0],
+                    [x, y],
+                  ]
+                ]
+              }
+            });
+            col++;
+            if (col >= desksPerRow) {
+              col = 0;
+              row++;
+            }
+          }
+        }
+        final bookable = cachedWs.where((w) {
+          return w['isReservable'] == true || w['bookable'] == true || w['isBookable'] == true;
+        }).toList();
+
+        setState(() {
+          _features = cachedFeatures;
+          _allWorkspaces = cachedWs;
+          _workspaces = bookable;
+          _occupants = cachedOccs;
+        });
+      }
+
+      String? token = _cachedAccessToken;
+      if (token == null || token.isEmpty) {
+        token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
+        _cachedAccessToken = token;
+      }
+
+      _siteId ??= await _storage.getSiteId();
+
+      if (token != null && token.isNotEmpty && _siteId != null && _siteId!.isNotEmpty) {
+        await _loadFloorMapAndOccupancy(token, _siteId!, newFloorId);
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Exception in _changeFloor: $e");
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              "Erreur lors du changement d'étage: ${sanitizeErrorMessage(e, fallback: "Impossible de charger cet étage.")}",
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -2271,22 +2544,37 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             },
           ),
           if (_floors.length > 1)
-            Padding(
-              padding: const EdgeInsets.only(right: 12.0),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _floorId,
-                  icon: const Icon(Icons.arrow_drop_down),
-                  items: _floors.map((f) {
-                    final id = f['id']?.toString() ?? '';
-                    final name = f['name']?.toString() ?? 'Étage $id';
-                    return DropdownMenuItem(value: id, child: Text(name));
-                  }).toList(),
-                  onChanged: (newId) {
-                    if (newId != null) _changeFloor(newId);
-                  },
-                ),
-              ),
+            Builder(
+              builder: (context) {
+                final uniqueFloors = <String, Map<String, dynamic>>{};
+                for (final f in _floors) {
+                  final id = f['id']?.toString() ?? '';
+                  if (id.isNotEmpty && !uniqueFloors.containsKey(id)) {
+                    uniqueFloors[id] = f;
+                  }
+                }
+                final currentFloorValue = uniqueFloors.containsKey(_floorId)
+                    ? _floorId
+                    : (uniqueFloors.isNotEmpty ? uniqueFloors.keys.first : null);
+
+                return Padding(
+                  padding: const EdgeInsets.only(right: 12.0),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: currentFloorValue,
+                      icon: const Icon(Icons.arrow_drop_down),
+                      items: uniqueFloors.values.map((f) {
+                        final id = f['id']?.toString() ?? '';
+                        final name = f['name']?.toString() ?? 'Étage $id';
+                        return DropdownMenuItem(value: id, child: Text(name));
+                      }).toList(),
+                      onChanged: (newId) {
+                        if (newId != null) _changeFloor(newId);
+                      },
+                    ),
+                  ),
+                );
+              },
             )
           else if (_floors.isNotEmpty)
             Padding(

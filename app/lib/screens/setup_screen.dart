@@ -30,8 +30,8 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  late final _api = widget.apiService ?? RoomzApiService();
-  late final _storage = widget.storageService ?? StorageService();
+  late final RoomzApiService _api;
+  late final StorageService _storage;
 
   List<Map<String, dynamic>> _sites = [];
   List<Map<String, dynamic>> _floors = [];
@@ -51,6 +51,8 @@ class _SetupScreenState extends State<SetupScreen> {
   @override
   void initState() {
     super.initState();
+    _api = widget.apiService ?? RoomzApiService();
+    _storage = widget.storageService ?? StorageService();
     _loadInitialData();
   }
 

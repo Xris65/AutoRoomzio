@@ -468,7 +468,7 @@ void main() {
 
     test('getFavorites parses JSON array correctly', () async {
       final client = MockClient((req) async {
-        expect(req.url.path, equals('/users/current/favorites'));
+        expect(req.url.path, equals('/favorites'));
         return http.Response(
           jsonEncode([
             {'id': 'u-1', 'name': 'Albert Einstein', 'email': 'albert@relativity.org'},
@@ -536,11 +536,10 @@ void main() {
       expect(callCount, equals(0));
     });
 
-    test('getFavorites falls back to /favorites if /users/current/favorites fails', () async {
+    test('getFavorites calls /favorites directly and never calls /users/current/favorites', () async {
+      final requestedPaths = <String>[];
       final client = MockClient((req) async {
-        if (req.url.path == '/users/current/favorites') {
-          return http.Response(jsonEncode({'error': 'Not found'}), 404);
-        }
+        requestedPaths.add(req.url.path);
         if (req.url.path == '/favorites') {
           return http.Response(
             jsonEncode([
@@ -559,30 +558,22 @@ void main() {
       expect(favs.length, equals(1));
       expect(favs.first.name, equals('Paul Langevin'));
       expect(favs.first.isFavorite, isTrue);
+      expect(requestedPaths, contains('/favorites'));
+      expect(requestedPaths, isNot(contains('/users/current/favorites')));
     });
 
-    test('getFavorites falls back to harvesting bookings if favorites endpoints are empty', () async {
+    test('getFavorites handles wrapped map responses (e.g. {favorites: [...]})', () async {
       final client = MockClient((req) async {
-        if (req.url.path.contains('favorites')) {
-          return http.Response('[]', 200);
-        }
-        if (req.url.path == '/users/current/bookings') {
-          return http.Response(
-            jsonEncode({
-              'bookings': [
-                {
-                  'type': 'Reserved',
-                  'creator': {'id': 'my-user-id', 'name': 'Me'},
-                  'organizer': {'id': 'col-1', 'name': 'Henri Becquerel', 'email': 'henri@radium.fr'},
-                  'workspaceName': 'Desk B-01',
-                }
-              ]
-            }),
-            200,
-            headers: {'content-type': 'application/json'},
-          );
-        }
-        return http.Response('[]', 200);
+        expect(req.url.path, equals('/favorites'));
+        return http.Response(
+          jsonEncode({
+            'favorites': [
+              {'id': 'u-fav-2', 'name': 'Henri Becquerel', 'email': 'henri@radium.fr'}
+            ]
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
       });
 
       final api = RoomzApiService(client: client);

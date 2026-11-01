@@ -1,4 +1,4 @@
-# Project: AutoRoomzio v1.6.2 (Reactive Offline Mode & Cache Persistence)
+# Project: AutoRoomzio v1.6.3 (Web Team Map Stability & Favorites Query Hotfix)
 
 ## Architecture
 AutoRoomzio is a multi-platform Flutter application for desk booking and presence management.
