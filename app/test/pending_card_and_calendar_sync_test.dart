@@ -117,7 +117,7 @@ void main() {
       }
       final dayCell = find.text('${targetDate.day}');
       expect(dayCell, findsWidgets);
-      await tester.tap(dayCell.first);
+      await tester.tap(targetDate.day >= 20 ? dayCell.last : dayCell.first);
       await tester.pumpAndSettle();
 
       // Check bottom sheet options

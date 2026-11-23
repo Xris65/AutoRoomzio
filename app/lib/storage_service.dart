@@ -3,8 +3,11 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'models/automation_rule.dart';
 import 'models/colleague.dart';
 import 'models/desk_occupant.dart';
+
+export 'models/automation_rule.dart';
 
 /// Uses FlutterSecureStorage for sensitive credentials (refresh token)
 /// and shared_preferences for app settings and cache.
@@ -113,6 +116,41 @@ class StorageService {
   Future<bool> getShowStats() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('show_stats_card') ?? true;
+  }
+
+  static const String _showFavoriteWeekIndicatorsKey = 'show_favorite_week_indicators';
+
+  Future<void> saveShowFavoriteWeekIndicators(bool show) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showFavoriteWeekIndicatorsKey, show);
+  }
+
+  Future<bool> getShowFavoriteWeekIndicators() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_showFavoriteWeekIndicatorsKey) ?? true;
+  }
+
+  static const String _skipPublicHolidaysKey = 'skip_public_holidays';
+  static const String _holidayCountryCodeKey = 'holiday_country_code';
+
+  Future<void> saveSkipPublicHolidays(bool skip) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_skipPublicHolidaysKey, skip);
+  }
+
+  Future<bool> getSkipPublicHolidays() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_skipPublicHolidaysKey) ?? true;
+  }
+
+  Future<void> saveHolidayCountryCode(String code) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_holidayCountryCodeKey, code);
+  }
+
+  Future<String> getHolidayCountryCode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_holidayCountryCodeKey) ?? 'FR';
   }
   // ── Token ─────────────────────────────────────────────────────────────────
 
@@ -722,6 +760,104 @@ class StorageService {
   Future<bool> getAutomationEnabled() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('automation_enabled') ?? false;
+  }
+
+  // ── Multi-Desk Automation Rules (v1.7.0) ──────────────────────────────────
+
+  static const String _automationRulesKey = 'automation_rules_v1';
+
+  Future<bool> hasAutomationRules() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.containsKey(_automationRulesKey);
+  }
+
+  Future<List<AutomationRule>> getAutomationRules() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString(_automationRulesKey);
+    if (jsonStr == null) {
+      final wsId = await getWorkspaceId();
+      if (wsId != null && wsId.isNotEmpty) {
+        final siteId = await getSiteId() ?? '';
+        final floorId = await getFloorId() ?? '';
+        final rawWsName = await getWorkspaceName();
+        final wsName =
+            (rawWsName != null && rawWsName.isNotEmpty) ? rawWsName : wsId;
+        final legacyDays = AutomationRule.normalizeDays(await getDays());
+        final migrated = [
+          AutomationRule(
+            id: wsId,
+            siteId: siteId,
+            floorId: floorId,
+            workspaceId: wsId,
+            workspaceName: wsName,
+            days: legacyDays,
+          ),
+        ];
+        await saveAutomationRules(migrated);
+        return migrated;
+      }
+      return [];
+    }
+
+    if (jsonStr.isEmpty) return [];
+    try {
+      final dynamic decoded = jsonDecode(jsonStr);
+      if (decoded is List) {
+        return decoded
+            .whereType<Map>()
+            .map((e) => AutomationRule.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<void> saveAutomationRules(List<AutomationRule> rules) async {
+    final seenDays = <int>{};
+    final normalized = <AutomationRule>[];
+    for (final rule in rules) {
+      final uniqueDays = <int>[];
+      for (final d in AutomationRule.normalizeDays(rule.days)) {
+        if (seenDays.add(d)) {
+          uniqueDays.add(d);
+        }
+      }
+      normalized.add(rule.copyWith(days: uniqueDays));
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _automationRulesKey,
+      jsonEncode(normalized.map((r) => r.toJson()).toList()),
+    );
+
+    final allAssignedDays = normalized
+        .expand((r) => r.days)
+        .toSet()
+        .toList()
+      ..sort();
+    await saveDays(allAssignedDays);
+  }
+
+  Future<AutomationRule?> getAutomationRuleForWeekday(int weekday) async {
+    final rules = await getAutomationRules();
+    for (final rule in rules) {
+      if (rule.days.contains(weekday)) {
+        return rule;
+      }
+    }
+    return null;
+  }
+
+  Future<Map<int, AutomationRule>> getWeekdayAutomationMap() async {
+    final rules = await getAutomationRules();
+    final map = <int, AutomationRule>{};
+    for (final rule in rules) {
+      for (final day in rule.days) {
+        map.putIfAbsent(day, () => rule);
+      }
+    }
+    return map;
   }
 
   // ── Settings ─────────────────────────────────────────────────────────────

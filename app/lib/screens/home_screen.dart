@@ -17,6 +17,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../api_service.dart';
+import '../holiday_service.dart';
 import '../storage_service.dart';
 import '../token_crypto.dart';
 import 'login_screen.dart';
@@ -47,16 +48,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late final StorageService _storage = widget.storageService ?? StorageService();
-  late final RoomzApiService _api = widget.apiService ?? RoomzApiService();
+  late final StorageService _storage;
+  late final RoomzApiService _api;
 
   List<int> _selectedDays = [];
+  List<AutomationRule> _automationRules = [];
   String? _workspaceName;
+  String? _defaultWorkspaceId;
   bool _isLoading = true;
   bool _isCalendarBusy = false;
   bool _automationEnabled = false;
   bool _showAutomation = true;
   bool _showStats = true;
+  bool _showFavoriteWeekIndicators = true;
+  bool _skipPublicHolidays = true;
+  String _holidayCountryCode = HolidayService.countryFrance;
 
   bool _canExit = false;
 
@@ -74,17 +80,51 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, String> _occupiedByOthers = {};
   Map<String, String> _delegatedBookingsMap = {};
 
-  // All-time historical bookings for stats
-  Set<String> _allTimeBookedDates = {};
-  Set<String> _allTimeElsewhereDates = {};
-
   final Map<int, String> _weekDays = {
     1: 'Lundi',
     2: 'Mardi',
     3: 'Mercredi',
     4: 'Jeudi',
     5: 'Vendredi',
+    6: 'Samedi',
+    7: 'Dimanche',
   };
+
+  static const Map<int, String> _shortWeekDays = {
+    1: 'Lun',
+    2: 'Mar',
+    3: 'Mer',
+    4: 'Jeu',
+    5: 'Ven',
+    6: 'Sam',
+    7: 'Dim',
+  };
+
+  static const List<MaterialColor> _ruleAccentPalette = [
+    Colors.indigo,
+    Colors.teal,
+    Colors.deepPurple,
+    Colors.deepOrange,
+    Colors.pink,
+    Colors.blue,
+    Colors.green,
+  ];
+
+  /// Returns a harmonious light/dark-aware accent color set for an automation rule index.
+  ({Color background, Color border, Color foreground, Color icon}) _ruleAccentColors(
+    int ruleIndex,
+    bool isDark,
+  ) {
+    final safeIndex = ruleIndex < 0 ? 0 : ruleIndex;
+    final paletteColor = _ruleAccentPalette[safeIndex % _ruleAccentPalette.length];
+    return (
+      background: paletteColor.withValues(alpha: isDark ? 0.22 : 0.12),
+      border: (isDark ? paletteColor.shade400 : paletteColor.shade300)
+          .withValues(alpha: isDark ? 0.55 : 0.75),
+      foreground: isDark ? paletteColor.shade200 : paletteColor.shade800,
+      icon: isDark ? paletteColor.shade300 : paletteColor.shade700,
+    );
+  }
 
   // Settings State
   TimeOfDay _automationTime = const TimeOfDay(hour: 8, minute: 0);
@@ -135,9 +175,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // All-time historical bookings for stats
+  Set<String> _allTimeBookedDates = {};
+  Set<String> _allTimeElsewhereDates = {};
+
   @override
   void initState() {
     super.initState();
+    _storage = widget.storageService ?? StorageService();
+    _api = widget.apiService ?? RoomzApiService();
     if (!kIsWeb) {
       _checkUpdatesOnStartup();
     }
@@ -197,7 +243,29 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (mounted) {
       await _reloadPendingSchedules();
+      await _reloadAutomationAndSettings();
       await _syncCalendar();
+    }
+  }
+
+  Future<void> _reloadAutomationAndSettings() async {
+    final hasRulesKey = await _storage.hasAutomationRules();
+    final rules = await _storage.getAutomationRules();
+    final showFavWeek = await _storage.getShowFavoriteWeekIndicators();
+    final List<int> days;
+    if (rules.isNotEmpty) {
+      days = rules.expand((r) => r.days).toSet().toList()..sort();
+    } else if (!hasRulesKey) {
+      days = await _storage.getDays();
+    } else {
+      days = [];
+    }
+    if (mounted) {
+      setState(() {
+        _automationRules = rules;
+        _selectedDays = days;
+        _showFavoriteWeekIndicators = showFavWeek;
+      });
     }
   }
 
@@ -228,7 +296,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadData() async {
-    final days = await _storage.getDays();
+    final hasRulesKey = await _storage.hasAutomationRules();
+    final rules = await _storage.getAutomationRules();
+    final List<int> days;
+    if (rules.isNotEmpty) {
+      days = rules.expand((r) => r.days).toSet().toList()..sort();
+    } else if (!hasRulesKey) {
+      days = await _storage.getDays();
+    } else {
+      days = [];
+    }
     final name = await _storage.getWorkspaceName();
     final requested = await _storage.getRequestedDates();
     final requestedWorkspaces = await _storage.getRequestedWorkspacesMap();
@@ -240,6 +317,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final autoTimeMap = await _storage.getAutomationTime();
     final showAuto = await _storage.getShowAutomation();
     final showStats = await _storage.getShowStats();
+    final showFavWeek = await _storage.getShowFavoriteWeekIndicators();
+    final skipHolidays = await _storage.getSkipPublicHolidays();
+    final holidayCountry = await _storage.getHolidayCountryCode();
     final notifSuccess = await _storage.getNotifySuccess();
     final notifFailure = await _storage.getNotifyFailure();
     final projCount = await _storage.getProjectionsCount();
@@ -253,8 +333,10 @@ class _HomeScreenState extends State<HomeScreen> {
     
     if (mounted) {
       setState(() {
+        _automationRules = rules;
         _selectedDays = days;
         _workspaceName = name;
+        _defaultWorkspaceId = wsId;
         _requestedDates = requested.toSet();
         _requestedWorkspacesMap = requestedWorkspaces;
         _requestedWorkspaceNamesMap = requestedNames;
@@ -267,6 +349,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _automationEnabled = autoEnabled;
       _showAutomation = showAuto;
       _showStats = showStats;
+        _showFavoriteWeekIndicators = showFavWeek;
+        _skipPublicHolidays = skipHolidays;
+        _holidayCountryCode = holidayCountry;
         _automationTime = TimeOfDay(hour: autoTimeMap['hour']!, minute: autoTimeMap['minute']!);
         _notifySuccess = notifSuccess;
         _notifyFailure = notifFailure;
@@ -343,7 +428,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _toggleAutomation(bool val) async {
-    if (val && _selectedDays.isEmpty) {
+    final hasAnyDays = _selectedDays.isNotEmpty || _automationRules.any((r) => r.days.isNotEmpty);
+    if (val && !hasAnyDays) {
       _showTopToast('Veuillez sélectionner au moins un jour récurrent.', isError: true);
       return;
     }
@@ -388,20 +474,234 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 
-  void _onDayToggled(int day, bool selected) {
-    setState(() {
-      if (selected) {
-        _selectedDays.add(day);
-        _selectedDays.sort();
-      } else {
-        _selectedDays.remove(day);
-        if (_selectedDays.isEmpty && _automationEnabled) {
+  Future<void> _persistAutomationRules() async {
+    await _storage.saveAutomationRules(_automationRules);
+    final reloaded = await _storage.getAutomationRules();
+    final unionDays = reloaded.expand((r) => r.days).toSet().toList()..sort();
+    final shouldDisable = unionDays.isEmpty && _automationEnabled;
+    if (shouldDisable) {
+      await _storage.saveAutomationEnabled(false);
+      if (!kIsWeb && Platform.isAndroid) {
+        try {
+          Workmanager().cancelAll();
+        } catch (_) {}
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _automationRules = reloaded;
+        _selectedDays = unionDays;
+        if (shouldDisable) {
           _automationEnabled = false;
-          _storage.saveAutomationEnabled(false);
         }
+      });
+    }
+  }
+
+  Future<void> _addAutomationPlace() async {
+    String? token = await _api.refreshMyToken();
+    token ??= await _storage.getRefreshToken();
+    if (!mounted) return;
+    if (token == null || token.isEmpty) {
+      _showTopToast(
+        'Impossible d\'actualiser la session. Veuillez vérifier votre connexion.',
+        isError: true,
+      );
+      return;
+    }
+    final picked = await Navigator.of(context).push<Map<String, String>>(
+      MaterialPageRoute(
+        builder: (_) => SetupScreen(
+          accessToken: token!,
+          apiService: _api,
+          storageService: _storage,
+          pickOnly: true,
+          titleOverride: 'Ajouter une place automatisée',
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+
+    final wsId = picked['workspaceId'] ?? '';
+    final wsName = picked['workspaceName'] ?? wsId;
+    final siteId = picked['siteId'] ?? '';
+    final floorId = picked['floorId'] ?? '';
+    if (wsId.isEmpty) return;
+
+    final alreadyExists = _automationRules.any(
+      (r) => r.workspaceId.toLowerCase() == wsId.toLowerCase(),
+    );
+    if (alreadyExists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('La place "$wsName" est déjà dans vos automatisations.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _automationRules.add(
+        AutomationRule(
+          id: wsId,
+          siteId: siteId,
+          floorId: floorId,
+          workspaceId: wsId,
+          workspaceName: wsName,
+          days: const [],
+        ),
+      );
+    });
+    await _persistAutomationRules();
+  }
+
+  Future<void> _changeRulePlace(AutomationRule targetRule) async {
+    String? token = await _api.refreshMyToken();
+    token ??= await _storage.getRefreshToken();
+    if (!mounted) return;
+    if (token == null || token.isEmpty) {
+      _showTopToast(
+        'Impossible d\'actualiser la session. Veuillez vérifier votre connexion.',
+        isError: true,
+      );
+      return;
+    }
+    final picked = await Navigator.of(context).push<Map<String, String>>(
+      MaterialPageRoute(
+        builder: (_) => SetupScreen(
+          accessToken: token!,
+          apiService: _api,
+          storageService: _storage,
+          pickOnly: true,
+          titleOverride: 'Changer la place automatisée',
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+
+    final newWsId = picked['workspaceId'] ?? '';
+    final newWsName = picked['workspaceName'] ?? newWsId;
+    final newSiteId = picked['siteId'] ?? '';
+    final newFloorId = picked['floorId'] ?? '';
+    if (newWsId.isEmpty) return;
+
+    final duplicateOther = _automationRules.any(
+      (r) =>
+          r.workspaceId != targetRule.workspaceId &&
+          r.workspaceId.toLowerCase() == newWsId.toLowerCase(),
+    );
+    if (duplicateOther) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('La place "$newWsName" est déjà configurée sur une autre carte.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      final idx = _automationRules.indexWhere(
+        (r) => r.workspaceId == targetRule.workspaceId,
+      );
+      if (idx >= 0) {
+        _automationRules[idx] = targetRule.copyWith(
+          id: newWsId,
+          siteId: newSiteId,
+          floorId: newFloorId,
+          workspaceId: newWsId,
+          workspaceName: newWsName,
+        );
       }
     });
-    _storage.saveDays(_selectedDays);
+    await _persistAutomationRules();
+  }
+
+  Future<void> _deleteAutomationRule(AutomationRule rule) async {
+    setState(() {
+      _automationRules.removeWhere((r) => r.workspaceId == rule.workspaceId);
+    });
+    await _persistAutomationRules();
+  }
+
+  Future<void> _onRuleDayPressed(
+    AutomationRule rule,
+    int day,
+    AutomationRule? conflictingRule,
+  ) async {
+    if (rule.days.contains(day)) {
+      setState(() {
+        final idx = _automationRules.indexWhere((r) => r.workspaceId == rule.workspaceId);
+        if (idx >= 0) {
+          final updatedDays = List<int>.from(_automationRules[idx].days)..remove(day);
+          _automationRules[idx] = _automationRules[idx].copyWith(days: updatedDays);
+        }
+      });
+      await _persistAutomationRules();
+      return;
+    }
+
+    if (conflictingRule != null && conflictingRule.workspaceId != rule.workspaceId) {
+      final dayName = _weekDays[day] ?? 'Jour $day';
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Conflit sur le $dayName'),
+          content: Text(
+            'Le $dayName est déjà automatisé sur la place "${conflictingRule.workspaceName}".\n\n'
+            'Voulez-vous remplacer cette place par "${rule.workspaceName}" pour le $dayName ?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler'),
+            ),
+            FilledButton(
+              key: const ValueKey('confirm_replace_day_button'),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Remplacer'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true || !mounted) return;
+
+      setState(() {
+        final otherIdx = _automationRules.indexWhere(
+          (r) => r.workspaceId == conflictingRule.workspaceId,
+        );
+        if (otherIdx >= 0) {
+          final otherDays = List<int>.from(_automationRules[otherIdx].days)..remove(day);
+          _automationRules[otherIdx] = _automationRules[otherIdx].copyWith(days: otherDays);
+        }
+        final idx = _automationRules.indexWhere(
+          (r) => r.workspaceId == rule.workspaceId,
+        );
+        if (idx >= 0) {
+          final nextDays = List<int>.from(_automationRules[idx].days)..add(day);
+          _automationRules[idx] = _automationRules[idx].copyWith(days: nextDays);
+        }
+      });
+      await _persistAutomationRules();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$dayName attribué à ${rule.workspaceName}.'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      final idx = _automationRules.indexWhere((r) => r.workspaceId == rule.workspaceId);
+      if (idx >= 0) {
+        final nextDays = List<int>.from(_automationRules[idx].days)..add(day);
+        _automationRules[idx] = _automationRules[idx].copyWith(days: nextDays);
+      }
+    });
+    await _persistAutomationRules();
   }
 
   Future<void> _changeWorkspace() async {
@@ -593,6 +893,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _storage.resetWorkspace();
     setState(() {
       _workspaceName = null;
+      _defaultWorkspaceId = null;
     });
   }
 
@@ -746,6 +1047,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (index == 0 || index == 1) {
               _reloadPendingSchedules();
             }
+            _reloadAutomationAndSettings();
           },
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1010,7 +1312,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 8),
                       _isCalendarBusy ? _buildShimmerLoading() : _buildUpcomingBookings(),
                     ],
-                    if (_workspaceName == null)
+                    if (_workspaceName == null) ...[
                     const Padding(
                       padding: EdgeInsets.only(top: 12),
                       child: Text(
@@ -1019,6 +1321,16 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: TextStyle(color: Colors.grey),
                       ),
                     ),
+                    if (_automationRules.any((r) => r.days.isNotEmpty) && _automationEnabled) ...[
+                      const SizedBox(height: 20),
+                      const Text(
+                        '📅 Prochaines réservations',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      _isCalendarBusy ? _buildShimmerLoading() : _buildUpcomingBookings(),
+                    ],
+                  ],
                 ],
               ),
             ),
@@ -1038,18 +1350,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildAutomationTab() {
-    if (_workspaceName == null) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'Configurez d\'abord votre bureau dans l\'onglet Accueil pour utiliser l\'automatisation.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
-          ),
-        ),
-      );
-    }
+    final daysToShow = _hideWeekends ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5, 6, 7];
+    final Map<int, AutomationRule> weekdayMap = {
+      for (final r in _automationRules)
+        for (final d in r.days) d: r,
+    };
+    final Map<String, int> ruleIndexById = {
+      for (int i = 0; i < _automationRules.length; i++)
+        _automationRules[i].workspaceId: i,
+    };
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
     return Stack(
       children: [
@@ -1209,6 +1520,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       children: [
                         SwitchListTile(
+                          key: const ValueKey('toggle_automation_enabled'),
                           title: const Text('Automatisation', style: TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: const Text('Réserver automatiquement mes places', style: TextStyle(fontSize: 12)),
                           value: _automationEnabled,
@@ -1218,62 +1530,292 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: _automationEnabled ? Colors.green : Colors.grey,
                           ),
                         ),
-                        if (_automationEnabled) const Divider(height: 1),
-                        if (_automationEnabled)
-                          ListTile(
-                            leading: const Icon(Icons.schedule, color: Colors.blue),
-                            title: const Text("Heure d'exécution"),
-                            subtitle: const Text("Heure approximative à laquelle l'automatisation s'exécutera chaque jour", style: TextStyle(fontSize: 11)),
-                            trailing: Text(_automationTime.format(context), style: const TextStyle(fontWeight: FontWeight.bold)),
-                            onTap: () async {
-                              final time = await showTimePicker(
-                                context: context,
-                                initialTime: _automationTime,
-                              );
-                              if (time != null) {
-                                setState(() => _automationTime = time);
-                                await _storage.saveAutomationTime(time.hour, time.minute);
-                                // Refresh the task with the new delay
-                                _toggleAutomation(true);
-                              }
-                            },
+                        if (!_automationEnabled)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            child: Container(
+                              key: const ValueKey('automation_disabled_banner'),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: theme.colorScheme.outlineVariant),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.pause_circle_outline_rounded,
+                                    size: 20,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      'Automatisation en pause — aucune réservation automatique ne sera effectuée.',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
-                        if (_automationEnabled) const Divider(height: 1),
-                        if (_automationEnabled)
-                          ListTile(
-                            leading: const Icon(Icons.play_circle_fill, color: Colors.green),
-                            title: const Text("Lancer maintenant"),
-                            subtitle: const Text("Exécuter manuellement la routine tout de suite", style: TextStyle(fontSize: 11)),
-                            onTap: _runAutomationNow,
+                        const Divider(height: 1),
+                        ListTile(
+                          enabled: _automationEnabled,
+                          leading: Icon(
+                            Icons.schedule,
+                            color: _automationEnabled ? Colors.blue : theme.disabledColor,
                           ),
+                          title: const Text("Heure d'exécution"),
+                          subtitle: const Text(
+                            "Heure approximative à laquelle l'automatisation s'exécutera chaque jour",
+                            style: TextStyle(fontSize: 11),
+                          ),
+                          trailing: Text(
+                            _automationTime.format(context),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: _automationEnabled ? null : theme.disabledColor,
+                            ),
+                          ),
+                          onTap: _automationEnabled
+                              ? () async {
+                                  final time = await showTimePicker(
+                                    context: context,
+                                    initialTime: _automationTime,
+                                  );
+                                  if (time != null) {
+                                    setState(() => _automationTime = time);
+                                    await _storage.saveAutomationTime(time.hour, time.minute);
+                                    // Refresh the task with the new delay
+                                    _toggleAutomation(true);
+                                  }
+                                }
+                              : null,
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          key: const ValueKey('run_automation_now_tile'),
+                          enabled: _automationEnabled,
+                          leading: Icon(
+                            Icons.play_circle_fill,
+                            color: _automationEnabled ? Colors.green : theme.disabledColor,
+                          ),
+                          title: const Text("Lancer maintenant"),
+                          subtitle: const Text(
+                            "Exécuter manuellement la routine tout de suite",
+                            style: TextStyle(fontSize: 11),
+                          ),
+                          onTap: _automationEnabled ? _runAutomationNow : null,
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 20),
 
-                  // ── Jours récurrents ─────────────────────────────────────────
-                  const Text(
-                    '📅 Jours de présence récurrents',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  // ── Bandeau récapitulatif « Ma semaine type » ────────────────
+                  _buildWeeklySummaryBanner(
+                    daysToShow: daysToShow,
+                    weekdayMap: weekdayMap,
+                    ruleIndexById: ruleIndexById,
+                    theme: theme,
+                    isDark: isDark,
                   ),
-                  const SizedBox(height: 8),
-                  Card(
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-                    ),
-                    child: Column(
-                      children: _weekDays.entries.map((entry) {
-                        return CheckboxListTile(
-                          title: Text(entry.value),
-                          value: _selectedDays.contains(entry.key),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          onChanged: (bool? value) => _onDayToggled(entry.key, value ?? false),
-                        );
-                      }).toList(),
-                    ),
+                  const SizedBox(height: 20),
+
+                  // ── Section « Mes places automatisées » ──────────────────────
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '📅 Mes places automatisées',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      FilledButton.tonalIcon(
+                        key: const ValueKey('add_automation_rule_button'),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Ajouter une place'),
+                        onPressed: _addAutomationPlace,
+                      ),
+                    ],
                   ),
+                  if (!_automationEnabled) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Activez l\'automatisation ci-dessus pour exécuter ces règles.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  if (_automationRules.isEmpty)
+                    Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(color: theme.colorScheme.outlineVariant),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.all(20),
+                        child: Text(
+                          'Aucune place automatisée configurée.\nAjoutez une place pour associer des jours de la semaine.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                    )
+                  else
+                    AnimatedOpacity(
+                      opacity: _automationEnabled ? 1.0 : 0.65,
+                      duration: const Duration(milliseconds: 200),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: _automationRules.map((rule) {
+                      final sortedActiveDays = List<int>.from(rule.days)..sort();
+                      final activeDaysLabel = sortedActiveDays.isEmpty
+                          ? 'Aucun jour sélectionné'
+                          : sortedActiveDays.map((d) => _weekDays[d] ?? '').where((s) => s.isNotEmpty).join(', ');
+                      final ruleColors = _ruleAccentColors(
+                        ruleIndexById[rule.workspaceId] ?? 0,
+                        isDark,
+                      );
+                      return Card(
+                        key: ValueKey('automation_rule_card_${rule.workspaceId}'),
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(color: theme.colorScheme.outlineVariant),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.desk_rounded, color: ruleColors.icon),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          rule.workspaceName,
+                                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          activeDaysLabel,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    key: ValueKey('change_automation_rule_${rule.workspaceId}'),
+                                    icon: const Icon(Icons.edit_location_alt_outlined, size: 20),
+                                    tooltip: 'Changer de place',
+                                    onPressed: () => _changeRulePlace(rule),
+                                  ),
+                                  IconButton(
+                                    key: ValueKey('delete_automation_rule_${rule.workspaceId}'),
+                                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                    tooltip: 'Supprimer',
+                                    onPressed: () => _deleteAutomationRule(rule),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: daysToShow.map((day) {
+                                  final isSelectedHere = rule.days.contains(day);
+                                  final otherRule = (!isSelectedHere) ? weekdayMap[day] : null;
+                                  final isConflict = otherRule != null && otherRule.workspaceId != rule.workspaceId;
+                                  final shortName = _shortWeekDays[day] ?? '$day';
+
+                                  Color bgColor;
+                                  Color borderColor;
+                                  Color fgColor;
+                                  Widget? leadingIcon;
+                                  String labelText;
+
+                                  if (isSelectedHere) {
+                                    bgColor = theme.colorScheme.primary;
+                                    borderColor = theme.colorScheme.primary;
+                                    fgColor = theme.colorScheme.onPrimary;
+                                    leadingIcon = Icon(Icons.check_rounded, size: 15, color: fgColor);
+                                    labelText = shortName;
+                                  } else if (isConflict) {
+                                    bgColor = Colors.amber.withValues(alpha: isDark ? 0.2 : 0.16);
+                                    borderColor = isDark ? Colors.amber.shade400 : Colors.orange.shade700;
+                                    fgColor = isDark ? Colors.amber.shade200 : Colors.orange.shade900;
+                                    leadingIcon = Icon(Icons.swap_horiz_rounded, size: 15, color: fgColor);
+                                    labelText = '$shortName • ${otherRule.workspaceName}';
+                                  } else {
+                                    bgColor = theme.colorScheme.surface;
+                                    borderColor = theme.colorScheme.outlineVariant;
+                                    fgColor = theme.colorScheme.onSurface;
+                                    labelText = shortName;
+                                  }
+
+                                  return Material(
+                                    color: bgColor,
+                                    borderRadius: BorderRadius.circular(20),
+                                    child: InkWell(
+                                      key: ValueKey('rule_day_chip_${rule.workspaceId}_$day'),
+                                      borderRadius: BorderRadius.circular(20),
+                                      onTap: () => _onRuleDayPressed(rule, day, otherRule),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(20),
+                                          border: Border.all(color: borderColor),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (leadingIcon != null) ...[
+                                              leadingIcon,
+                                              const SizedBox(width: 5),
+                                            ],
+                                            Flexible(
+                                              child: Text(
+                                                labelText,
+                                                softWrap: true,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: isSelectedHere || isConflict ? FontWeight.bold : FontWeight.w500,
+                                                  color: fgColor,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -1288,10 +1830,177 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Builds the vertical weekly automation summary card with full desk names and rule-coded accents.
+  Widget _buildWeeklySummaryBanner({
+    required List<int> daysToShow,
+    required Map<int, AutomationRule> weekdayMap,
+    required Map<String, int> ruleIndexById,
+    required ThemeData theme,
+    required bool isDark,
+  }) {
+    return Card(
+      key: const ValueKey('weekly_summary_banner'),
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.calendar_view_week_rounded,
+                  size: 18,
+                  color: _automationEnabled
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Ma semaine type',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                if (!_automationEnabled)
+                  Container(
+                    key: const ValueKey('weekly_summary_paused_badge'),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.colorScheme.outlineVariant),
+                    ),
+                    child: Text(
+                      'En pause',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            AnimatedOpacity(
+              opacity: _automationEnabled ? 1.0 : 0.45,
+              duration: const Duration(milliseconds: 200),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: daysToShow.map((day) {
+                final assignedRule = weekdayMap[day];
+                final hasRule = assignedRule != null;
+                final accent = hasRule
+                    ? _ruleAccentColors(ruleIndexById[assignedRule.workspaceId] ?? 0, isDark)
+                    : null;
+
+                return Padding(
+                  key: ValueKey('weekly_summary_day_$day'),
+                  padding: EdgeInsets.only(bottom: day == daysToShow.last ? 0 : 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 48,
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: hasRule
+                              ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.24 : 0.14)
+                              : theme.colorScheme.surface.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: hasRule
+                                ? theme.colorScheme.primary.withValues(alpha: 0.5)
+                                : theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+                          ),
+                        ),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            _shortWeekDays[day] ?? '',
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: hasRule ? FontWeight.bold : FontWeight.w500,
+                              color: hasRule
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: hasRule
+                            ? Tooltip(
+                                message: assignedRule.workspaceName,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: accent!.background,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: accent.border),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.desk_rounded, size: 14, color: accent.icon),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          assignedRule.workspaceName,
+                                          softWrap: true,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                            color: accent.foreground,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                                child: Text(
+                                  'Aucun bureau automatisé',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: theme.colorScheme.onSurface.withValues(alpha: 0.45),
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildUpcomingBookings() {
     List<Map<String, dynamic>> upcoming = [];
     final now = DateTime.now();
     int recurringProjectionsCount = 0;
+    final rulesByWeekday = <int, AutomationRule>{
+      for (final r in _automationRules)
+        for (final d in r.days) d: r,
+    };
     
     for (int i = 0; i < 60; i++) {
       final date = now.add(Duration(days: i));
@@ -1313,11 +2022,23 @@ class _HomeScreenState extends State<HomeScreen> {
            if (parts.length > 5 && parts[5].isNotEmpty) delegateCreator = parts[5];
         }
         bool isOccupiedByOthers = !isBooked && !isElsewhere && !isDelegated && _occupiedByOthers.containsKey(dateStr);
-        bool isRecurring = _automationEnabled && _selectedDays.contains(date.weekday) && _showAllReservations;
+        final ruleForDay = rulesByWeekday[date.weekday];
+        final bool hasRuleOrLegacyDay = ruleForDay != null ||
+            (_automationRules.isEmpty && _selectedDays.contains(date.weekday));
+        bool isRecurring = _automationEnabled && hasRuleOrLegacyDay && _showAllReservations;
         if (_hideWeekends && (date.weekday == DateTime.saturday || date.weekday == DateTime.sunday)) {
           isRecurring = false;
         }
         if (_isVacation(date)) isRecurring = false;
+        if (_skipPublicHolidays && HolidayService.isHoliday(date, countryCode: _holidayCountryCode)) {
+          isRecurring = false;
+        }
+
+        final bool targetsDefaultDesk = ruleForDay == null ||
+            (_defaultWorkspaceId != null &&
+                _defaultWorkspaceId!.isNotEmpty &&
+                ruleForDay.workspaceId.toLowerCase() == _defaultWorkspaceId!.toLowerCase());
+        final String? projectedWorkspaceName = ruleForDay?.workspaceName ?? _workspaceName;
 
       if (isDelegated) {
         upcoming.add({"date": date, "source": "Délégué", "isBooked": true, "name": delegateName, "location": delegateLocation, "creator": delegateCreator});
@@ -1331,13 +2052,18 @@ class _HomeScreenState extends State<HomeScreen> {
         } else if (isRequested) {
           final requestedWs = _requestedWorkspaceNamesMap[dateStr] ?? _requestedWorkspacesMap[dateStr];
           upcoming.add({"date": date, "source": "Calendrier", "isBooked": false, "name": requestedWs, "isRequested": true});
-        } else if (isOccupiedByOthers) {
+        } else if (isOccupiedByOthers && targetsDefaultDesk) {
         if (isRecurring && recurringProjectionsCount < _projectionsCount) {
           upcoming.add({"date": date, "source": "Occupé", "isBooked": false, "name": _occupiedByOthers[dateStr]});
           recurringProjectionsCount++;
         }
       } else if (isRecurring && recurringProjectionsCount < _projectionsCount) {
-        upcoming.add({"date": date, "source": "Récurrent", "isBooked": false});
+        upcoming.add({
+          "date": date,
+          "source": "Récurrent",
+          "isBooked": false,
+          "workspaceName": projectedWorkspaceName,
+        });
         recurringProjectionsCount++;
       }
     }
@@ -1385,7 +2111,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 builder: (context) {
                   final isDark = Theme.of(context).brightness == Brightness.dark;
                   return Text(
-                    source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Délégué' ? DelegationDisplayHelper.formatDelegatedHomeSubtitle(delegateName: item["name"]?.toString() ?? "Quelqu'un", location: item["location"]?.toString(), creatorName: item["creator"]?.toString()) : (source == 'Occupé' ? DelegationDisplayHelper.formatOccupiedHomeSubtitle(item["name"]) : (isBooked ? 'Déjà réservé' : (source == 'Calendrier' && item["name"] != null && item["name"].toString().isNotEmpty ? 'Programmé en attente (${item["name"]})' : 'Sera réservé (Automatique)')))),
+                    source == 'Ailleurs' ? 'Réservé sur un autre bureau (${item["name"] ?? "Ailleurs"})' : (source == 'Délégué' ? DelegationDisplayHelper.formatDelegatedHomeSubtitle(delegateName: item["name"]?.toString() ?? "Quelqu'un", location: item["location"]?.toString(), creatorName: item["creator"]?.toString()) : (source == 'Occupé' ? DelegationDisplayHelper.formatOccupiedHomeSubtitle(item["name"]) : (isBooked ? 'Déjà réservé' : (source == 'Calendrier' && item["name"] != null && item["name"].toString().isNotEmpty ? 'Programmé en attente (${item["name"]})' : (item["workspaceName"] != null && item["workspaceName"].toString().isNotEmpty ? 'Sera réservé (${item["workspaceName"]})' : 'Sera réservé (Automatique)'))))),
                     style: TextStyle(color: source == 'Ailleurs' ? (isDark ? Colors.orange.shade300 : Colors.orange.shade900) : (source == 'Délégué' ? (isDark ? Colors.purple.shade300 : Colors.purple.shade900) : (source == 'Occupé' ? (isDark ? Colors.grey.shade400 : Colors.grey.shade700) : (isBooked ? (isDark ? Colors.green.shade400 : Colors.green) : (isDark ? Colors.blue.shade300 : Colors.blue)))), fontSize: _compactMode ? 10 : 12),
                   );
                 }
@@ -1653,6 +2379,15 @@ class _HomeScreenState extends State<HomeScreen> {
       cellTooltip = 'Bloqué';
     }
 
+    final holidayName = _skipPublicHolidays
+        ? HolidayService.getHolidayName(day, countryCode: _holidayCountryCode)
+        : null;
+    if (holidayName != null) {
+      cellTooltip = cellTooltip != null
+          ? '$cellTooltip • 🎉 Jour férié : $holidayName'
+          : '🎉 Jour férié : $holidayName';
+    }
+
     final cell = Stack(
       alignment: Alignment.center,
       children: [
@@ -1663,7 +2398,9 @@ class _HomeScreenState extends State<HomeScreen> {
             shape: BoxShape.circle,
             border: isOccupiedByOthers
                 ? Border.all(color: Colors.grey.shade400, width: 1)
-                : null,
+                : (holidayName != null && bgColor == null
+                    ? Border.all(color: Colors.amber.shade600, width: 1.2)
+                    : null),
           ),
           alignment: Alignment.center,
           child: Text(
@@ -1676,6 +2413,19 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
+        if (holidayName != null)
+          Positioned(
+            top: 4,
+            right: 4,
+            child: Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: Colors.amber.shade700,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
         // Multi-dot indicators at bottom of cell
         if (dots.isNotEmpty || isOccupiedByOthers)
           Positioned(
@@ -1838,11 +2588,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _runAutomationNow() async {
+    if (!_automationEnabled) return;
     setState(() => _isCalendarBusy = true);
     try {
       final token = await _api.refreshMyToken();
+      if (token == null) return;
+
       final workspaceId = await _storage.getWorkspaceId();
-      if (token == null || workspaceId == null) return;
+      final defaultWorkspaceName = await _storage.getWorkspaceName();
+      final hasRulesKey = await _storage.hasAutomationRules();
+      final rules = await _storage.getAutomationRules();
+      final rulesByWeekday = <int, AutomationRule>{
+        for (final r in rules)
+          for (final d in r.days) d: r,
+      };
 
       final freshReq = await _storage.getRequestedDates();
       final freshWsMap = await _storage.getRequestedWorkspacesMap();
@@ -1851,13 +2610,18 @@ class _HomeScreenState extends State<HomeScreen> {
       _requestedWorkspacesMap = freshWsMap;
       _requestedWorkspaceNamesMap = freshNamesMap;
 
+      final hasDefaultDesk = workspaceId != null && workspaceId.isNotEmpty;
+      if (!hasDefaultDesk && rulesByWeekday.isEmpty && _requestedDates.isEmpty) {
+        return;
+      }
+
       final now = DateTime.now();
-      
+
       int addedCount = 0;
       for (int i = 1; i <= 13; i++) {
         final targetDate = now.add(Duration(days: i));
         final isWeekend = targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday;
-        
+
         if (_hideWeekends && isWeekend) continue;
         if (_isVacation(targetDate)) continue;
 
@@ -1865,27 +2629,56 @@ class _HomeScreenState extends State<HomeScreen> {
 
         if (_ignoredDates.contains(dateStr) || _bookedDates.contains(dateStr)) continue;
 
-        // Hotfix 6 Pre-flight Conflict Guards:
-        // 1. Skip if user already has an active reservation elsewhere on that date
+        if (_skipPublicHolidays &&
+            HolidayService.isHoliday(targetDate, countryCode: _holidayCountryCode) &&
+            !_requestedDates.contains(dateStr)) {
+          continue;
+        }
+
+        // Pre-flight Conflict Guard 1:
+        // Skip if user already has an active reservation elsewhere on that date
         if (_bookedElsewhereMap.containsKey(dateStr)) {
           debugPrint("📍 User already booked elsewhere on $dateStr, skipping automation.");
           continue;
         }
 
-        // If not ignored/booked and it's either already requested or a valid automation day
-        if (_requestedDates.contains(dateStr) || _selectedDays.contains(targetDate.weekday)) {
-          final targetWsId = _requestedWorkspacesMap[dateStr] ?? workspaceId;
+        final ruleForDay = rulesByWeekday[targetDate.weekday];
+        final shouldBook = _requestedDates.contains(dateStr) ||
+            ruleForDay != null ||
+            (rules.isEmpty && !hasRulesKey && _selectedDays.contains(targetDate.weekday));
 
-          // 2. Skip if user's target desk is already occupied by someone else on that date
-          // Only check occupiedByOthers if targetWsId is default workspaceId
-          if (targetWsId == workspaceId && _occupiedByOthers.containsKey(dateStr)) {
+        if (shouldBook) {
+          final targetWsId =
+              _requestedWorkspacesMap[dateStr] ?? ruleForDay?.workspaceId ?? workspaceId;
+          final targetWsName =
+              _requestedWorkspaceNamesMap[dateStr] ??
+              ruleForDay?.workspaceName ??
+              defaultWorkspaceName ??
+              targetWsId;
+          if (targetWsId == null || targetWsId.isEmpty) continue;
+
+          final isTargetingDefault =
+              hasDefaultDesk && targetWsId.toLowerCase() == workspaceId.toLowerCase();
+
+          // Pre-flight Conflict Guard 2:
+          // Skip if user's default target desk is already occupied by someone else on that date
+          if (isTargetingDefault && _occupiedByOthers.containsKey(dateStr)) {
             debugPrint("🔒 Target desk occupied by ${_occupiedByOthers[dateStr]} on $dateStr, skipping automation.");
             continue;
           }
 
           final success = await _api.reserveWorkspace(dateStr, token, targetWsId);
           if (success) {
-            _bookedDates.add(dateStr);
+            await _storage.saveUserReservation(
+              dateStr,
+              targetWsId,
+              targetWsName ?? targetWsId,
+            );
+            if (isTargetingDefault) {
+              _bookedDates.add(dateStr);
+            } else {
+              _bookedElsewhereMap[dateStr] = targetWsName ?? targetWsId;
+            }
             _requestedDates.remove(dateStr);
             _requestedWorkspacesMap.remove(dateStr);
             _requestedWorkspaceNamesMap.remove(dateStr);
@@ -1895,13 +2688,14 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         }
       }
-      
+
       if (addedCount > 0) {
         setState(() {}); // refresh UI
-        _storage.saveBookedDates(_bookedDates.toList());
-        _storage.saveRequestedDates(_requestedDates.toList());
-        _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
-        _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
+        await _storage.saveBookedDates(_bookedDates.toList());
+        await _storage.saveBookedElsewhereMap(_bookedElsewhereMap);
+        await _storage.saveRequestedDates(_requestedDates.toList());
+        await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
+        await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -2169,6 +2963,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final myWsId = await _storage.getWorkspaceId();
     if (!mounted) return;
     final isDelegatedOnMyDesk = isDelegated && dParts.isNotEmpty && dParts[0] == myWsId;
+    final holidayName = _skipPublicHolidays
+        ? HolidayService.getHolidayName(day, countryCode: _holidayCountryCode)
+        : null;
 
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -2182,6 +2979,30 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: const EdgeInsets.all(16.0),
                 child: Text('Gestion du $dateStr', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               ),
+              if (holidayName != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Container(
+                    key: const ValueKey('holiday_banner_in_modal'),
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.amber.shade700.withValues(alpha: 0.5)),
+                    ),
+                    child: Text(
+                      '🎉 Jour férié : $holidayName (Automatisation suspendue)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).brightness == Brightness.dark
+                            ? Colors.amber.shade200
+                            : Colors.amber.shade900,
+                      ),
+                    ),
+                  ),
+                ),
                   if (isDelegated)
                     ListTile(
                       leading: Icon(Icons.group_off, color: Theme.of(context).brightness == Brightness.dark ? Colors.purple.shade300 : Colors.purple.shade900),
@@ -3205,6 +4026,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   _storage.savePullToRefresh(val);
                 },
               ),
+              const Divider(height: 1),
+              SwitchListTile(
+                key: const ValueKey('toggle_favorite_week_indicators'),
+                title: const Text('Présence des favoris sur la semaine'),
+                subtitle: const Text(
+                  'Afficher les compteurs ⭐ par jour sur la barre de la semaine',
+                  style: TextStyle(fontSize: 12),
+                ),
+                secondary: const Icon(Icons.star_outline_rounded),
+                value: _showFavoriteWeekIndicators,
+                onChanged: (val) {
+                  setState(() => _showFavoriteWeekIndicators = val);
+                  _storage.saveShowFavoriteWeekIndicators(val);
+                },
+              ),
             ],
           ),
         ),
@@ -3254,6 +4090,7 @@ class _HomeScreenState extends State<HomeScreen> {
             side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SwitchListTile(
                 title: const Text('Désactiver le week-end'),
@@ -3265,6 +4102,59 @@ class _HomeScreenState extends State<HomeScreen> {
                   _storage.saveHideWeekends(val);
                 },
               ),
+              const Divider(height: 1),
+              SwitchListTile(
+                key: const ValueKey('toggle_skip_public_holidays'),
+                title: const Text('Jours fériés'),
+                subtitle: const Text(
+                  'Affiche les jours fériés sur le calendrier et suspend les réservations automatiques',
+                  style: TextStyle(fontSize: 12),
+                ),
+                secondary: Icon(
+                  Icons.celebration_rounded,
+                  color: _skipPublicHolidays ? Colors.amber.shade700 : Colors.grey,
+                ),
+                value: _skipPublicHolidays,
+                onChanged: (val) {
+                  setState(() => _skipPublicHolidays = val);
+                  _storage.saveSkipPublicHolidays(val);
+                },
+              ),
+              if (_skipPublicHolidays) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Calendrier des jours fériés',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        key: const ValueKey('holiday_country_selector'),
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: HolidayService.supportedCountries.entries.map((entry) {
+                          final isSelected = _holidayCountryCode == entry.key;
+                          return ChoiceChip(
+                            label: Text(entry.value),
+                            selected: isSelected,
+                            onSelected: (selected) {
+                              if (!selected) return;
+                              setState(() => _holidayCountryCode = entry.key);
+                              _storage.saveHolidayCountryCode(entry.key);
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const Divider(height: 1),
               SwitchListTile(
                 title: const Text('Affichage compact'),

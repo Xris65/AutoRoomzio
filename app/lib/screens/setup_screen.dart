@@ -17,12 +17,16 @@ class SetupScreen extends StatefulWidget {
   final String accessToken;
   final RoomzApiService? apiService;
   final StorageService? storageService;
+  final bool pickOnly;
+  final String? titleOverride;
 
   const SetupScreen({
     super.key,
     required this.accessToken,
     this.apiService,
     this.storageService,
+    this.pickOnly = false,
+    this.titleOverride,
   });
 
   @override
@@ -222,7 +226,9 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Future<void> _onSiteSelected(Map<String, dynamic> site) async {
     final siteId = site['id'].toString();
-    await _storage.saveSiteId(siteId);
+    if (!widget.pickOnly) {
+      await _storage.saveSiteId(siteId);
+    }
     setState(() {
       _selectedSite = site;
       _selectedFloor = null;
@@ -255,7 +261,9 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Future<void> _onFloorSelected(Map<String, dynamic> floor) async {
     final floorId = floor['id'].toString();
-    await _storage.saveFloorId(floorId);
+    if (!widget.pickOnly) {
+      await _storage.saveFloorId(floorId);
+    }
     setState(() {
       _selectedFloor = floor;
       _selectedRoomPrefix = null;
@@ -332,6 +340,18 @@ class _SetupScreenState extends State<SetupScreen> {
     if (_selectedFloor == null || _selectedSite == null) {
       return;
     }
+
+    if (widget.pickOnly) {
+      if (!mounted) return;
+      Navigator.of(context).pop(<String, String>{
+        'siteId': _selectedSite!['id'].toString(),
+        'floorId': _selectedFloor!['id'].toString(),
+        'workspaceId': ws['id'].toString(),
+        'workspaceName': ws['name']?.toString() ?? ws['id'].toString(),
+      });
+      return;
+    }
+
     await _storage.saveSiteId(_selectedSite!['id'].toString());
     await _storage.saveFloorId(_selectedFloor!['id'].toString());
     await _storage.saveWorkspaceId(ws['id'].toString());
@@ -607,8 +627,10 @@ class _SetupScreenState extends State<SetupScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Configuration'),
-        actions: [
+        title: Text(widget.titleOverride ?? 'Configuration'),
+        actions: widget.pickOnly
+            ? null
+            : [
           IconButton(
             icon: const Icon(Icons.qr_code_scanner),
             tooltip: 'Lier un appareil Web',

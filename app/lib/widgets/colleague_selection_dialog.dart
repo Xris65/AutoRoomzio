@@ -35,8 +35,8 @@ class ColleagueSelectionDialog extends StatefulWidget {
 }
 
 class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
-  late final StorageService _storage = widget.storageService ?? StorageService();
-  late final RoomzApiService _api = widget.apiService ?? RoomzApiService();
+  late final StorageService _storage;
+  late final RoomzApiService _api;
 
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
@@ -54,6 +54,8 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
   @override
   void initState() {
     super.initState();
+    _storage = widget.storageService ?? StorageService();
+    _api = widget.apiService ?? RoomzApiService();
     _loadFavorites();
     _searchController.addListener(_onSearchChanged);
   }

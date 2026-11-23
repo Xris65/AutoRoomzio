@@ -116,9 +116,14 @@ void main() {
       expect(updatedReq.contains(targetDateStr), isFalse);
       expect(await storage.getRequestedWorkspace(targetDateStr), isNull);
 
-      // Date must now be in booked_dates
-      final booked = await storage.getBookedDates();
-      expect(booked.contains(targetDateStr), isTrue);
+      // Date must now be recorded in user_reservations_map and booked_elsewhere (since deskB != default desk A)
+      final resMap = await storage.getUserReservationsMap();
+      expect(resMap[targetDateStr]?['workspaceId'], equals(deskB));
+      expect(resMap[targetDateStr]?['workspaceName'], equals('Bureau B'));
+      final elsewhereDates = await storage.getBookedElsewhereDates();
+      expect(elsewhereDates.contains(targetDateStr), isTrue);
+      final elsewhereMap = await storage.getBookedElsewhereMap();
+      expect(elsewhereMap[targetDateStr], equals('Bureau B'));
     });
   });
 }
