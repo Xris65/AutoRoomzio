@@ -1,4 +1,4 @@
-# Project: AutoRoomzio v1.6.3 (Web Team Map Stability & Favorites Query Hotfix)
+# Project: AutoRoomzio v1.7.0 (Multi-Desk Weekly Automation, Favorite Week Indicators & Smart Holiday Calendar)
 
 ## Architecture
 AutoRoomzio is a multi-platform Flutter application for desk booking and presence management.

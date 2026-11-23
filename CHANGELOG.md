@@ -2,6 +2,13 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.7.0] - 2026-11-23
+
+### Nouveautés
+- **Automatisation multi-places par jour** : Associez librement différentes places automatisées aux jours de la semaine indépendamment du bureau sélectionné sur l'accueil, visualisez votre semaine type dans un récapitulatif lisible, profitez d'une détection visuelle des conflits avec confirmation de remplacement, et repérez clairement l'état en pause lorsque l'automatisation est désactivée.
+- **Indicateurs hebdomadaires des favoris** : Visualisez le nombre de collègues favoris présents par jour (`⭐ N`) directement sur le plan d'équipe (désactivable depuis les paramètres ou la fenêtre récapitulative), et accédez à tout moment au planning hebdomadaire de vos favoris grâce au bouton Calendrier + Étoile permanent.
+- **Calendrier intelligent des jours fériés** : Activez globalement les jours fériés (France, Suisse et Belgique) dans les Paramètres pour profiter d'un badge dédié sur le calendrier et de la suspension automatique des réservations récurrentes les jours chômés.
+
 ## [1.6.3] - 2026-11-01
 
 ### Correctifs
