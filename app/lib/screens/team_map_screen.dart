@@ -98,6 +98,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   String? _actionLoadingMessage;
   bool _hideWeekends = true;
   bool _showRoomHeatmap = true;
+  bool _showFavoriteWeekIndicators = true;
   String? _errorMessage;
 
   @override
@@ -222,6 +223,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     try {
       final floorId = widget.initialFloorId ?? await _storage.getFloorId();
       final dateStr = _formatDateIso(_selectedDate);
+      final showFavWeek = await _storage.getShowFavoriteWeekIndicators();
       final results = await Future.wait([
         _storage.getBookedDates(),
         _storage.getBookedElsewhereDates(),
@@ -317,8 +319,24 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             w['isBookable'] == true;
       }).toList();
 
+      if (floorId != null) {
+        for (final d in _getVisibleWeekDays(_selectedDate)) {
+          final dStr = _formatDateIso(d);
+          final key = '${floorId}_$dStr';
+          if (!_occupancyCache.containsKey(key)) {
+            final cachedDay = dStr == dateStr
+                ? occs
+                : await _storage.getFloorOccupants(floorId, dStr);
+            if (cachedDay.isNotEmpty) {
+              _occupancyCache[key] = cachedDay;
+            }
+          }
+        }
+      }
+
       if (mounted) {
         setState(() {
+          _showFavoriteWeekIndicators = showFavWeek;
           _bookedDates.addAll(allBooked);
           if (occs.isNotEmpty && _occupants.isEmpty) {
             _occupants = occs;
@@ -345,6 +363,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
     try {
       final hw = await _storage.getHideWeekends();
+      final showFavWeek = await _storage.getShowFavoriteWeekIndicators();
+      _showFavoriteWeekIndicators = showFavWeek;
       final effectiveHide = widget.hideWeekends ?? hw;
       _hideWeekends = effectiveHide;
       if (effectiveHide) {
@@ -745,9 +765,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     String? token = _cachedAccessToken;
     if (token == null || token.isEmpty) return;
 
-    final monday = DateTime(baseDate.year, baseDate.month, baseDate.day - (baseDate.weekday - 1));
-    final count = (_hideWeekends && baseDate.weekday <= 5) ? 5 : 7;
-    final weekDays = List.generate(count, (i) => DateTime(monday.year, monday.month, monday.day + i));
+    final weekDays = _getVisibleWeekDays(baseDate);
 
     final missingDays = weekDays.where((d) {
       final key = "${floorId}_${_formatDateIso(d)}";
@@ -809,10 +827,15 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     setState(() => _isLoading = true);
     try {
       final hw = await _storage.getHideWeekends();
+      final showFavWeek = await _storage.getShowFavoriteWeekIndicators();
       if (mounted) {
-        setState(() => _hideWeekends = widget.hideWeekends ?? hw);
+        setState(() {
+          _hideWeekends = widget.hideWeekends ?? hw;
+          _showFavoriteWeekIndicators = showFavWeek;
+        });
       } else {
         _hideWeekends = widget.hideWeekends ?? hw;
+        _showFavoriteWeekIndicators = showFavWeek;
       }
       String? token = await _api.refreshMyToken(force: true);
       if (token == null && OfflineStateManager.instance.isOffline) {
@@ -1726,6 +1749,22 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                   ),
                   const SizedBox(height: 8),
                 ],
+                if (!kIsWeb) ...[
+                  OutlinedButton.icon(
+                    key: const ValueKey('automate_desk_button'),
+                    icon: const Icon(Icons.auto_mode_rounded),
+                    label: const Text("Automatiser ce bureau"),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _openDeskAutomationSheet(wsId: wsId, deskName: deskName);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 TextButton(
                   key: const ValueKey('close_free_desk_sheet_button'),
                   onPressed: () => Navigator.pop(ctx),
@@ -1742,6 +1781,270 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     if (mounted) {
       setState(() => _selectedDeskId = null);
     }
+  }
+
+  Future<void> _openDeskAutomationSheet({
+    required String wsId,
+    required String deskName,
+  }) async {
+    final rules = await _storage.getAutomationRules();
+    if (!mounted) return;
+
+    const fullWeekDays = {
+      1: 'Lundi',
+      2: 'Mardi',
+      3: 'Mercredi',
+      4: 'Jeudi',
+      5: 'Vendredi',
+      6: 'Samedi',
+      7: 'Dimanche',
+    };
+    const shortWeekDays = {
+      1: 'Lun',
+      2: 'Mar',
+      3: 'Mer',
+      4: 'Jeu',
+      5: 'Ven',
+      6: 'Sam',
+      7: 'Dim',
+    };
+    final daysToShow = _hideWeekends ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5, 6, 7];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (sheetCtx, setSheetState) {
+            final theme = Theme.of(sheetCtx);
+            final isDark = theme.brightness == Brightness.dark;
+            final weekdayMap = <int, AutomationRule>{
+              for (final r in rules)
+                for (final d in r.days) d: r,
+            };
+            final existingIdx = rules.indexWhere(
+              (r) => r.workspaceId.toLowerCase() == wsId.toLowerCase(),
+            );
+            final currentRule = existingIdx >= 0
+                ? rules[existingIdx]
+                : AutomationRule(
+                    id: wsId,
+                    siteId: _siteId ?? '',
+                    floorId: _floorId ?? '',
+                    workspaceId: wsId,
+                    workspaceName: deskName,
+                    days: const [],
+                  );
+
+            Future<void> persistChanges(List<int> nextDays) async {
+              final idx = rules.indexWhere(
+                (r) => r.workspaceId.toLowerCase() == wsId.toLowerCase(),
+              );
+              if (nextDays.isEmpty) {
+                if (idx >= 0) {
+                  rules.removeAt(idx);
+                }
+              } else if (idx >= 0) {
+                rules[idx] = rules[idx].copyWith(
+                  siteId: _siteId ?? rules[idx].siteId,
+                  floorId: _floorId ?? rules[idx].floorId,
+                  workspaceName: deskName,
+                  days: nextDays,
+                );
+              } else {
+                rules.add(
+                  AutomationRule(
+                    id: wsId,
+                    siteId: _siteId ?? '',
+                    floorId: _floorId ?? '',
+                    workspaceId: wsId,
+                    workspaceName: deskName,
+                    days: nextDays,
+                  ),
+                );
+              }
+              await _storage.saveAutomationRules(rules);
+              if (sheetCtx.mounted) {
+                setSheetState(() {});
+              }
+            }
+
+            return SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.auto_mode_rounded, color: theme.colorScheme.primary),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Automatiser $deskName',
+                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                              Text(
+                                'Choisissez les jours récurrents pour ce bureau',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    ...daysToShow.map((day) {
+                      final isActiveHere = currentRule.days.contains(day);
+                      final otherRule = (!isActiveHere) ? weekdayMap[day] : null;
+                      final isConflict =
+                          otherRule != null && otherRule.workspaceId.toLowerCase() != wsId.toLowerCase();
+                      final dayName = fullWeekDays[day] ?? 'Jour $day';
+                      final shortName = shortWeekDays[day] ?? '$day';
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Material(
+                          color: isActiveHere
+                              ? theme.colorScheme.primaryContainer.withValues(alpha: isDark ? 0.5 : 0.7)
+                              : (isConflict
+                                  ? Colors.amber.withValues(alpha: isDark ? 0.18 : 0.14)
+                                  : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)),
+                          borderRadius: BorderRadius.circular(12),
+                          child: InkWell(
+                            key: ValueKey('desk_auto_day_$day'),
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () async {
+                              if (isActiveHere) {
+                                final nextDays = List<int>.from(currentRule.days)..remove(day);
+                                await persistChanges(nextDays);
+                              } else if (isConflict) {
+                                final confirmed = await showDialog<bool>(
+                                  context: sheetCtx,
+                                  builder: (dlgCtx) => AlertDialog(
+                                    title: Text('Conflit sur le $dayName'),
+                                    content: Text(
+                                      'Le $dayName est déjà automatisé sur la place "${otherRule.workspaceName}".\n\n'
+                                      'Voulez-vous remplacer cette place par "$deskName" pour le $dayName ?',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(dlgCtx, false),
+                                        child: const Text('Annuler'),
+                                      ),
+                                      FilledButton(
+                                        key: const ValueKey('confirm_replace_day_button'),
+                                        onPressed: () => Navigator.pop(dlgCtx, true),
+                                        child: const Text('Remplacer'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed != true) return;
+                                final otherIdx = rules.indexWhere(
+                                  (r) => r.workspaceId.toLowerCase() == otherRule.workspaceId.toLowerCase(),
+                                );
+                                if (otherIdx >= 0) {
+                                  final otherDays = List<int>.from(rules[otherIdx].days)..remove(day);
+                                  rules[otherIdx] = rules[otherIdx].copyWith(days: otherDays);
+                                }
+                                final nextDays = List<int>.from(currentRule.days)..add(day);
+                                await persistChanges(nextDays);
+                              } else {
+                                final nextDays = List<int>.from(currentRule.days)..add(day);
+                                await persistChanges(nextDays);
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isActiveHere
+                                      ? theme.colorScheme.primary
+                                      : (isConflict
+                                          ? (isDark ? Colors.amber.shade400 : Colors.orange.shade700)
+                                          : theme.dividerColor.withValues(alpha: 0.25)),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isActiveHere
+                                        ? Icons.check_circle_rounded
+                                        : (isConflict
+                                            ? Icons.swap_horiz_rounded
+                                            : Icons.radio_button_unchecked_rounded),
+                                    color: isActiveHere
+                                        ? theme.colorScheme.primary
+                                        : (isConflict
+                                            ? (isDark ? Colors.amber.shade300 : Colors.orange.shade800)
+                                            : theme.colorScheme.onSurface.withValues(alpha: 0.5)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      '$dayName ($shortName)',
+                                      style: TextStyle(
+                                        fontWeight: isActiveHere || isConflict ? FontWeight.bold : FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  if (isConflict)
+                                    Flexible(
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: Colors.amber.withValues(alpha: isDark ? 0.25 : 0.2),
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color: isDark ? Colors.amber.shade400 : Colors.orange.shade700,
+                                            width: 0.8,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '⇄ ${otherRule.workspaceName}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: isDark ? Colors.amber.shade200 : Colors.orange.shade900,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 8),
+                    FilledButton(
+                      key: const ValueKey('close_desk_automation_sheet_button'),
+                      onPressed: () => Navigator.pop(sheetCtx),
+                      child: const Text('Terminer'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _reserveForMe(Map<String, dynamic> workspace) async {
@@ -2268,6 +2571,454 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     );
   }
 
+  List<DateTime> _getVisibleWeekDays(DateTime baseDate) {
+    final monday = DateTime(baseDate.year, baseDate.month, baseDate.day - (baseDate.weekday - 1));
+    final count = _hideWeekends ? 5 : 7;
+    return List.generate(count, (i) => DateTime(monday.year, monday.month, monday.day + i));
+  }
+
+  String _occupantUniqueKey(DeskOccupant occ) {
+    if (occ.occupantId != null && occ.occupantId!.trim().isNotEmpty) {
+      return 'id:${occ.occupantId!.trim().toLowerCase()}';
+    }
+    if (occ.occupantEmail != null && occ.occupantEmail!.trim().isNotEmpty) {
+      return 'email:${occ.occupantEmail!.trim().toLowerCase()}';
+    }
+    return 'name:${occ.occupantName.trim().toLowerCase()}';
+  }
+
+  int _countUniqueFavorites(Map<String, DeskOccupant> occs) {
+    final seenPeople = <String>{};
+    for (final occ in occs.values) {
+      if (_isOccupantFavorite(occ)) {
+        seenPeople.add(_occupantUniqueKey(occ));
+      }
+    }
+    return seenPeople.length;
+  }
+
+  Map<String, int> _computeFavoriteCountsForVisibleWeek() {
+    final days = _getVisibleWeekDays(_selectedDate);
+    final selectedIso = _formatDateIso(_selectedDate);
+    final counts = <String, int>{};
+    for (final d in days) {
+      final dStr = _formatDateIso(d);
+      Map<String, DeskOccupant>? occs;
+      if (dStr == selectedIso) {
+        occs = _occupants;
+      } else if (_floorId != null) {
+        occs = _occupancyCache['${_floorId}_$dStr'];
+      }
+      if (occs != null && occs.isNotEmpty) {
+        final favCount = _countUniqueFavorites(occs);
+        if (favCount > 0) {
+          counts[dStr] = favCount;
+        }
+      }
+    }
+    return counts;
+  }
+
+  String _resolveDeskDisplayName(String wsId) {
+    final ws = _allWorkspaces.firstWhere(
+      (w) =>
+          w['id']?.toString().toLowerCase() == wsId.toLowerCase() ||
+          w['name']?.toString().toLowerCase() == wsId.toLowerCase(),
+      orElse: () => <String, dynamic>{},
+    );
+    return ws['name']?.toString() ??
+        ws['workspaceName']?.toString() ??
+        wsId;
+  }
+
+  DeskOccupant? _findOccupantForColleague(
+    Map<String, DeskOccupant> occs,
+    Colleague fav,
+  ) {
+    for (final occ in occs.values) {
+      if (occ.isMe) continue;
+      if (occ.occupantId != null &&
+          fav.id.isNotEmpty &&
+          occ.occupantId!.toLowerCase() == fav.id.toLowerCase()) {
+        return occ;
+      }
+      if (occ.occupantEmail != null &&
+          fav.email.isNotEmpty &&
+          occ.occupantEmail!.toLowerCase() == fav.email.toLowerCase()) {
+        return occ;
+      }
+      if (fav.name.trim().isNotEmpty &&
+          occ.occupantName.trim().toLowerCase() == fav.name.trim().toLowerCase()) {
+        return occ;
+      }
+    }
+    return null;
+  }
+
+  void _jumpToFavoriteDesk(DateTime targetDay, String wsId) {
+    final targetIso = _formatDateIso(targetDay);
+    final currentIso = _formatDateIso(_selectedDate);
+    if (targetIso != currentIso) {
+      setState(() {
+        _selectedDate = targetDay;
+      });
+      _loadOccupancyForDate(targetDay);
+    }
+    if (_focusedWorkspaceId == wsId) {
+      setState(() {
+        _focusedWorkspaceId = null;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _highlightDeskTemporarily(wsId);
+        }
+      });
+    } else {
+      _highlightDeskTemporarily(wsId);
+    }
+  }
+
+  Widget _buildFavoritesWeekIcon(
+    BuildContext context, {
+    bool dimStar = false,
+  }) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        const Icon(Icons.calendar_month_rounded),
+        Positioned(
+          right: -4,
+          bottom: -3,
+          child: Container(
+            padding: const EdgeInsets.all(1),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.star_rounded,
+              size: 12,
+              color: dimStar
+                  ? Colors.amber.withValues(alpha: 0.55)
+                  : Colors.amber,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showFavoritesWeekSummaryModal() async {
+    final weekDays = _getVisibleWeekDays(_selectedDate);
+    final savedFavs = await _storage.getFavoriteColleagues();
+    if (!mounted) return;
+
+    const shortWeekDays = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+    final selectedIso = _formatDateIso(_selectedDate);
+    final floorId = _floorId;
+    final missingDays = floorId == null
+        ? <DateTime>[]
+        : weekDays.where((d) {
+            final dStr = _formatDateIso(d);
+            return dStr != selectedIso && !_occupancyCache.containsKey('${floorId}_$dStr');
+          }).toList();
+
+    bool loadTriggered = false;
+    bool isLoadingWeek = missingDays.isNotEmpty;
+    bool localShowIndicators = _showFavoriteWeekIndicators;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (sheetCtx, setSheetState) {
+            if (!loadTriggered && missingDays.isNotEmpty && floorId != null) {
+              loadTriggered = true;
+              Future(() async {
+                try {
+                  String? token = _cachedAccessToken;
+                  if (token == null || token.isEmpty) {
+                    token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
+                    _cachedAccessToken = token;
+                  }
+                  final delegatedMap = await _storage.getDelegatedBookingsMap();
+                  final savedEmail = await _storage.getSavedEmail();
+                  await Future.wait(missingDays.map((d) async {
+                    final dStr = _formatDateIso(d);
+                    try {
+                      var occs = await _storage.getFloorOccupants(floorId, dStr);
+                      if (occs.isEmpty && token != null && token.isNotEmpty) {
+                        occs = await _api.getFloorOccupants(
+                          token,
+                          floorId,
+                          dStr,
+                          myUserEmail: savedEmail,
+                          delegatedBookingsMap: delegatedMap,
+                        );
+                        if (occs.isNotEmpty) {
+                          await _storage.saveFloorOccupants(floorId, dStr, occs);
+                        }
+                      }
+                      if (occs.isNotEmpty) {
+                        _occupancyCache['${floorId}_$dStr'] = occs;
+                      }
+                    } catch (_) {}
+                  }));
+                } finally {
+                  if (mounted) {
+                    setState(() {});
+                  }
+                  if (sheetCtx.mounted) {
+                    setSheetState(() {
+                      isLoadingWeek = false;
+                    });
+                  }
+                }
+              });
+            }
+
+            final Map<String, Map<String, DeskOccupant>> weekOccupants = {};
+            for (final d in weekDays) {
+              final dStr = _formatDateIso(d);
+              if (dStr == selectedIso) {
+                weekOccupants[dStr] = _occupants;
+              } else if (floorId != null) {
+                weekOccupants[dStr] = _occupancyCache['${floorId}_$dStr'] ?? const {};
+              } else {
+                weekOccupants[dStr] = const {};
+              }
+            }
+
+            final List<Colleague> favoritesList = List.from(savedFavs);
+            for (final occs in weekOccupants.values) {
+              for (final occ in occs.values) {
+                if (!_isOccupantFavorite(occ)) continue;
+                final alreadyPresent = favoritesList.any((fav) =>
+                    (occ.occupantId != null &&
+                        fav.id.isNotEmpty &&
+                        occ.occupantId!.toLowerCase() == fav.id.toLowerCase()) ||
+                    (occ.occupantEmail != null &&
+                        fav.email.isNotEmpty &&
+                        occ.occupantEmail!.toLowerCase() == fav.email.toLowerCase()) ||
+                    (fav.name.trim().isNotEmpty &&
+                        occ.occupantName.trim().toLowerCase() == fav.name.trim().toLowerCase()));
+                if (!alreadyPresent) {
+                  favoritesList.add(
+                    Colleague(
+                      id: occ.occupantId ?? _occupantUniqueKey(occ),
+                      name: occ.occupantName,
+                      email: occ.occupantEmail ?? '',
+                      isFavorite: true,
+                    ),
+                  );
+                }
+              }
+            }
+
+            final theme = Theme.of(sheetCtx);
+            final isDark = theme.brightness == Brightness.dark;
+
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(sheetCtx).size.height * 0.78,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          _buildFavoritesWeekIcon(sheetCtx),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              'Semaine de mes favoris',
+                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.pop(sheetCtx),
+                          ),
+                        ],
+                      ),
+                      if (isLoadingWeek) ...[
+                        const SizedBox(height: 6),
+                        const LinearProgressIndicator(minHeight: 2),
+                      ],
+                      const SizedBox(height: 8),
+                      if (favoritesList.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Text(
+                            'Aucun collègue favori configuré pour le moment.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        )
+                      else
+                        Flexible(
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: favoritesList.length,
+                            separatorBuilder: (context, index) => const SizedBox(height: 8),
+                            itemBuilder: (ctx, index) {
+                              final fav = favoritesList[index];
+                              return Card(
+                                elevation: 0,
+                                margin: EdgeInsets.zero,
+                                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  side: BorderSide(color: theme.colorScheme.outlineVariant),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.star_rounded, size: 16, color: Colors.amber),
+                                          const SizedBox(width: 6),
+                                          Expanded(
+                                            child: Text(
+                                              fav.name,
+                                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        children: weekDays.map((d) {
+                                          final dStr = _formatDateIso(d);
+                                          final occ = _findOccupantForColleague(
+                                            weekOccupants[dStr] ?? const {},
+                                            fav,
+                                          );
+                                          final dayLabel = shortWeekDays[d.weekday - 1];
+                                          final deskDisplay = occ != null
+                                              ? _resolveDeskDisplayName(occ.workspaceId)
+                                              : '—';
+                                          final isPresent = occ != null;
+
+                                          return Expanded(
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 2),
+                                              child: Material(
+                                                color: isPresent
+                                                    ? Colors.amber.withValues(alpha: isDark ? 0.25 : 0.2)
+                                                    : Colors.transparent,
+                                                borderRadius: BorderRadius.circular(8),
+                                                child: InkWell(
+                                                  key: ValueKey('fav_week_cell_${fav.id}_$dStr'),
+                                                  borderRadius: BorderRadius.circular(8),
+                                                  onTap: isPresent
+                                                      ? () {
+                                                          Navigator.pop(sheetCtx);
+                                                          _jumpToFavoriteDesk(d, occ.workspaceId);
+                                                        }
+                                                      : null,
+                                                  child: Container(
+                                                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 3),
+                                                    decoration: BoxDecoration(
+                                                      borderRadius: BorderRadius.circular(8),
+                                                      border: Border.all(
+                                                        color: isPresent
+                                                            ? Colors.amber.shade700.withValues(alpha: 0.5)
+                                                            : theme.dividerColor.withValues(alpha: 0.15),
+                                                      ),
+                                                    ),
+                                                    child: Column(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        Text(
+                                                          dayLabel,
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                            fontWeight: FontWeight.bold,
+                                                            color: isPresent
+                                                                ? (isDark ? Colors.amber.shade200 : Colors.amber.shade900)
+                                                                : theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                                          ),
+                                                        ),
+                                                        const SizedBox(height: 2),
+                                                        Text(
+                                                          deskDisplay,
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow.ellipsis,
+                                                          textAlign: TextAlign.center,
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                            fontWeight: isPresent ? FontWeight.bold : FontWeight.normal,
+                                                            color: isPresent
+                                                                ? theme.colorScheme.onSurface
+                                                                : theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        }).toList(),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                      const Divider(height: 1),
+                      SwitchListTile(
+                        key: const ValueKey('modal_toggle_favorite_week_indicators'),
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Afficher les compteurs ⭐ sur la barre des jours',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                        value: localShowIndicators,
+                        onChanged: (val) async {
+                          await _storage.saveShowFavoriteWeekIndicators(val);
+                          if (mounted) {
+                            setState(() {
+                              _showFavoriteWeekIndicators = val;
+                            });
+                          }
+                          if (sheetCtx.mounted) {
+                            setSheetState(() {
+                              localShowIndicators = val;
+                            });
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildDateNavigationBar() {
     return TimeSliderBar(
       selectedDate: _selectedDate,
@@ -2276,6 +3027,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       pendingDates: _requestedDates,
       hasConfirmedReservation: _hasConfirmedReservationForDate,
       isPendingReservation: _isPendingReservationForDate,
+      favoriteCountsByDate: _showFavoriteWeekIndicators
+          ? _computeFavoriteCountsForVisibleWeek()
+          : const {},
+      showFavoriteIndicators: _showFavoriteWeekIndicators,
       isLoading: _isOccupancyLoading,
       onDateSelected: (date) {
         setState(() {
@@ -2525,6 +3280,15 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       appBar: AppBar(
         title: const Text("Plan d'équipe"),
         actions: [
+          IconButton(
+            key: const ValueKey('favorites_week_summary_button'),
+            icon: _buildFavoritesWeekIcon(
+              context,
+              dimStar: !_showFavoriteWeekIndicators,
+            ),
+            tooltip: 'Semaine de mes favoris',
+            onPressed: _showFavoritesWeekSummaryModal,
+          ),
           IconButton(
             icon: const Icon(Icons.sync_rounded),
             tooltip: 'Actualiser',

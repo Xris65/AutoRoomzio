@@ -19,6 +19,8 @@ class TimeSliderBar extends StatefulWidget {
   final VoidCallback? onNextDay;
   final VoidCallback? onToday;
   final bool isLoading;
+  final Map<String, int> favoriteCountsByDate;
+  final bool showFavoriteIndicators;
 
   const TimeSliderBar({
     super.key,
@@ -34,6 +36,8 @@ class TimeSliderBar extends StatefulWidget {
     this.onNextDay,
     this.onToday,
     this.isLoading = false,
+    this.favoriteCountsByDate = const {},
+    this.showFavoriteIndicators = true,
   });
 
   @override
@@ -152,6 +156,9 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
 
     final selectedIndex = days.indexWhere((d) => isSameDay(d, widget.selectedDate));
     final activeIndex = selectedIndex >= 0 ? selectedIndex : 0;
+    final hasAnyFavBadges = widget.showFavoriteIndicators &&
+        days.any((d) => (widget.favoriteCountsByDate[formatDateIso(d)] ?? 0) > 0);
+    final trackHeight = hasAnyFavBadges ? 72.0 : 58.0;
 
     return Container(
       decoration: BoxDecoration(
@@ -310,7 +317,7 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                       _handleTouch(details.localPosition.dx, trackWidth, days),
                   onHorizontalDragEnd: (_) => _lastDraggedIndex = null,
                   child: Container(
-                    height: 58,
+                    height: trackHeight,
                     decoration: BoxDecoration(
                       color: isDark
                           ? Colors.black.withValues(alpha: 0.25)
@@ -357,10 +364,14 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                         Row(
                           children: List.generate(days.length, (index) {
                             final day = days[index];
+                            final dateStr = formatDateIso(day);
                             final isSelected = index == selectedIndex;
                             final isDayToday = isSameDay(day, today);
                             final hasConfirmed = _isConfirmed(day);
                             final hasPending = _isPending(day);
+                            final favCount = widget.showFavoriteIndicators
+                                ? (widget.favoriteCountsByDate[dateStr] ?? 0)
+                                : 0;
 
                             Color textColor;
                             if (isSelected) {
@@ -404,7 +415,7 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                                     ],
                                   ),
 
-                                  const SizedBox(height: 3),
+                                  const SizedBox(height: 2),
 
                                   // Discrete reservation badge
                                   if (hasConfirmed) ...[
@@ -421,7 +432,7 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                                       slotWidth: slotWidth,
                                       theme: theme,
                                     ),
-                                  ] else ...[
+                                  ] else if (favCount == 0) ...[
                                     // Subtle indicator rail tick
                                     Container(
                                       width: isSelected ? 12 : 4,
@@ -431,6 +442,39 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                                             ? theme.colorScheme.onPrimary.withValues(alpha: 0.6)
                                             : theme.dividerColor.withValues(alpha: 0.3),
                                         borderRadius: BorderRadius.circular(2),
+                                      ),
+                                    ),
+                                  ],
+                                  if (favCount > 0) ...[
+                                    const SizedBox(height: 2),
+                                    Container(
+                                      key: ValueKey('week_day_fav_badge_$dateStr'),
+                                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        color: isSelected
+                                            ? Colors.amber.shade300.withValues(alpha: 0.32)
+                                            : Colors.amber.withValues(alpha: 0.2),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: isSelected
+                                              ? Colors.amber.shade100
+                                              : Colors.amber.shade700.withValues(alpha: 0.45),
+                                          width: 0.6,
+                                        ),
+                                      ),
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Text(
+                                          '⭐ $favCount',
+                                          style: TextStyle(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold,
+                                            color: isSelected
+                                                ? Colors.white
+                                                : (isDark ? Colors.amber.shade200 : Colors.amber.shade900),
+                                            height: 1.1,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ],
