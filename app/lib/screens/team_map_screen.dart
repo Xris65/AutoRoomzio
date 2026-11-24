@@ -13,7 +13,9 @@ import '../widgets/colleague_selection_dialog.dart';
 import '../widgets/action_loading_overlay.dart';
 import '../widgets/time_slider_bar.dart';
 import '../offline_state_manager.dart';
+import '../utils/date_helpers.dart';
 import '../utils/error_sanitizer.dart';
+import '../utils/workspace_helpers.dart';
 
 class _RoomSummary {
   final String roomName;
@@ -136,65 +138,6 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     super.dispose();
   }
 
-  String _formatDateIso(DateTime d) =>
-      "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-
-  String _formatDateFrench(DateTime date) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final target = DateTime(date.year, date.month, date.day);
-    final diff = target.difference(today).inDays;
-
-    const weekdays = [
-      'Lundi',
-      'Mardi',
-      'Mercredi',
-      'Jeudi',
-      'Vendredi',
-      'Samedi',
-      'Dimanche'
-    ];
-    const months = [
-      'janv.',
-      'févr.',
-      'mars',
-      'avr.',
-      'mai',
-      'juin',
-      'juil.',
-      'août',
-      'sept.',
-      'oct.',
-      'nov.',
-      'déc.'
-    ];
-
-    final weekday = weekdays[date.weekday - 1];
-    final month = months[date.month - 1];
-
-    if (diff == 0) return "Aujourd'hui (${date.day} $month)";
-    if (diff == 1) return "Demain (${date.day} $month)";
-    if (diff == -1) return "Hier (${date.day} $month)";
-    return "$weekday ${date.day} $month";
-  }
-
-  String _extractRoomName(Map<String, dynamic> workspace) {
-    if (workspace['roomName'] != null &&
-        workspace['roomName'].toString().isNotEmpty) {
-      return workspace['roomName'].toString();
-    }
-    final name =
-        workspace['name']?.toString() ?? workspace['id']?.toString() ?? '';
-    final lastDash = name.lastIndexOf('-');
-    if (lastDash > 0 && lastDash < name.length - 1) {
-      final suffix = name.substring(lastDash + 1).trim();
-      if (suffix.length <= 4 && !suffix.contains(' ')) {
-        return name.substring(0, lastDash).trim();
-      }
-    }
-    return name.trim();
-  }
-
   Future<void> _loadFavorites() async {
     final favs = await _storage.getFavoriteColleagues();
     final favIds = <String>{};
@@ -221,8 +164,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Future<void> _loadCacheFirst() async {
     try {
-      final floorId = widget.initialFloorId ?? await _storage.getFloorId();
-      final dateStr = _formatDateIso(_selectedDate);
+      final floorId = widget.initialFloorId ??
+          await _storage.getMapSelectedFloorId() ??
+          await _storage.getFloorId();
+      final dateStr = DateHelpers.formatIsoDate(_selectedDate);
       final showFavWeek = await _storage.getShowFavoriteWeekIndicators();
       final results = await Future.wait([
         _storage.getBookedDates(),
@@ -265,63 +210,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             .toList();
       }
 
-      List<Map<String, dynamic>> features = [];
-      if (planData is List) {
-        features = planData.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-      } else if (planData is Map) {
-        final raw = planData['features'] ?? planData['data'] ?? [];
-        if (raw is List) {
-          features = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-        }
-      }
-
-      if (features.isEmpty && allWs.isNotEmpty) {
-        int col = 0;
-        int row = 0;
-        const int desksPerRow = 6;
-        for (final ws in allWs) {
-          final wsId = ws['id']?.toString() ?? '';
-          final wsName = ws['name']?.toString() ?? wsId;
-          final x = 50.0 + (col * 85.0);
-          final y = 50.0 + (row * 65.0);
-          features.add({
-            'type': 'Feature',
-            'properties': {
-              'workspaceId': wsId,
-              'id': wsId,
-              'name': wsName,
-              'workspaceType': ws['type']?.toString() ?? 'Desk',
-            },
-            'geometry': {
-              'type': 'Polygon',
-              'coordinates': [
-                [
-                  [x, y],
-                  [x + 72.0, y],
-                  [x + 72.0, y + 48.0],
-                  [x, y + 48.0],
-                  [x, y],
-                ]
-              ]
-            }
-          });
-          col++;
-          if (col >= desksPerRow) {
-            col = 0;
-            row++;
-          }
-        }
-      }
-
-      final bookable = allWs.where((w) {
-        return w['isReservable'] == true ||
-            w['bookable'] == true ||
-            w['isBookable'] == true;
-      }).toList();
+      final features = parseFloorFeaturesWithFallback(planData, allWs);
+      final bookable = allWs.where(isBookableWorkspace).toList();
 
       if (floorId != null) {
         for (final d in _getVisibleWeekDays(_selectedDate)) {
-          final dStr = _formatDateIso(d);
+          final dStr = DateHelpers.formatIsoDate(d);
           final key = '${floorId}_$dStr';
           if (!_occupancyCache.containsKey(key)) {
             final cachedDay = dStr == dateStr
@@ -387,7 +281,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       await _loadFavorites();
 
       _siteId = widget.initialSiteId ?? await _storage.getSiteId();
-      _floorId = widget.initialFloorId ?? await _storage.getFloorId();
+      _floorId = widget.initialFloorId ??
+          await _storage.getMapSelectedFloorId() ??
+          await _storage.getFloorId();
       _defaultWorkspaceId = await _storage.getWorkspaceId();
 
       String? token = await _api.refreshMyToken();
@@ -476,7 +372,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Future<void> _loadFloorMapAndOccupancy(
       String token, String siteId, String floorId) async {
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final delegatedMap = await _storage.getDelegatedBookingsMap();
     final savedEmail = await _storage.getSavedEmail();
 
@@ -552,69 +448,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       occs = await _storage.getFloorOccupants(floorId, dateStr);
     }
 
-    List<Map<String, dynamic>> features;
-    if (planData is List) {
-      features = planData
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    } else if (planData is Map) {
-      final raw = planData['features'] ?? planData['data'] ?? [];
-      if (raw is List) {
-        features = raw
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      } else {
-        features = [];
-      }
-    } else {
-      features = [];
-    }
-
-    if (features.isEmpty && allWs.isNotEmpty) {
-      int col = 0;
-      int row = 0;
-      const int desksPerRow = 6;
-      for (final ws in allWs) {
-        final wsId = ws['id']?.toString() ?? '';
-        final wsName = ws['name']?.toString() ?? wsId;
-        final x = 50.0 + (col * 85.0);
-        final y = 50.0 + (row * 65.0);
-        features.add({
-          'type': 'Feature',
-          'properties': {
-            'workspaceId': wsId,
-            'id': wsId,
-            'name': wsName,
-            'workspaceType': ws['type']?.toString() ?? 'Desk',
-          },
-          'geometry': {
-            'type': 'Polygon',
-            'coordinates': [
-              [
-                [x, y],
-                [x + 72.0, y],
-                [x + 72.0, y + 48.0],
-                [x, y + 48.0],
-                [x, y],
-              ]
-            ]
-          }
-        });
-        col++;
-        if (col >= desksPerRow) {
-          col = 0;
-          row++;
-        }
-      }
-    }
-
-    final bookable = allWs.where((w) {
-      return w['isReservable'] == true ||
-          w['bookable'] == true ||
-          w['isBookable'] == true;
-    }).toList();
+    final features = parseFloorFeaturesWithFallback(planData, allWs);
+    final bookable = allWs.where(isBookableWorkspace).toList();
 
     if (lastError != null &&
         features.isEmpty &&
@@ -664,7 +499,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Future<void> _loadOccupancyForDate(DateTime date, {bool forceRefresh = false}) async {
     final requestId = ++_occupancyRequestId;
-    final dateStr = _formatDateIso(date);
+    final dateStr = DateHelpers.formatIsoDate(date);
     final floorId = _floorId;
 
     // Check cache first for instant synchronous UI update
@@ -768,7 +603,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final weekDays = _getVisibleWeekDays(baseDate);
 
     final missingDays = weekDays.where((d) {
-      final key = "${floorId}_${_formatDateIso(d)}";
+      final key = "${floorId}_${DateHelpers.formatIsoDate(d)}";
       return !_occupancyCache.containsKey(key);
     }).toList();
 
@@ -779,7 +614,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
     await Future.wait(missingDays.map((d) async {
       try {
-        final dStr = _formatDateIso(d);
+        final dStr = DateHelpers.formatIsoDate(d);
         var occs = await _api.getFloorOccupants(
           token,
           floorId,
@@ -804,7 +639,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }));
 
     if (mounted) {
-      final currentKey = "${floorId}_${_formatDateIso(_selectedDate)}";
+      final currentKey = "${floorId}_${DateHelpers.formatIsoDate(_selectedDate)}";
       if (_occupancyCache.containsKey(currentKey) && _occupants.isEmpty) {
         setState(() {
           _occupants = _occupancyCache[currentKey]!;
@@ -818,7 +653,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   Future<void> _fetchOccupants() async {
     final floorId = _floorId;
     if (floorId != null) {
-      _occupancyCache.remove("${floorId}_${_formatDateIso(_selectedDate)}");
+      _occupancyCache.remove("${floorId}_${DateHelpers.formatIsoDate(_selectedDate)}");
     }
     await _loadOccupancyForDate(_selectedDate, forceRefresh: true);
   }
@@ -971,7 +806,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   Future<void> _changeFloor(String newFloorId) async {
     if (newFloorId == _floorId) return;
     try {
-      await _storage.saveFloorId(newFloorId);
+      await _storage.saveMapSelectedFloorId(newFloorId);
       if (!mounted) return;
       setState(() {
         _floorId = newFloorId;
@@ -981,59 +816,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
       final cachedPlan = await _storage.getFloorPlanData(newFloorId);
       final cachedWs = await _storage.getFloorWorkspaces(newFloorId);
-      final dateStr = _formatDateIso(_selectedDate);
+      final dateStr = DateHelpers.formatIsoDate(_selectedDate);
       final cachedOccs = await _storage.getFloorOccupants(newFloorId, dateStr);
 
       if (mounted && (cachedPlan != null || cachedWs.isNotEmpty)) {
-        List<Map<String, dynamic>> cachedFeatures = [];
-        if (cachedPlan is List) {
-          cachedFeatures = cachedPlan.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-        } else if (cachedPlan is Map) {
-          final raw = cachedPlan['features'] ?? cachedPlan['data'] ?? [];
-          if (raw is List) {
-            cachedFeatures = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-          }
-        }
-        if (cachedFeatures.isEmpty && cachedWs.isNotEmpty) {
-          int col = 0;
-          int row = 0;
-          const int desksPerRow = 6;
-          for (final ws in cachedWs) {
-            final wsId = ws['id']?.toString() ?? '';
-            final wsName = ws['name']?.toString() ?? wsId;
-            final x = 50.0 + (col * 85.0);
-            final y = 50.0 + (row * 65.0);
-            cachedFeatures.add({
-              'type': 'Feature',
-              'properties': {
-                'workspaceId': wsId,
-                'id': wsId,
-                'name': wsName,
-                'workspaceType': ws['type']?.toString() ?? 'Desk',
-              },
-              'geometry': {
-                'type': 'Polygon',
-                'coordinates': [
-                  [
-                    [x, y],
-                    [x + 72.0, y],
-                    [x + 72.0, y + 48.0],
-                    [x, y + 48.0],
-                    [x, y],
-                  ]
-                ]
-              }
-            });
-            col++;
-            if (col >= desksPerRow) {
-              col = 0;
-              row++;
-            }
-          }
-        }
-        final bookable = cachedWs.where((w) {
-          return w['isReservable'] == true || w['bookable'] == true || w['isBookable'] == true;
-        }).toList();
+        final cachedFeatures = parseFloorFeaturesWithFallback(cachedPlan, cachedWs);
+        final bookable = cachedWs.where(isBookableWorkspace).toList();
 
         setState(() {
           _features = cachedFeatures;
@@ -1169,7 +957,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final target = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
     final isPast = target.isBefore(today);
 
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final delegatedMap = await _storage.getDelegatedBookingsMap();
     final compositeKey = '$dateStr#$wsId';
     final inDelegatedStorage = delegatedMap.containsKey(compositeKey) ||
@@ -1209,7 +997,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Future<void> _cancelMyBooking(
       Map<String, dynamic> workspace, DeskOccupant occupant) async {
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final wsId = workspace['id']?.toString() ?? occupant.workspaceId;
 
     setState(() {
@@ -1292,7 +1080,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Future<void> _cancelDelegatedBooking(
       Map<String, dynamic> workspace, DeskOccupant occupant) async {
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final wsId = workspace['id']?.toString() ?? occupant.workspaceId;
 
     setState(() {
@@ -1372,7 +1160,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   Future<void> _programDeskInAdvance(Map<String, dynamic> workspace) async {
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final wsId = workspace['id']?.toString() ?? '';
     final deskName = workspace['name']?.toString() ??
         workspace['workspaceName']?.toString() ??
@@ -1398,7 +1186,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Bureau $deskName programmé (En attente) pour le ${_formatDateFrench(_selectedDate)}"),
+          content: Text("Bureau $deskName programmé (En attente) pour le ${DateHelpers.formatFrenchDate(_selectedDate)}"),
           backgroundColor: Colors.blueAccent,
         ),
       );
@@ -1406,7 +1194,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   Future<void> _cancelDeskProgramming(Map<String, dynamic> workspace) async {
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final wsId = workspace['id']?.toString() ?? '';
     final deskName = workspace['name']?.toString() ??
         workspace['workspaceName']?.toString() ??
@@ -1424,7 +1212,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Programmation annulée pour le bureau $deskName (${_formatDateFrench(_selectedDate)})"),
+          content: Text("Programmation annulée pour le bureau $deskName (${DateHelpers.formatFrenchDate(_selectedDate)})"),
           backgroundColor: Colors.grey.shade800,
         ),
       );
@@ -1449,7 +1237,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _selectedDate.weekday == DateTime.sunday;
     final isWeekendBlocked = hideWe && isWeekend;
 
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final hasMyBooking = _hasConfirmedReservationForDate(_selectedDate);
     final pendingWs = _requestedWorkspacesMap[dateStr] ?? _defaultWorkspaceId;
     final isPending = !hasMyBooking &&
@@ -1461,7 +1249,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final deskName = workspace['name']?.toString() ??
         workspace['workspaceName']?.toString() ??
         wsId;
-    final roomName = workspace['roomName']?.toString() ?? _extractRoomName(workspace);
+    final roomName = workspace['roomName']?.toString() ?? extractRoomName(workspace);
     final theme = Theme.of(context);
 
     if (_isOccupantsPanelExpanded) {
@@ -1544,7 +1332,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                         Icon(Icons.calendar_today, size: 18, color: theme.colorScheme.primary),
                         const SizedBox(width: 10),
                         Text(
-                          _formatDateFrench(_selectedDate),
+                          DateHelpers.formatFrenchDate(_selectedDate),
                           style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                         ),
                       ],
@@ -1790,24 +1578,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final rules = await _storage.getAutomationRules();
     if (!mounted) return;
 
-    const fullWeekDays = {
-      1: 'Lundi',
-      2: 'Mardi',
-      3: 'Mercredi',
-      4: 'Jeudi',
-      5: 'Vendredi',
-      6: 'Samedi',
-      7: 'Dimanche',
-    };
-    const shortWeekDays = {
-      1: 'Lun',
-      2: 'Mar',
-      3: 'Mer',
-      4: 'Jeu',
-      5: 'Ven',
-      6: 'Sam',
-      7: 'Dim',
-    };
+    const fullWeekDays = DateHelpers.frenchWeekdaysMap;
+    const shortWeekDays = DateHelpers.frenchShortWeekdaysMap;
     final daysToShow = _hideWeekends ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5, 6, 7];
 
     await showModalBottomSheet<void>(
@@ -2059,7 +1831,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       return;
     }
 
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final wsId = workspace['id']?.toString() ?? '';
     final deskName = workspace['name']?.toString() ??
         workspace['workspaceName']?.toString() ??
@@ -2187,8 +1959,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(existingMe != null
-                  ? "Réservation remplacée : Bureau $deskName réservé pour le ${_formatDateFrench(_selectedDate)}"
-                  : "Bureau $deskName réservé avec succès pour le ${_formatDateFrench(_selectedDate)}"),
+                  ? "Réservation remplacée : Bureau $deskName réservé pour le ${DateHelpers.formatFrenchDate(_selectedDate)}"
+                  : "Bureau $deskName réservé avec succès pour le ${DateHelpers.formatFrenchDate(_selectedDate)}"),
               backgroundColor: Colors.green,
             ),
           );
@@ -2235,7 +2007,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       return;
     }
 
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final wsId = workspace['id']?.toString() ?? '';
     final deskName = workspace['name']?.toString() ??
         workspace['workspaceName']?.toString() ??
@@ -2357,8 +2129,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   bool _hasConfirmedReservationForDate(DateTime date) {
-    final dateStr = _formatDateIso(date);
-    if (_formatDateIso(_selectedDate) == dateStr) {
+    final dateStr = DateHelpers.formatIsoDate(date);
+    if (DateHelpers.formatIsoDate(_selectedDate) == dateStr) {
       if (_occupants.values.any((o) => o.isMe)) return true;
     }
     return _bookedDates.contains(dateStr);
@@ -2366,7 +2138,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   bool _isPendingReservationForDate(DateTime date) {
     if (_hasConfirmedReservationForDate(date)) return false;
-    final dateStr = _formatDateIso(date);
+    final dateStr = DateHelpers.formatIsoDate(date);
     if (!_requestedDates.contains(dateStr)) return false;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -2377,7 +2149,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Set<String> _getPendingWorkspaceIdsForSelectedDate() {
     if (_hasConfirmedReservationForDate(_selectedDate)) return {};
-    final dateStr = _formatDateIso(_selectedDate);
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     if (!_requestedDates.contains(dateStr)) return {};
     final wsId = _requestedWorkspacesMap[dateStr] ?? _defaultWorkspaceId;
     if (wsId != null && wsId.isNotEmpty) {
@@ -2404,7 +2176,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             w['name']?.toString().toLowerCase() == wsId.toLowerCase(),
         orElse: () => <String, dynamic>{'id': wsId},
       );
-      final rName = _extractRoomName(ws);
+      final rName = extractRoomName(ws);
       if (rName.isNotEmpty) {
         roomOccupants.putIfAbsent(rName, () => []).add(occ);
       }
@@ -2599,10 +2371,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Map<String, int> _computeFavoriteCountsForVisibleWeek() {
     final days = _getVisibleWeekDays(_selectedDate);
-    final selectedIso = _formatDateIso(_selectedDate);
+    final selectedIso = DateHelpers.formatIsoDate(_selectedDate);
     final counts = <String, int>{};
     for (final d in days) {
-      final dStr = _formatDateIso(d);
+      final dStr = DateHelpers.formatIsoDate(d);
       Map<String, DeskOccupant>? occs;
       if (dStr == selectedIso) {
         occs = _occupants;
@@ -2656,8 +2428,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   void _jumpToFavoriteDesk(DateTime targetDay, String wsId) {
-    final targetIso = _formatDateIso(targetDay);
-    final currentIso = _formatDateIso(_selectedDate);
+    final targetIso = DateHelpers.formatIsoDate(targetDay);
+    final currentIso = DateHelpers.formatIsoDate(_selectedDate);
     if (targetIso != currentIso) {
       setState(() {
         _selectedDate = targetDay;
@@ -2713,13 +2485,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final savedFavs = await _storage.getFavoriteColleagues();
     if (!mounted) return;
 
-    const shortWeekDays = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-    final selectedIso = _formatDateIso(_selectedDate);
+    final selectedIso = DateHelpers.formatIsoDate(_selectedDate);
     final floorId = _floorId;
     final missingDays = floorId == null
         ? <DateTime>[]
         : weekDays.where((d) {
-            final dStr = _formatDateIso(d);
+            final dStr = DateHelpers.formatIsoDate(d);
             return dStr != selectedIso && !_occupancyCache.containsKey('${floorId}_$dStr');
           }).toList();
 
@@ -2749,7 +2520,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                   final delegatedMap = await _storage.getDelegatedBookingsMap();
                   final savedEmail = await _storage.getSavedEmail();
                   await Future.wait(missingDays.map((d) async {
-                    final dStr = _formatDateIso(d);
+                    final dStr = DateHelpers.formatIsoDate(d);
                     try {
                       var occs = await _storage.getFloorOccupants(floorId, dStr);
                       if (occs.isEmpty && token != null && token.isNotEmpty) {
@@ -2784,7 +2555,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
             final Map<String, Map<String, DeskOccupant>> weekOccupants = {};
             for (final d in weekDays) {
-              final dStr = _formatDateIso(d);
+              final dStr = DateHelpers.formatIsoDate(d);
               if (dStr == selectedIso) {
                 weekOccupants[dStr] = _occupants;
               } else if (floorId != null) {
@@ -2902,12 +2673,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                                       const SizedBox(height: 8),
                                       Row(
                                         children: weekDays.map((d) {
-                                          final dStr = _formatDateIso(d);
+                                          final dStr = DateHelpers.formatIsoDate(d);
                                           final occ = _findOccupantForColleague(
                                             weekOccupants[dStr] ?? const {},
                                             fav,
                                           );
-                                          final dayLabel = shortWeekDays[d.weekday - 1];
+                                          final dayLabel = DateHelpers.frenchShortWeekdaysList[d.weekday - 1];
                                           final deskDisplay = occ != null
                                               ? _resolveDeskDisplayName(occ.workspaceId)
                                               : '—';
@@ -3477,25 +3248,40 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
   Widget _buildOccupantsSummaryPanel(ThemeData theme, int favoritesSeatedCount) {
     final isDark = theme.brightness == Brightness.dark;
-    final totalOccupantsCount = _occupants.length;
 
-    // Collect list of seated occupants with workspace info
-    final seatedList = _occupants.entries.map((entry) {
-      final wsId = entry.key;
+    // Collect deduplicated list of seated occupants with workspace info
+    final seenWorkspaceIds = <String>{};
+    final seatedList = <({
+      DeskOccupant occupant,
+      Map<String, dynamic> workspace,
+      String roomName,
+      String deskLabel,
+      bool isFavorite,
+    })>[];
+    for (final entry in _occupants.entries) {
       final occ = entry.value;
+      if (!seenWorkspaceIds.add(occ.workspaceId.toLowerCase())) continue;
+      final wsId = occ.workspaceId;
       final ws = _allWorkspaces.firstWhere(
         (w) =>
             w['id']?.toString().toLowerCase() == wsId.toLowerCase() ||
             w['name']?.toString().toLowerCase() == wsId.toLowerCase(),
         orElse: () => <String, dynamic>{'id': wsId},
       );
-      final rName = _extractRoomName(ws);
+      final rName = extractRoomName(ws);
       final name = ws['name']?.toString() ?? wsId;
       final parts = name.split('-');
       final deskLabel = parts.isNotEmpty && parts.last.isNotEmpty ? parts.last : name;
       final isFav = _isOccupantFavorite(occ);
-      return (occupant: occ, workspace: ws, roomName: rName, deskLabel: deskLabel, isFavorite: isFav);
-    }).toList();
+      seatedList.add((
+        occupant: occ,
+        workspace: ws,
+        roomName: rName,
+        deskLabel: deskLabel,
+        isFavorite: isFav,
+      ));
+    }
+    final totalOccupantsCount = seatedList.length;
 
     // Sort seatedList: favorites first, then isMe, then alphabetical
     seatedList.sort((a, b) {

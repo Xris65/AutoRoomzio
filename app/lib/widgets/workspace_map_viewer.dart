@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/desk_occupant.dart';
+import '../utils/workspace_helpers.dart';
 import 'mini_map_overlay.dart';
 
 class _RoomBounds {
@@ -669,15 +670,7 @@ class WorkspaceMapViewerState extends State<WorkspaceMapViewer> {
             final name = effectiveWs?['name']?.toString() ?? propName ?? '';
             final parts = name.split('-');
             label = parts.isNotEmpty && parts.last.isNotEmpty ? parts.last : name;
-            final lastDash = name.lastIndexOf('-');
-            if (lastDash > 0 && lastDash < name.length - 1) {
-              final suffix = name.substring(lastDash + 1);
-              roomName = (suffix.length <= 4 && !suffix.contains(' '))
-                  ? name.substring(0, lastDash)
-                  : name;
-            } else {
-              roomName = name;
-            }
+            roomName = extractRoomName({'name': name}, trim: false);
             if (roomName.isNotEmpty) {
               roomBounds
                   .putIfAbsent(roomName, () => _RoomBounds())

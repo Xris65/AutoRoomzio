@@ -31,6 +31,8 @@ import '../models/booking_result.dart';
 import '../widgets/colleague_selection_dialog.dart';
 import '../utils/delegation_display_helper.dart';
 import '../offline_state_manager.dart';
+import '../services/automation_engine.dart';
+import '../utils/date_helpers.dart';
 import '../utils/error_sanitizer.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -80,25 +82,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, String> _occupiedByOthers = {};
   Map<String, String> _delegatedBookingsMap = {};
 
-  final Map<int, String> _weekDays = {
-    1: 'Lundi',
-    2: 'Mardi',
-    3: 'Mercredi',
-    4: 'Jeudi',
-    5: 'Vendredi',
-    6: 'Samedi',
-    7: 'Dimanche',
-  };
-
-  static const Map<int, String> _shortWeekDays = {
-    1: 'Lun',
-    2: 'Mar',
-    3: 'Mer',
-    4: 'Jeu',
-    5: 'Ven',
-    6: 'Sam',
-    7: 'Dim',
-  };
+  static const Map<int, String> _weekDays = DateHelpers.frenchWeekdaysMap;
+  static const Map<int, String> _shortWeekDays = DateHelpers.frenchShortWeekdaysMap;
 
   static const List<MaterialColor> _ruleAccentPalette = [
     Colors.indigo,
@@ -289,7 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openFavoritesManager() {
-    final todayStr = DateTime.now().toIso8601String().split('T').first;
+    final todayStr = DateHelpers.formatIsoDate(DateTime.now());
     showDialog(
       context: context,
       builder: (_) => ColleagueSelectionDialog(
@@ -363,10 +348,16 @@ class _HomeScreenState extends State<HomeScreen> {
         _notifyFailure = notifFailure;
         _projectionsCount = projCount;
         _hideWeekends = hideWe;
-          _vacations = vacs.map((v) => DateTimeRange(
-          start: DateTime.parse(v['start']!),
-          end: DateTime.parse(v['end']!),
-        )).toList()..sort((a, b) => a.start.compareTo(b.start));
+        _vacations = vacs
+            .map((v) {
+              final s = v['start'] != null ? DateTime.tryParse(v['start']!) : null;
+              final e = v['end'] != null ? DateTime.tryParse(v['end']!) : null;
+              if (s == null || e == null) return null;
+              return DateTimeRange(start: s, end: e);
+            })
+            .whereType<DateTimeRange>()
+            .toList()
+          ..sort((a, b) => a.start.compareTo(b.start));
         _compactMode = comp;
         if (_currentIndex == 0 && initialTab != 0) {
           _currentIndex = initialTab;
@@ -1438,7 +1429,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   toCleanLocally.clear();
                                   for (var i = 0; i <= picked.end.difference(picked.start).inDays; i++) {
                                     final d = picked.start.add(Duration(days: i));
-                                    final dateStr = d.toIso8601String().split('T').first;
+                                    final dateStr = DateHelpers.formatIsoDate(d);
                                     
                                     if (_requestedDates.contains(dateStr)) {
                                       toCleanLocally.add(dateStr);
@@ -2015,7 +2006,7 @@ class _HomeScreenState extends State<HomeScreen> {
     
     for (int i = 0; i < 60; i++) {
       final date = now.add(Duration(days: i));
-      final dateStr = date.toIso8601String().split('T').first;
+      final dateStr = DateHelpers.formatIsoDate(date);
       
       if (_ignoredDates.contains(dateStr)) continue;
       
@@ -2086,8 +2077,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final weekdays = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
-
     return Column(
       children: upcoming.map((item) {
         final date = item['date'] as DateTime;
@@ -2095,7 +2084,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final isBooked = item['isBooked'] as bool;
         final isRequested = item['isRequested'] == true || (!isBooked && source == 'Calendrier');
         final isDeletable = isBooked || source == 'Délégué' || source == 'Ailleurs' || isRequested;
-        final weekDayName = weekdays[date.weekday - 1];
+        final weekDayName = DateHelpers.frenchWeekdaysList[date.weekday - 1];
 
         return Card(
           elevation: 0,
@@ -2240,7 +2229,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       availableGestures: AvailableGestures.horizontalSwipe,
                     enabledDayPredicate: (day) {
                       final normDay = DateTime(day.year, day.month, day.day);
-                      final dateStr = normDay.toIso8601String().split('T').first;
+                      final dateStr = DateHelpers.formatIsoDate(normDay);
                       final hasBooking = _bookedDates.contains(dateStr) ||
                                          _bookedElsewhereMap.containsKey(dateStr) ||
                                          _delegatedBookingsMap.containsKey(dateStr) ||
@@ -2332,7 +2321,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildDayCell(DateTime day, {bool isToday = false, bool isOutside = false}) {
-    final dateStr = day.toIso8601String().split('T').first;
+    final dateStr = DateHelpers.formatIsoDate(day);
     final isBooked = _bookedDates.contains(dateStr) && _showAllReservations;
       final isRequested = _requestedDates.contains(dateStr) && _showAllReservations;
       final isIgnored = _ignoredDates.contains(dateStr) && _showAllReservations;
@@ -2518,7 +2507,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _quickAction(DateTime day, bool isBooked, String source, {bool isRequested = false}) async {
-    final dateStr = day.toIso8601String().split('T').first;
+    final dateStr = DateHelpers.formatIsoDate(day);
     
     setState(() => _isCalendarBusy = true);
     try {
@@ -2602,111 +2591,29 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!_automationEnabled) return;
     setState(() => _isCalendarBusy = true);
     try {
-      final token = await _api.refreshMyToken();
-      if (token == null) return;
+      final result = await AutomationEngine.run(
+        apiService: _api,
+        storageService: _storage,
+        enforceAutomationEnabled: true,
+      );
 
-      final workspaceId = await _storage.getWorkspaceId();
-      final defaultWorkspaceName = await _storage.getWorkspaceName();
-      final hasRulesKey = await _storage.hasAutomationRules();
-      final rules = await _storage.getAutomationRules();
-      final rulesByWeekday = <int, AutomationRule>{
-        for (final r in rules)
-          for (final d in r.days) d: r,
-      };
+      final wsId = await _storage.getWorkspaceId();
+      final partition = await _storage.partitionUserReservations(wsId);
+      final reqDates = await _storage.getRequestedDates();
+      final reqWs = await _storage.getRequestedWorkspacesMap();
+      final reqNames = await _storage.getRequestedWorkspaceNamesMap();
 
-      final freshReq = await _storage.getRequestedDates();
-      final freshWsMap = await _storage.getRequestedWorkspacesMap();
-      final freshNamesMap = await _storage.getRequestedWorkspaceNamesMap();
-      _requestedDates = freshReq.toSet();
-      _requestedWorkspacesMap = freshWsMap;
-      _requestedWorkspaceNamesMap = freshNamesMap;
-
-      final hasDefaultDesk = workspaceId != null && workspaceId.isNotEmpty;
-      if (!hasDefaultDesk && rulesByWeekday.isEmpty && _requestedDates.isEmpty) {
-        return;
+      if (mounted) {
+        setState(() {
+          _bookedDates = partition.here;
+          _bookedElsewhereMap = partition.elsewhere;
+          _requestedDates = reqDates.toSet();
+          _requestedWorkspacesMap = reqWs;
+          _requestedWorkspaceNamesMap = reqNames;
+        });
       }
-
-      final now = DateTime.now();
-
-      int addedCount = 0;
-      for (int i = 1; i <= 13; i++) {
-        final targetDate = now.add(Duration(days: i));
-        final isWeekend = targetDate.weekday == DateTime.saturday || targetDate.weekday == DateTime.sunday;
-
-        if (_hideWeekends && isWeekend) continue;
-        if (_isVacation(targetDate)) continue;
-
-        final dateStr = targetDate.toIso8601String().split('T').first;
-
-        if (_ignoredDates.contains(dateStr) || _bookedDates.contains(dateStr)) continue;
-
-        if (_skipPublicHolidays &&
-            HolidayService.isHoliday(targetDate, countryCode: _holidayCountryCode) &&
-            !_requestedDates.contains(dateStr)) {
-          continue;
-        }
-
-        // Pre-flight Conflict Guard 1:
-        // Skip if user already has an active reservation elsewhere on that date
-        if (_bookedElsewhereMap.containsKey(dateStr)) {
-          debugPrint("📍 User already booked elsewhere on $dateStr, skipping automation.");
-          continue;
-        }
-
-        final ruleForDay = rulesByWeekday[targetDate.weekday];
-        final shouldBook = _requestedDates.contains(dateStr) ||
-            ruleForDay != null ||
-            (rules.isEmpty && !hasRulesKey && _selectedDays.contains(targetDate.weekday));
-
-        if (shouldBook) {
-          final targetWsId =
-              _requestedWorkspacesMap[dateStr] ?? ruleForDay?.workspaceId ?? workspaceId;
-          final targetWsName =
-              _requestedWorkspaceNamesMap[dateStr] ??
-              ruleForDay?.workspaceName ??
-              defaultWorkspaceName ??
-              targetWsId;
-          if (targetWsId == null || targetWsId.isEmpty) continue;
-
-          final isTargetingDefault =
-              hasDefaultDesk && targetWsId.toLowerCase() == workspaceId.toLowerCase();
-
-          // Pre-flight Conflict Guard 2:
-          // Skip if user's default target desk is already occupied by someone else on that date
-          if (isTargetingDefault && _occupiedByOthers.containsKey(dateStr)) {
-            debugPrint("🔒 Target desk occupied by ${_occupiedByOthers[dateStr]} on $dateStr, skipping automation.");
-            continue;
-          }
-
-          final success = await _api.reserveWorkspace(dateStr, token, targetWsId);
-          if (success) {
-            await _storage.saveUserReservation(
-              dateStr,
-              targetWsId,
-              targetWsName ?? targetWsId,
-            );
-            if (isTargetingDefault) {
-              _bookedDates.add(dateStr);
-            } else {
-              _bookedElsewhereMap[dateStr] = targetWsName ?? targetWsId;
-            }
-            _requestedDates.remove(dateStr);
-            _requestedWorkspacesMap.remove(dateStr);
-            _requestedWorkspaceNamesMap.remove(dateStr);
-            await _storage.recordBookingStat(true);
-            await _refreshStats();
-            addedCount++;
-          }
-        }
-      }
-
-      if (addedCount > 0) {
-        setState(() {}); // refresh UI
-        await _storage.saveBookedDates(_bookedDates.toList());
-        await _storage.saveBookedElsewhereMap(_bookedElsewhereMap);
-        await _storage.saveRequestedDates(_requestedDates.toList());
-        await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
-        await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
+      if (result.newlyBookedCount > 0) {
+        await _refreshStats();
       }
     } finally {
       if (mounted) setState(() => _isCalendarBusy = false);
@@ -2776,7 +2683,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final now = DateTime.now();
       for (int i = 0; i <= 13; i++) {
         final d = now.add(Duration(days: i));
-        datesToCheck.add(d.toIso8601String().split('T').first);
+        datesToCheck.add(DateHelpers.formatIsoDate(d));
       }
 
       if (_isLoading) _loadingTextNotifier.value = "Récupération de vos réservations...";
@@ -2790,7 +2697,7 @@ class _HomeScreenState extends State<HomeScreen> {
       for (int i = 0; i <= 13; i++) {
         final d = today.add(Duration(days: i));
         if (_hideWeekends && (d.weekday == DateTime.saturday || d.weekday == DateTime.sunday)) continue;
-        visibleDates.add(d.toIso8601String().split('T').first);
+        visibleDates.add(DateHelpers.formatIsoDate(d));
       }
       
       final floorId = await _storage.getFloorId();
@@ -2896,7 +2803,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final dateStr = targetDate.toIso8601String().split('T').first;
+    final dateStr = DateHelpers.formatIsoDate(targetDate);
     if (_bookedDates.contains(dateStr)) {
       _showTopToast('Déjà réservé !', isError: true);
       return;
@@ -2954,7 +2861,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final dateStr = day.toIso8601String().split('T').first;
+    final dateStr = DateHelpers.formatIsoDate(day);
     final isBooked = _bookedDates.contains(dateStr) && _showAllReservations;
       final isRequested = _requestedDates.contains(dateStr) && _showAllReservations;
       final isIgnored = _ignoredDates.contains(dateStr) && _showAllReservations;
@@ -3233,6 +3140,7 @@ class _HomeScreenState extends State<HomeScreen> {
             }
 
             final targetWsId = _requestedWorkspacesMap[dateStr] ?? workspaceId;
+            final wsName = _requestedWorkspaceNamesMap[dateStr] ?? _workspaceName ?? 'Mon bureau';
             final success = await _api.reserveWorkspace(dateStr, accessToken, targetWsId);
             if (success) {
               await _storage.recordBookingStat(false);
@@ -3250,7 +3158,6 @@ class _HomeScreenState extends State<HomeScreen> {
               await _storage.saveRequestedDates(_requestedDates.toList());
               await _storage.saveRequestedWorkspacesMap(_requestedWorkspacesMap);
               await _storage.saveRequestedWorkspaceNamesMap(_requestedWorkspaceNamesMap);
-              final wsName = _requestedWorkspaceNamesMap[dateStr] ?? _workspaceName ?? 'Mon bureau';
               await _storage.saveUserReservation(dateStr, targetWsId, wsName);
               if (mounted) {
                 _showTopToast('Réservation confirmée !');
@@ -3402,7 +3309,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final autoCount = _statsMap['auto'] ?? 0;
 
     // Real upcoming bookings from active API state (today and future)
-    final todayStr = DateTime.now().toIso8601String().split('T').first;
+    final todayStr = DateHelpers.formatIsoDate(DateTime.now());
     final upcomingHere = _bookedDates.where((d) => d.compareTo(todayStr) >= 0).toSet();
     final upcomingElsewhere = _bookedElsewhereMap.keys.where((d) => d.compareTo(todayStr) >= 0).toSet();
     final totalUpcoming = upcomingHere.length + upcomingElsewhere.length;

@@ -26,6 +26,7 @@ class StorageService {
   static const String _refreshTokenKey = 'refresh_token';
   static const String _rememberEmailKey = 'remember_email';
   static const String _savedEmailKey = 'saved_email';
+  static const String _mapSelectedFloorIdKey = 'map_selected_floor_id';
 
   static final Map<String, ({String rawJson, dynamic value})> _floorPlanCache = {};
   static final Map<String, ({String rawJson, List<Map<String, dynamic>> value})> _floorWorkspacesCache = {};
@@ -287,6 +288,16 @@ class StorageService {
     return prefs.getString('floor_id');
   }
 
+  Future<void> saveMapSelectedFloorId(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_mapSelectedFloorIdKey, id);
+  }
+
+  Future<String?> getMapSelectedFloorId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_mapSelectedFloorIdKey);
+  }
+
   Future<void> saveWorkspaceId(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('workspace_id', id);
@@ -315,6 +326,7 @@ class StorageService {
     clearMemoryCache();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('floor_id');
+    await prefs.remove(_mapSelectedFloorIdKey);
     await prefs.remove('workspace_id');
     await prefs.remove('workspace_name');
   }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/desk_occupant.dart';
+import '../utils/workspace_helpers.dart';
 
 /// Modal bottom sheet displaying detailed colleague/occupant identity,
 /// seat location, delegation context, and favorite action.
@@ -56,7 +57,8 @@ class OccupantDetailsSheet extends StatelessWidget {
     final isDark = theme.brightness == Brightness.dark;
 
     final deskName = workspace['name']?.toString() ?? occupant.workspaceId;
-    final roomName = workspace['roomName']?.toString() ?? _extractRoomName(deskName);
+    final roomName = workspace['roomName']?.toString() ??
+        extractRoomName({'name': deskName}, trim: false);
 
     Color avatarBg;
     Color avatarText;
@@ -314,16 +316,5 @@ class OccupantDetailsSheet extends StatelessWidget {
       final by = occupant.bookedByName ?? 'un collègue';
       return "Réservé pour ${occupant.occupantName} par $by";
     }
-  }
-
-  String _extractRoomName(String name) {
-    final lastDash = name.lastIndexOf('-');
-    if (lastDash > 0 && lastDash < name.length - 1) {
-      final suffix = name.substring(lastDash + 1);
-      if (suffix.length <= 4 && !suffix.contains(' ')) {
-        return name.substring(0, lastDash);
-      }
-    }
-    return name;
   }
 }

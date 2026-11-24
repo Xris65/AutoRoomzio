@@ -1,8 +1,12 @@
+import 'utils/date_helpers.dart';
+
 /// Service de calcul des jours fériés officiels pour la France, la Suisse et la Belgique.
 class HolidayService {
   static const String countryFrance = 'FR';
   static const String countrySwitzerland = 'CH';
   static const String countryBelgium = 'BE';
+
+  static final Map<String, Map<String, String>> _holidaysCache = {};
 
   static const Map<String, String> supportedCountries = {
     'FR': 'France',
@@ -45,7 +49,7 @@ class HolidayService {
       normalizedDate.year,
       countryCode: countryCode,
     );
-    return holidays[_formatDate(normalizedDate)];
+    return holidays[DateHelpers.formatIsoDate(normalizedDate)];
   }
 
   /// Retourne `true` si [date] est un jour férié dans [countryCode].
@@ -69,6 +73,12 @@ class HolidayService {
     String countryCode = countryFrance,
   }) {
     final normalizedCountry = _normalizeCountryCode(countryCode);
+    final cacheKey = '${year}_$normalizedCountry';
+    final cached = _holidaysCache[cacheKey];
+    if (cached != null) {
+      return cached;
+    }
+
     final easter = computeEasterSunday(year);
 
     final holidays = <DateTime, String>{
@@ -104,9 +114,12 @@ class HolidayService {
     final sortedEntries = holidays.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
 
-    return {
-      for (final entry in sortedEntries) _formatDate(entry.key): entry.value,
-    };
+    final result = Map<String, String>.unmodifiable({
+      for (final entry in sortedEntries)
+        DateHelpers.formatIsoDate(entry.key): entry.value,
+    });
+    _holidaysCache[cacheKey] = result;
+    return result;
   }
 
   static String _normalizeCountryCode(String countryCode) {
@@ -115,12 +128,5 @@ class HolidayService {
       return normalized;
     }
     return countryFrance;
-  }
-
-  static String _formatDate(DateTime date) {
-    final year = date.year.toString().padLeft(4, '0');
-    final month = date.month.toString().padLeft(2, '0');
-    final day = date.day.toString().padLeft(2, '0');
-    return '$year-$month-$day';
   }
 }

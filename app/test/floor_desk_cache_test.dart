@@ -164,7 +164,7 @@ void main() {
       expect(find.text('Rez-de-chaussée'), findsWidgets);
     });
 
-    testWidgets('Changing floor in TeamMapScreen updates and saves floor_id into cache', (tester) async {
+    testWidgets('Changing floor in TeamMapScreen updates map_selected_floor_id without overwriting home floor_id', (tester) async {
       tester.view.physicalSize = const Size(800, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -247,9 +247,10 @@ void main() {
       await tester.tap(itemFloor2);
       await tester.pumpAndSettle();
 
-      // Verify storage floor_id has been updated to floor2!
-      final updatedFloorId = await storage.getFloorId();
-      expect(updatedFloorId, equals(floor2), reason: 'Floor change in TeamMapScreen must be persisted');
+      // Verify home desk floor_id is preserved while map_selected_floor_id is updated to floor2
+      expect(await storage.getFloorId(), equals(floor1));
+      final updatedMapFloorId = await storage.getMapSelectedFloorId();
+      expect(updatedMapFloorId, equals(floor2), reason: 'Floor change in TeamMapScreen must be persisted in map_selected_floor_id');
     });
   });
 

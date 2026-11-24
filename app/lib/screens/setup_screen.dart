@@ -12,6 +12,7 @@ import '../token_crypto.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
 import '../widgets/workspace_map_viewer.dart';
+import '../utils/workspace_helpers.dart';
 
 class SetupScreen extends StatefulWidget {
   final String accessToken;
@@ -58,16 +59,6 @@ class _SetupScreenState extends State<SetupScreen> {
     _api = widget.apiService ?? RoomzApiService();
     _storage = widget.storageService ?? StorageService();
     _loadInitialData();
-  }
-
-    List<Map<String, dynamic>> _parseFloorFeatures(dynamic rawFeatures) {
-    if (rawFeatures is List) {
-      return rawFeatures.whereType<Map<String, dynamic>>().toList();
-    } else if (rawFeatures is Map) {
-      final raw = rawFeatures['features'] ?? rawFeatures['data'] ?? [];
-      return raw is List ? raw.whereType<Map<String, dynamic>>().toList() : [];
-    }
-    return [];
   }
 
   Future<void> _loadInitialData() async {
@@ -138,30 +129,15 @@ class _SetupScreenState extends State<SetupScreen> {
               initialFeatures = await _storage.getFloorPlanData(savedFloorId);
             }
             
-            final workspaces = allWs.where((ws) {
-              if (ws['isReservable'] == false) return false;
-              if (ws['bookable'] == false) return false;
-              if (ws['isBookable'] == false) return false;
-              if (ws['type'] == 'Room') return false;
-              if (ws['type'] == 1) return false;
-              return true;
-            }).toList();
+            final workspaces = allWs.where(isBookableWorkspace).toList();
             
             if (mounted) {
-               _floorFeatures = _parseFloorFeatures(initialFeatures);
+               _floorFeatures = parseFloorFeaturesWithFallback(initialFeatures, allWs);
                _allWorkspaces = allWs;
             }
             
             for (final ws in workspaces) {
-              final String name = ws['name']?.toString() ?? ws['id'].toString();
-              final lastDash = name.lastIndexOf('-');
-              String roomName = name;
-              if (lastDash > 0 && lastDash < name.length - 1) {
-                final suffix = name.substring(lastDash + 1);
-                if (suffix.length <= 4 && !suffix.contains(' ')) {
-                  roomName = name.substring(0, lastDash);
-                }
-              }
+              final roomName = extractRoomName(ws, trim: false);
               initialRooms.putIfAbsent(roomName, () => []).add(ws);
               
               if (ws['id'].toString() == savedWorkspaceId) {
@@ -301,33 +277,18 @@ class _SetupScreenState extends State<SetupScreen> {
       features = await _storage.getFloorPlanData(floorId);
     }
 
-    final bookable = allWs.where((ws) {
-      if (ws['isReservable'] == false) return false;
-      if (ws['bookable'] == false) return false;
-      if (ws['isBookable'] == false) return false;
-      if (ws['type'] == 'Room') return false;
-      if (ws['type'] == 1) return false;
-      return true;
-    }).toList();
+    final bookable = allWs.where(isBookableWorkspace).toList();
 
     final Map<String, List<Map<String, dynamic>>> grouped = {};
     for (final ws in bookable) {
-      final String name = ws['name']?.toString() ?? ws['id'].toString();
-      final lastDash = name.lastIndexOf('-');
-      String roomName = name;
-      if (lastDash > 0 && lastDash < name.length - 1) {
-        final suffix = name.substring(lastDash + 1);
-        if (suffix.length <= 4 && !suffix.contains(' ')) {
-          roomName = name.substring(0, lastDash);
-        }
-      }
+      final roomName = extractRoomName(ws, trim: false);
       grouped.putIfAbsent(roomName, () => []).add(ws);
     }
 
     if (mounted) {
       setState(() {
         _rooms = grouped;
-        _floorFeatures = _parseFloorFeatures(features);
+        _floorFeatures = parseFloorFeaturesWithFallback(features, allWs);
         _allWorkspaces = allWs;
         _loadingWorkspaces = false;
       });
@@ -354,6 +315,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
     await _storage.saveSiteId(_selectedSite!['id'].toString());
     await _storage.saveFloorId(_selectedFloor!['id'].toString());
+    await _storage.saveMapSelectedFloorId(_selectedFloor!['id'].toString());
     await _storage.saveWorkspaceId(ws['id'].toString());
     await _storage.saveWorkspaceName(
       ws['name']?.toString() ?? ws['id'].toString(),
@@ -758,15 +720,7 @@ class _SetupScreenState extends State<SetupScreen> {
                                           containerHeight: mapH,
                                           onSelected: (ws) {
                                             // Auto select room prefix and workspace
-                                            final String name = ws['name']?.toString() ?? ws['id'].toString();
-                                            final lastDash = name.lastIndexOf('-');
-                                            String roomName = name;
-                                            if (lastDash > 0 && lastDash < name.length - 1) {
-                                              final suffix = name.substring(lastDash + 1);
-                                              if (suffix.length <= 4 && !suffix.contains(' ')) {
-                                                roomName = name.substring(0, lastDash);
-                                              }
-                                            }
+                                            final roomName = extractRoomName(ws, trim: false);
                                             setState(() {
                                               _selectedRoomPrefix = roomName;
                                             });

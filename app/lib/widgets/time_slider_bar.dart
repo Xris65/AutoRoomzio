@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../utils/date_helpers.dart';
 
 /// Interactive Time-Slider bar for the floor plan / team map screen.
 /// Displays the current week's days (Monday to Friday, or with Saturday/Sunday
@@ -61,11 +62,9 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
     );
   }
 
-  static String formatDateIso(DateTime d) =>
-      "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+  static String formatDateIso(DateTime d) => DateHelpers.formatIsoDate(d);
 
-  static bool isSameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
+  static bool isSameDay(DateTime a, DateTime b) => DateHelpers.isSameDay(a, b);
 
   bool _isConfirmed(DateTime d) {
     if (widget.hasConfirmedReservation != null) {
@@ -82,50 +81,9 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
     return widget.pendingDates.contains(formatDateIso(d));
   }
 
-  String _formatShortDay(DateTime d) {
-    const shortNames = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-    final name = shortNames[d.weekday - 1];
-    return '$name ${d.day}';
-  }
+  String _formatShortDay(DateTime d) => DateHelpers.formatShortDay(d);
 
-  String _formatDateFrench(DateTime date) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final target = DateTime(date.year, date.month, date.day);
-    final diff = target.difference(today).inDays;
-
-    const weekdays = [
-      'Lundi',
-      'Mardi',
-      'Mercredi',
-      'Jeudi',
-      'Vendredi',
-      'Samedi',
-      'Dimanche'
-    ];
-    const months = [
-      'janv.',
-      'févr.',
-      'mars',
-      'avr.',
-      'mai',
-      'juin',
-      'juil.',
-      'août',
-      'sept.',
-      'oct.',
-      'nov.',
-      'déc.'
-    ];
-
-    final weekday = weekdays[date.weekday - 1];
-    final month = months[date.month - 1];
-
-    if (diff == 0) return "Aujourd'hui (${date.day} $month)";
-    if (diff == 1) return "Demain (${date.day} $month)";
-    if (diff == -1) return "Hier (${date.day} $month)";
-    return "$weekday ${date.day} $month";
-  }
+  String _formatDateFrench(DateTime date) => DateHelpers.formatFrenchDate(date);
 
   void _handleTouch(double dx, double width, List<DateTime> days) {
     if (days.isEmpty || width <= 0) return;

@@ -8,7 +8,9 @@ import 'models/desk_occupant.dart';
 import 'storage_service.dart';
 import 'offline_state_manager.dart';
 import 'token_crypto.dart';
+import 'utils/date_helpers.dart';
 import 'utils/delegation_display_helper.dart';
+import 'utils/workspace_helpers.dart';
 
 class RoomzApiService {
   final StorageService _storage;
@@ -249,14 +251,7 @@ class RoomzApiService {
   /// Fetch only bookable (desk) workspaces — filters from getAllWorkspaces.
   Future<List<Map<String, dynamic>>> getWorkspaces(String token, String siteId, String floorId) async {
     final all = await getAllWorkspaces(token, siteId, floorId);
-    return all.where((ws) {
-      if (ws['isReservable'] == false) return false;
-      if (ws['bookable'] == false) return false;
-      if (ws['isBookable'] == false) return false;
-      if (ws['type'] == 'Room') return false;
-      if (ws['type'] == 1) return false;
-      return true;
-    }).toList();
+    return all.where(isBookableWorkspace).toList();
   }
 
   /// Fetch floor plan GeoJSON data for 2D map.
@@ -1239,7 +1234,7 @@ class RoomzApiService {
     try {
       final effectiveFloorId = floorId ?? await _storage.getFloorId();
       if (effectiveFloorId != null && effectiveFloorId.isNotEmpty) {
-        final effectiveDate = date ?? DateTime.now().toIso8601String().split('T').first;
+        final effectiveDate = date ?? DateHelpers.formatIsoDate(DateTime.now());
         final payload = {
           "availableWorkspaceOnly": false,
           "date": effectiveDate,
