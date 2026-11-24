@@ -12,8 +12,6 @@ app/.pub/
 app/.flutter-plugins
 .flutter-plugins-dependencies
 
-# Generated files
-app/pubspec.lock
 
 # ── Android ───────────────────────────────────────────────────────────────────
 app/android/.gradle/

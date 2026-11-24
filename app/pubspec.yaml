@@ -41,19 +41,20 @@ dependencies:
   webview_flutter: ^4.14.1
   webview_windows: ^0.4.0
   table_calendar: ^3.2.1
-  google_fonts: ^6.2.1
+  google_fonts: ^8.0.0
   permission_handler: ^13.0.2
-  flutter_local_notifications: ^22.3.1
+  flutter_local_notifications: ^23.0.4
   android_intent_plus: ^6.1.0
   package_info_plus: ^10.2.1
   shimmer: ^4.0.0
   url_launcher: ^6.3.2
   path_provider: ^2.1.6
-  open_filex: ^4.7.0
-  flutter_markdown: ^0.7.7+1
+  open_filex: ^5.0.0
+  flutter_markdown_plus: ^1.0.12
   qr_flutter: ^4.1.0
   encrypt: ^5.0.3
   flutter_secure_storage: ^11.2.0
+  web: ^1.1.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -64,13 +65,13 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  flutter_launcher_icons: ^0.13.1
+  flutter_launcher_icons: ^0.14.4
 
 flutter_launcher_icons:
   android: true
   ios: true
   image_path: "assets/icon.jpg"
-  min_sdk_android: 21
+  min_sdk_android: 24
   adaptive_icon_background: "#3B4FC8"
   adaptive_icon_foreground: "assets/icon.jpg"
 
