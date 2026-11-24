@@ -27,6 +27,40 @@ class StorageService {
   static const String _rememberEmailKey = 'remember_email';
   static const String _savedEmailKey = 'saved_email';
 
+  static final Map<String, ({String rawJson, dynamic value})> _floorPlanCache = {};
+  static final Map<String, ({String rawJson, List<Map<String, dynamic>> value})> _floorWorkspacesCache = {};
+  static final Map<String, ({String rawJson, Map<String, DeskOccupant> value})> _floorOccupantsCache = {};
+  static ({String rawJson, Map<String, Map<String, String>> value})? _userReservationsCache;
+  static ({String rawJson, List<AutomationRule> value})? _automationRulesCache;
+
+  /// Clears all in-memory decoded JSON caches.
+  void clearMemoryCache() {
+    _floorPlanCache.clear();
+    _floorWorkspacesCache.clear();
+    _floorOccupantsCache.clear();
+    _userReservationsCache = null;
+    _automationRulesCache = null;
+  }
+
+  /// Clears in-memory caches and reloads SharedPreferences from disk.
+  Future<void> reloadFromDisk() async {
+    clearMemoryCache();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+  }
+
+  static dynamic _clonePlanData(dynamic data) {
+    if (data is List) {
+      return data.map(_clonePlanData).toList();
+    }
+    if (data is Map) {
+      return data.map<String, dynamic>(
+        (k, v) => MapEntry(k.toString(), _clonePlanData(v)),
+      );
+    }
+    return data;
+  }
+
   // ── Remember Email (Milestone M1 - Requirement R1) ─────────────────────────
 
   Future<void> saveRememberEmail(bool remember) async {
@@ -163,10 +197,13 @@ class StorageService {
     try {
       await _secureStorage.write(key: _refreshTokenKey, value: token);
     } catch (_) {
-      // Unit test fallback or unsupported channel environment
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_refreshTokenKey, token);
-      return;
+      try {
+        await _secureStorage.delete(key: _refreshTokenKey);
+        await _secureStorage.write(key: _refreshTokenKey, value: token);
+      } catch (retryError) {
+        debugPrint('❌ Failed to save refresh token to secure storage: $retryError');
+        rethrow;
+      }
     }
   }
 
@@ -275,6 +312,7 @@ class StorageService {
   }
 
   Future<void> resetWorkspace() async {
+    clearMemoryCache();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('floor_id');
     await prefs.remove('workspace_id');
@@ -597,6 +635,13 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString(_userReservationsMapKey);
     if (jsonStr != null && jsonStr.isNotEmpty) {
+      final cached = _userReservationsCache;
+      if (cached != null && cached.rawJson == jsonStr) {
+        return {
+          for (final entry in cached.value.entries)
+            entry.key: Map<String, String>.from(entry.value),
+        };
+      }
       try {
         final dynamic decoded = jsonDecode(jsonStr);
         if (decoded is Map) {
@@ -606,9 +651,18 @@ class StorageService {
               result[key.toString()] = val.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
             }
           });
+          _userReservationsCache = (
+            rawJson: jsonStr,
+            value: {
+              for (final entry in result.entries)
+                entry.key: Map<String, String>.from(entry.value),
+            },
+          );
           return result;
         }
       } catch (_) {}
+    } else {
+      _userReservationsCache = null;
     }
 
     // Fallback & auto-migration from legacy keys
@@ -646,6 +700,7 @@ class StorageService {
   /// Persists the enriched reservations map and keeps legacy compatibility keys
   /// ('booked_dates', 'booked_elsewhere_dates', 'booked_elsewhere_map') perfectly synchronized.
   Future<void> saveUserReservationsMap(Map<String, Map<String, String>> map) async {
+    _userReservationsCache = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_userReservationsMapKey, jsonEncode(map));
 
@@ -775,6 +830,7 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString(_automationRulesKey);
     if (jsonStr == null) {
+      _automationRulesCache = null;
       final wsId = await getWorkspaceId();
       if (wsId != null && wsId.isNotEmpty) {
         final siteId = await getSiteId() ?? '';
@@ -799,20 +855,33 @@ class StorageService {
       return [];
     }
 
-    if (jsonStr.isEmpty) return [];
+    if (jsonStr.isEmpty) {
+      _automationRulesCache = null;
+      return [];
+    }
+    final cached = _automationRulesCache;
+    if (cached != null && cached.rawJson == jsonStr) {
+      return List<AutomationRule>.from(cached.value);
+    }
     try {
       final dynamic decoded = jsonDecode(jsonStr);
       if (decoded is List) {
-        return decoded
+        final parsed = decoded
             .whereType<Map>()
             .map((e) => AutomationRule.fromJson(Map<String, dynamic>.from(e)))
             .toList();
+        _automationRulesCache = (
+          rawJson: jsonStr,
+          value: List<AutomationRule>.unmodifiable(parsed),
+        );
+        return parsed;
       }
     } catch (_) {}
     return [];
   }
 
   Future<void> saveAutomationRules(List<AutomationRule> rules) async {
+    _automationRulesCache = null;
     final seenDays = <int>{};
     final normalized = <AutomationRule>[];
     for (final rule in rules) {
@@ -1098,6 +1167,7 @@ class StorageService {
   }
 
   Future<void> clearAll() async {
+    clearMemoryCache();
     final remember = await getRememberEmail();
     final savedEmail = remember ? await getSavedEmail() : null;
 
@@ -1275,6 +1345,7 @@ class StorageService {
     String date,
     Map<String, DeskOccupant> occupants,
   ) async {
+    _floorOccupantsCache.remove('${floorId}_$date');
     final prefs = await SharedPreferences.getInstance();
     final jsonMap = occupants.map((k, v) => MapEntry(k, v.toJson()));
     await prefs.setString('floor_occupants_${floorId}_$date', jsonEncode(jsonMap));
@@ -1284,22 +1355,35 @@ class StorageService {
     String floorId,
     String date,
   ) async {
+    final cacheKey = '${floorId}_$date';
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString('floor_occupants_${floorId}_$date');
     if (jsonStr != null && jsonStr.isNotEmpty) {
+      final cached = _floorOccupantsCache[cacheKey];
+      if (cached != null && cached.rawJson == jsonStr) {
+        return Map<String, DeskOccupant>.from(cached.value);
+      }
       try {
         final Map<String, dynamic> decoded = jsonDecode(jsonStr);
-        return decoded.map((k, v) => MapEntry(
+        final parsed = decoded.map((k, v) => MapEntry(
           k,
           DeskOccupant.fromJson(Map<String, dynamic>.from(v as Map)),
         ));
+        _floorOccupantsCache[cacheKey] = (
+          rawJson: jsonStr,
+          value: Map<String, DeskOccupant>.unmodifiable(parsed),
+        );
+        return parsed;
       } catch (_) {}
+    } else {
+      _floorOccupantsCache.remove(cacheKey);
     }
     return {};
   }
 
   // ── Floor Plan & Workspaces Persistence ───────────────────────────────────
   Future<void> saveFloorPlanData(String floorId, dynamic planData) async {
+    _floorPlanCache.remove(floorId);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('floor_plan_$floorId', jsonEncode(planData));
   }
@@ -1308,9 +1392,17 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString('floor_plan_$floorId');
     if (jsonStr != null && jsonStr.isNotEmpty) {
+      final cached = _floorPlanCache[floorId];
+      if (cached != null && cached.rawJson == jsonStr) {
+        return _clonePlanData(cached.value);
+      }
       try {
-        return jsonDecode(jsonStr);
+        final decoded = jsonDecode(jsonStr);
+        _floorPlanCache[floorId] = (rawJson: jsonStr, value: _clonePlanData(decoded));
+        return decoded;
       } catch (_) {}
+    } else {
+      _floorPlanCache.remove(floorId);
     }
     return null;
   }
@@ -1319,6 +1411,7 @@ class StorageService {
     String floorId,
     List<Map<String, dynamic>> workspaces,
   ) async {
+    _floorWorkspacesCache.remove(floorId);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('floor_workspaces_$floorId', jsonEncode(workspaces));
   }
@@ -1327,10 +1420,21 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString('floor_workspaces_$floorId');
     if (jsonStr != null && jsonStr.isNotEmpty) {
+      final cached = _floorWorkspacesCache[floorId];
+      if (cached != null && cached.rawJson == jsonStr) {
+        return cached.value.map((e) => Map<String, dynamic>.from(e)).toList();
+      }
       try {
         final List<dynamic> list = jsonDecode(jsonStr);
-        return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        final parsed = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _floorWorkspacesCache[floorId] = (
+          rawJson: jsonStr,
+          value: parsed.map((e) => Map<String, dynamic>.from(e)).toList(),
+        );
+        return parsed;
       } catch (_) {}
+    } else {
+      _floorWorkspacesCache.remove(floorId);
     }
     return [];
   }

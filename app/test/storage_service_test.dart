@@ -169,20 +169,16 @@ void main() {
       expect(prefs.getKeys().isEmpty, isTrue);
     });
 
-    test('gracefully falls back to SharedPreferences on MissingPluginException', () async {
+    test('never writes plaintext refresh_token to SharedPreferences when secure storage throws', () async {
       final throwingSecure = FakeSecureStorage(throwOnOperations: true);
       final storage = StorageService(secureStorage: throwingSecure);
 
-      // Should not throw
-      await storage.saveRefreshToken('fallback_token');
+      await expectLater(
+        storage.saveRefreshToken('secret_token'),
+        throwsA(isA<MissingPluginException>()),
+      );
 
       final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('refresh_token'), equals('fallback_token'));
-
-      final retrieved = await storage.getRefreshToken();
-      expect(retrieved, equals('fallback_token'));
-
-      await storage.clearAuthToken();
       expect(prefs.getString('refresh_token'), isNull);
     });
 

@@ -305,122 +305,9 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
   }
 
   Future<void> _showAddColleagueDialog(BuildContext context, {String initialName = ''}) async {
-    final formKey = GlobalKey<FormState>();
-    final nameCtrl = TextEditingController(text: initialName);
-    final emailCtrl = TextEditingController();
-    bool saveAsFavorite = true;
-
     final created = await showDialog<Colleague>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: Row(
-                children: [
-                  Icon(Icons.person_add_alt_1_rounded,
-                      color: Theme.of(ctx).colorScheme.primary),
-                  const SizedBox(width: 8),
-                  const Text('Nouveau collègue',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              content: Form(
-                key: formKey,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Renseignez le nom et l\'email pour effectuer la réservation au nom de ce collègue.',
-                        style: TextStyle(fontSize: 13, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: nameCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Nom et prénom *',
-                          hintText: 'Ex: Marie Curie',
-                          prefixIcon: Icon(Icons.person_outline),
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Veuillez saisir un nom';
-                          }
-                          if (value.trim().length < 2) {
-                            return 'Le nom doit comporter au moins 2 caractères';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: emailCtrl,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
-                          labelText: 'Adresse email *',
-                          hintText: 'Ex: marie.curie@entreprise.fr',
-                          prefixIcon: Icon(Icons.email_outlined),
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return "L'adresse email est requise";
-                          }
-                          final email = value.trim();
-                          final emailRegex = RegExp(r'^[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}$');
-                          if (!emailRegex.hasMatch(email)) {
-                            return 'Veuillez saisir une adresse email valide';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      CheckboxListTile(
-                        value: saveAsFavorite,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Ajouter à mes collègues favoris',
-                            style: TextStyle(fontSize: 13)),
-                        controlAffinity: ListTileControlAffinity.leading,
-                        onChanged: (val) {
-                          setDialogState(() {
-                            saveAsFavorite = val ?? true;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('ANNULER'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    if (formKey.currentState?.validate() == true) {
-                      final email = emailCtrl.text.trim();
-                      final name = nameCtrl.text.trim();
-                      final id = 'ext_${DateTime.now().millisecondsSinceEpoch}';
-                      final colleague = Colleague(
-                        id: id,
-                        name: name,
-                        email: email,
-                        isFavorite: saveAsFavorite,
-                      );
-                      Navigator.pop(ctx, colleague);
-                    }
-                  },
-                  child: const Text('CONTINUER'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (_) => _AddColleagueDialog(initialName: initialName),
     );
 
     if (created != null && mounted) {
@@ -904,5 +791,142 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
       );
     }
     return tile;
+  }
+}
+
+class _AddColleagueDialog extends StatefulWidget {
+  final String initialName;
+
+  const _AddColleagueDialog({this.initialName = ''});
+
+  @override
+  State<_AddColleagueDialog> createState() => _AddColleagueDialogState();
+}
+
+class _AddColleagueDialogState extends State<_AddColleagueDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _emailCtrl;
+  bool _saveAsFavorite = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.initialName);
+    _emailCtrl = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          Icon(Icons.person_add_alt_1_rounded,
+              color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 8),
+          const Text('Nouveau collègue',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        ],
+      ),
+      content: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Renseignez le nom et l\'email pour effectuer la réservation au nom de ce collègue.',
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Nom et prénom *',
+                  hintText: 'Ex: Marie Curie',
+                  prefixIcon: Icon(Icons.person_outline),
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Veuillez saisir un nom';
+                  }
+                  if (value.trim().length < 2) {
+                    return 'Le nom doit comporter au moins 2 caractères';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Adresse email *',
+                  hintText: 'Ex: marie.curie@entreprise.fr',
+                  prefixIcon: Icon(Icons.email_outlined),
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return "L'adresse email est requise";
+                  }
+                  final email = value.trim();
+                  final emailRegex = RegExp(r'^[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}$');
+                  if (!emailRegex.hasMatch(email)) {
+                    return 'Veuillez saisir une adresse email valide';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                value: _saveAsFavorite,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Ajouter à mes collègues favoris',
+                    style: TextStyle(fontSize: 13)),
+                controlAffinity: ListTileControlAffinity.leading,
+                onChanged: (val) {
+                  setState(() {
+                    _saveAsFavorite = val ?? true;
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('ANNULER'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (_formKey.currentState?.validate() == true) {
+              final email = _emailCtrl.text.trim();
+              final name = _nameCtrl.text.trim();
+              final id = 'ext_${DateTime.now().millisecondsSinceEpoch}';
+              final colleague = Colleague(
+                id: id,
+                name: name,
+                email: email,
+                isFavorite: _saveAsFavorite,
+              );
+              Navigator.pop(context, colleague);
+            }
+          },
+          child: const Text('CONTINUER'),
+        ),
+      ],
+    );
   }
 }

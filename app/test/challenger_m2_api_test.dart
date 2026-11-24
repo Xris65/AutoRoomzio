@@ -505,9 +505,9 @@ void main() {
       });
 
       SharedPreferences.setMockInitialValues({});
-      final api = RoomzApiService();
 
       final success = await http.runWithClient(() async {
+        final api = RoomzApiService();
         return await api.cancelReservation(
           mockDate,
           mockToken,
@@ -537,8 +537,8 @@ void main() {
         return http.Response('', 404);
       });
 
-      final api = RoomzApiService();
       final success = await http.runWithClient(() async {
+        final api = RoomzApiService();
         return await api.cancelReservation(mockDate, mockToken, mockWorkspaceId);
       }, () => client);
 

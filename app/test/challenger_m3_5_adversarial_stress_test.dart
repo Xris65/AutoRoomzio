@@ -154,7 +154,16 @@ void main() {
         sessionExpiredFired = true;
       };
 
-      final Map<String, Completer<http.Response>> calendarCompleters = {};
+      final Map<String, List<Completer<http.Response>>> calendarCompleters = {};
+
+      void completeDate(String date, http.Response Function() buildResponse) {
+        final list = calendarCompleters.remove(date);
+        if (list != null) {
+          for (final c in list) {
+            if (!c.isCompleted) c.complete(buildResponse());
+          }
+        }
+      }
 
       SharedPreferences.setMockInitialValues({
         'site_id': 'site-delay',
@@ -187,7 +196,7 @@ void main() {
           final d = body['date']?.toString() ?? '';
           if (['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08'].contains(d)) {
             final completer = Completer<http.Response>();
-            calendarCompleters[d] = completer;
+            calendarCompleters.putIfAbsent(d, () => []).add(completer);
             return await completer.future;
           }
           return http.Response(jsonEncode({'data': []}), 200);
@@ -221,7 +230,7 @@ void main() {
 
       // Complete initial date response
       final initialIso = "2026-10-05";
-      calendarCompleters[initialIso]?.complete(http.Response(jsonEncode({
+      completeDate(initialIso, () => http.Response(jsonEncode({
         'data': [
           {
             'workspaceId': 'ws-target',
@@ -243,7 +252,7 @@ void main() {
       await tester.pump();
 
       // Now complete responses OUT OF ORDER: Request 4 (latest) completes first!
-      calendarCompleters['2026-10-08']?.complete(http.Response(jsonEncode({
+      completeDate('2026-10-08', () => http.Response(jsonEncode({
         'data': [
           {
             'workspaceId': 'ws-target',
@@ -258,7 +267,7 @@ void main() {
       expect(find.textContaining('MARTIN A.'), findsWidgets);
 
       // Now the obsolete earlier requests complete late
-      calendarCompleters['2026-10-06']?.complete(http.Response(jsonEncode({
+      completeDate('2026-10-06', () => http.Response(jsonEncode({
         'data': [
           {
             'workspaceId': 'ws-target',
@@ -267,7 +276,7 @@ void main() {
           }
         ]
       }), 200));
-      calendarCompleters['2026-10-07']?.complete(http.Response(jsonEncode({
+      completeDate('2026-10-07', () => http.Response(jsonEncode({
         'data': [
           {
             'workspaceId': 'ws-target',

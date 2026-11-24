@@ -190,6 +190,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkAuthAndLoad();
   }
 
+  @override
+  void dispose() {
+    _loadingTextNotifier.dispose();
+    super.dispose();
+  }
+
   static bool _urlTokenProcessed = false;
 
   Future<void> _checkAuthAndLoad() async {
@@ -724,6 +730,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _requestedWorkspaceNamesMap = {};
         _ignoredDates = {};
         _bookedElsewhereMap = {};
+        _occupiedByOthers = {};
+        _delegatedBookingsMap = {};
         _workspaceName = null;
       });
       await _storage.saveBookedDates([]);
@@ -731,7 +739,10 @@ class _HomeScreenState extends State<HomeScreen> {
       await _storage.saveRequestedWorkspacesMap({});
       await _storage.saveRequestedWorkspaceNamesMap({});
       await _storage.saveIgnoredDates([]);
-      await _storage.saveBookedElsewhereDates([]);
+      await _storage.saveBookedElsewhereMap({});
+      await _storage.saveUserReservationsMap({});
+      await _storage.saveOccupiedByOthers({});
+      await _storage.saveDelegatedBookingsMap({});
       await _storage.saveLastSyncTime(forceReset: true); // bypass cache
       await _loadData();
     }
@@ -4284,6 +4295,9 @@ class _DownloadDialogState extends State<DownloadDialog> {
   double _progress = 0.0;
   String _downloaded = "0 MB";
   String _total = "0 MB";
+  http.Client? _httpClient;
+  StreamSubscription<List<int>>? _subscription;
+  IOSink? _sink;
 
   @override
   void initState() {
@@ -4291,22 +4305,45 @@ class _DownloadDialogState extends State<DownloadDialog> {
     _startDownload();
   }
 
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    _sink?.close();
+    _httpClient?.close();
+    super.dispose();
+  }
+
+  Future<void> _closeResources() async {
+    await _subscription?.cancel();
+    _subscription = null;
+    await _sink?.close();
+    _sink = null;
+    _httpClient?.close();
+    _httpClient = null;
+  }
+
   Future<void> _startDownload() async {
     try {
       final request = http.Request('GET', Uri.parse(widget.url));
-      final response = await http.Client().send(request);
-      
+      final client = http.Client();
+      _httpClient = client;
+      final response = await client.send(request);
+      if (!mounted) {
+        await _closeResources();
+        return;
+      }
+
       final contentLength = response.contentLength ?? 0;
       int receivedBytes = 0;
-      
+
       final tempDir = await getTemporaryDirectory();
       final file = File('${tempDir.path}/AutoRoomzio_update.apk');
-      final sink = file.openWrite();
+      _sink = file.openWrite();
 
-      response.stream.listen(
+      _subscription = response.stream.listen(
         (List<int> chunk) {
           receivedBytes += chunk.length;
-          sink.add(chunk);
+          _sink?.add(chunk);
           if (mounted) {
             setState(() {
               if (contentLength > 0) {
@@ -4318,21 +4355,22 @@ class _DownloadDialogState extends State<DownloadDialog> {
           }
         },
         onDone: () async {
-          await sink.close();
+          await _closeResources();
           if (!mounted) return;
           Navigator.pop(context);
-          
+
           final result = await OpenFilex.open(file.path);
           if (result.type != ResultType.done) {
             // handle error if needed, but context might be dead.
           }
         },
         onError: (e) async {
-          await sink.close();
+          await _closeResources();
           if (mounted) Navigator.pop(context);
         },
       );
     } catch (e) {
+      await _closeResources();
       if (mounted) Navigator.pop(context);
     }
   }

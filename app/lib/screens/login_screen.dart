@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -73,6 +74,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Windows controller
   final WebviewController _windowsController = WebviewController();
+  StreamSubscription<String>? _windowsUrlSub;
+  StreamSubscription<LoadingState>? _windowsLoadingSub;
 
   @override
   void initState() {
@@ -275,12 +278,14 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (_) {}
 
     // Track current URL locally so we don't subscribe to the stream multiple times
-    _windowsController.url.listen((url) {
+    await _windowsUrlSub?.cancel();
+    _windowsUrlSub = _windowsController.url.listen((url) {
       _currentWindowsUrl = url;
     });
 
     // Trigger extraction when a page finishes loading on my.roomz.io
-    _windowsController.loadingState.listen((state) async {
+    await _windowsLoadingSub?.cancel();
+    _windowsLoadingSub = _windowsController.loadingState.listen((state) async {
       if (state == LoadingState.navigationCompleted &&
           _currentWindowsUrl.startsWith('https://my.roomz.io')) {
         await _tryExtract(() async {
@@ -358,6 +363,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _windowsUrlSub?.cancel();
+    _windowsLoadingSub?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
     if (!kIsWeb && !widget.forceWebLayout && Platform.isWindows && _windowsController.value.isInitialized) {

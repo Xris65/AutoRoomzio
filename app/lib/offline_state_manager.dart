@@ -89,25 +89,30 @@ class OfflineStateManager {
 /// - On receiving any HTTP response (2xx, 4xx, 5xx), calls `markOnline()`.
 /// - On catching a connectivity error, calls `markOffline()`, and rethrows.
 class OfflineAwareHttpClient extends http.BaseClient {
-  final http.Client? _inner;
+  final http.Client _inner;
   final OfflineStateManager _stateManager;
+  final Duration _timeout;
 
   OfflineAwareHttpClient([
     http.Client? inner,
     OfflineStateManager? stateManager,
-  ])  : _inner = (inner is OfflineAwareHttpClient ? inner._inner : inner),
-        _stateManager = stateManager ?? OfflineStateManager.instance;
-
-  http.Client get _effectiveInner => _inner ?? http.Client();
+    Duration timeout = const Duration(seconds: 20),
+  ])  : _inner = inner is OfflineAwareHttpClient
+            ? inner._inner
+            : (inner ?? http.Client()),
+        _stateManager = stateManager ?? OfflineStateManager.instance,
+        _timeout = timeout;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final client = _effectiveInner;
     try {
-      final response = await client.send(request);
+      final response = await _inner.send(request).timeout(_timeout);
       // Any response from the server (2xx, 4xx, 5xx) proves network connectivity.
       _stateManager.markOnline();
       return response;
+    } on TimeoutException {
+      _stateManager.markOffline();
+      rethrow;
     } catch (e) {
       if (_stateManager.isConnectivityError(e)) {
         _stateManager.markOffline();
@@ -118,7 +123,7 @@ class OfflineAwareHttpClient extends http.BaseClient {
 
   @override
   void close() {
-    _inner?.close();
+    _inner.close();
     super.close();
   }
 }

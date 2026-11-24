@@ -82,7 +82,7 @@ class RoomzApiService {
       _cachedAccessToken = token;
       return token;
     } else {
-      debugPrint("❌ Login failed ${response.statusCode}: ${response.body}");
+      debugPrint("❌ Login failed ${response.statusCode}");
       return null;
     }
   }
@@ -158,7 +158,7 @@ class RoomzApiService {
         return (data['data'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       }
     }
-    debugPrint("❌ getSites ${response.statusCode}: ${response.body}");
+    debugPrint("❌ getSites ${response.statusCode}");
     return [];
   }
 
@@ -177,7 +177,7 @@ class RoomzApiService {
         return (data['data'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       }
     }
-    debugPrint("❌ getFloors ${response.statusCode}: ${response.body}");
+    debugPrint("❌ getFloors ${response.statusCode}");
     return [];
   }
 
@@ -281,7 +281,7 @@ class RoomzApiService {
               .toList();
         }
       }
-      debugPrint("❌ getFloorPlanData ${response.statusCode}: ${response.body}");
+      debugPrint("❌ getFloorPlanData ${response.statusCode}");
     } catch (e) {
       debugPrint("❌ Exception getFloorPlanData: $e");
     }
@@ -318,7 +318,7 @@ class RoomzApiService {
       debugPrint("⚠️ Not available (already booked elsewhere or unavailable) $date");
       return false;
     } else {
-      debugPrint("❌ reserveWorkspace ${response.statusCode} $date: ${response.body}");
+      debugPrint("❌ reserveWorkspace ${response.statusCode} $date");
       return false;
     }
   }
@@ -538,114 +538,110 @@ class RoomzApiService {
     final Map<String, String> delegated = {};
     final Set<String> delegatedHere = {};
     final Set<String> delegatedElsewhere = {};
-    final client = _client;
-    try {
-      // Execute in parallel chunks of 15 to avoid overwhelming the server
-      for (int i = 0; i < dates.length; i += 15) {
-        final chunk = dates.skip(i).take(15);
-        await Future.wait(chunk.map((date) async {
-          try {
-            final payload = {
-              "availableWorkspaceOnly": false,
-              "date": date,
-              "timeSlot": "FullDay",
-              "tagIds": [],
-              "workspaceType": "Desk"
-            };
-            final response = await client.post(
-              Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
-              headers: _authHeaders(token)..addAll({
-                "roomz-source-type": "MyRoomzWeb",
-                "Content-Type": "application/json"
-              }),
-              body: jsonEncode(payload)
-            );
-            if (response.statusCode == 200) {
-              final data = jsonDecode(response.body);
-              final items = data is List
-                  ? data
-                  : (data is Map
-                      ? (data['data'] ?? data['items'] ?? data['workspaces'])
-                      : null);
-              if (items is List) {
-                for (final item in items) {
-                    final isMyDesk = (item['workspaceId'] == workspaceId || item['id'] == workspaceId);
-                    
-                    if (item['status'] == 'Reserved') {
-                      final bookedTimeSlot = item['bookedTimeSlot'];
-                      if (bookedTimeSlot != null) {
-                        final creator = bookedTimeSlot['creator'] ?? bookedTimeSlot['bookedBy'];
-                        final organizer = bookedTimeSlot['organizer'];
-                        final bookedFor = bookedTimeSlot['bookedFor'] ?? bookedTimeSlot['user'] ?? bookedTimeSlot['owner'];
-                        
-                        bool isDelegated = false;
-                        String delegateName = "Quelqu'un";
-                        
-                        final creatorId = creator?['id']?.toString() ?? creator?['userId']?.toString();
-                        final creatorName = creator?['name']?.toString() ?? creator?['displayName']?.toString() ?? (creator is String ? creator : null);
-                        final creatorEmail = creator?['email']?.toString().toLowerCase();
-                        
-                        final organizerId = organizer?['id']?.toString() ?? organizer?['userId']?.toString();
-                        final organizerName = organizer?['name']?.toString() ?? organizer?['displayName']?.toString() ?? (organizer is String ? organizer : null) ?? organizer?['email']?.toString();
-                        final organizerEmail = organizer?['email']?.toString().toLowerCase();
-                        
-                        final bool isCreatorMe = myUserId != null && creatorId != null && creatorId == myUserId;
-                        
-                        if (isCreatorMe) {
-                          if (bookedFor != null) {
+    // Execute in parallel chunks of 15 to avoid overwhelming the server
+    for (int i = 0; i < dates.length; i += 15) {
+      final chunk = dates.skip(i).take(15);
+      await Future.wait(chunk.map((date) async {
+        try {
+          final payload = {
+            "availableWorkspaceOnly": false,
+            "date": date,
+            "timeSlot": "FullDay",
+            "tagIds": [],
+            "workspaceType": "Desk"
+          };
+          final response = await _client.post(
+            Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
+            headers: _authHeaders(token)..addAll({
+              "roomz-source-type": "MyRoomzWeb",
+              "Content-Type": "application/json"
+            }),
+            body: jsonEncode(payload)
+          );
+          _checkAuthResponse(response);
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            final items = data is List
+                ? data
+                : (data is Map
+                    ? (data['data'] ?? data['items'] ?? data['workspaces'])
+                    : null);
+            if (items is List) {
+              for (final item in items) {
+                  final isMyDesk = (item['workspaceId'] == workspaceId || item['id'] == workspaceId);
+                  
+                  if (item['status'] == 'Reserved') {
+                    final bookedTimeSlot = item['bookedTimeSlot'];
+                    if (bookedTimeSlot != null) {
+                      final creator = bookedTimeSlot['creator'] ?? bookedTimeSlot['bookedBy'];
+                      final organizer = bookedTimeSlot['organizer'];
+                      final bookedFor = bookedTimeSlot['bookedFor'] ?? bookedTimeSlot['user'] ?? bookedTimeSlot['owner'];
+                      
+                      bool isDelegated = false;
+                      String delegateName = "Quelqu'un";
+                      
+                      final creatorId = creator?['id']?.toString() ?? creator?['userId']?.toString();
+                      final creatorName = creator?['name']?.toString() ?? creator?['displayName']?.toString() ?? (creator is String ? creator : null);
+                      final creatorEmail = creator?['email']?.toString().toLowerCase();
+                      
+                      final organizerId = organizer?['id']?.toString() ?? organizer?['userId']?.toString();
+                      final organizerName = organizer?['name']?.toString() ?? organizer?['displayName']?.toString() ?? (organizer is String ? organizer : null) ?? organizer?['email']?.toString();
+                      final organizerEmail = organizer?['email']?.toString().toLowerCase();
+                      
+                      final bool isCreatorMe = myUserId != null && creatorId != null && creatorId == myUserId;
+                      
+                      if (isCreatorMe) {
+                        if (bookedFor != null) {
+                          isDelegated = true;
+                          final targetName = bookedFor is Map ? (bookedFor['name'] ?? bookedFor['displayName'] ?? 'Collègue') : bookedFor.toString();
+                          final wsId = item['workspaceId']?.toString() ?? item['id']?.toString() ?? workspaceId;
+                          final location = isMyDesk ? 'Mon bureau' : (elsewhereMap[date] ?? item['workspaceName']?.toString() ?? item['name']?.toString() ?? 'Autre bureau');
+                          final evId = bookedTimeSlot['eventId']?.toString() ?? bookedTimeSlot['id']?.toString() ?? '';
+                          final orgId = (bookedFor is Map ? bookedFor['id']?.toString() : null) ?? "";
+                          final cName = creatorName ?? 'vous';
+                          delegateName = "$wsId|$targetName|$location|$evId|$orgId|$cName";
+                        } else if (organizer != null) {
+                          final bool diff = (organizerId != null && creatorId != organizerId) ||
+                              (organizerEmail != null && creatorEmail != null && organizerEmail != creatorEmail) ||
+                              (organizerName != null && creatorName != null && organizerName.toLowerCase() != creatorName.toLowerCase());
+                          if (diff) {
                             isDelegated = true;
-                            final targetName = bookedFor is Map ? (bookedFor['name'] ?? bookedFor['displayName'] ?? 'Collègue') : bookedFor.toString();
                             final wsId = item['workspaceId']?.toString() ?? item['id']?.toString() ?? workspaceId;
                             final location = isMyDesk ? 'Mon bureau' : (elsewhereMap[date] ?? item['workspaceName']?.toString() ?? item['name']?.toString() ?? 'Autre bureau');
                             final evId = bookedTimeSlot['eventId']?.toString() ?? bookedTimeSlot['id']?.toString() ?? '';
-                            final orgId = (bookedFor is Map ? bookedFor['id']?.toString() : null) ?? "";
+                            final orgId = organizerId ?? organizerEmail ?? "";
                             final cName = creatorName ?? 'vous';
-                            delegateName = "$wsId|$targetName|$location|$evId|$orgId|$cName";
-                          } else if (organizer != null) {
-                            final bool diff = (organizerId != null && creatorId != organizerId) ||
-                                (organizerEmail != null && creatorEmail != null && organizerEmail != creatorEmail) ||
-                                (organizerName != null && creatorName != null && organizerName.toLowerCase() != creatorName.toLowerCase());
-                            if (diff) {
-                              isDelegated = true;
-                              final wsId = item['workspaceId']?.toString() ?? item['id']?.toString() ?? workspaceId;
-                              final location = isMyDesk ? 'Mon bureau' : (elsewhereMap[date] ?? item['workspaceName']?.toString() ?? item['name']?.toString() ?? 'Autre bureau');
-                              final evId = bookedTimeSlot['eventId']?.toString() ?? bookedTimeSlot['id']?.toString() ?? '';
-                              final orgId = organizerId ?? organizerEmail ?? "";
-                              final cName = creatorName ?? 'vous';
-                              delegateName = "$wsId|${organizerName ?? 'Quelqu\'un'}|$location|$evId|$orgId|$cName";
-                            }
+                            delegateName = "$wsId|${organizerName ?? 'Quelqu\'un'}|$location|$evId|$orgId|$cName";
                           }
                         }
-                        
-                        if (isDelegated) {
-                           if (!delegated.containsKey(date) || isMyDesk) {
-                             delegated[date] = delegateName;
-                           }
-                           if (isMyDesk) {
-                             delegatedHere.add(date);
-                           } else {
-                             delegatedElsewhere.add(date);
-                           }
-                        } else if (isMyDesk) {
-                           // Don't mark as occupied by others if it's actually booked by US
-                           if (creator == null || creatorId != myUserId) {
-                             final occupantLabel = DelegationDisplayHelper.extractReservationOccupant(
-                               Map<String, dynamic>.from(bookedTimeSlot),
-                               myUserId: myUserId,
-                             );
-                             occupied[date] = occupantLabel;
-                           }
-                        }
+                      }
+                      
+                      if (isDelegated) {
+                         if (!delegated.containsKey(date) || isMyDesk) {
+                           delegated[date] = delegateName;
+                         }
+                         if (isMyDesk) {
+                           delegatedHere.add(date);
+                         } else {
+                           delegatedElsewhere.add(date);
+                         }
+                      } else if (isMyDesk) {
+                         // Don't mark as occupied by others if it's actually booked by US
+                         if (creator == null || creatorId != myUserId) {
+                           final occupantLabel = DelegationDisplayHelper.extractReservationOccupant(
+                             Map<String, dynamic>.from(bookedTimeSlot),
+                             myUserId: myUserId,
+                           );
+                           occupied[date] = occupantLabel;
+                         }
                       }
                     }
                   }
-              }
+                }
             }
-          } catch (_) {}
-        }));
-      }
-    } finally {
-      client.close();
+          }
+        } catch (_) {}
+      }));
     }
     return (occupiedByOthers: occupied, delegatedBookings: delegated, delegatedHere: delegatedHere, delegatedElsewhere: delegatedElsewhere);
   }
@@ -675,7 +671,7 @@ class RoomzApiService {
         debugPrint("✅ Cancelled by eventId: $cleanEventId");
         return true;
       }
-      debugPrint("❌ Try 0 FAILED: ${delResp.statusCode} - ${delResp.body}");
+      debugPrint("❌ Try 0 FAILED: ${delResp.statusCode}");
       foundBookingId = cleanEventId;
     }
 
@@ -688,7 +684,6 @@ class RoomzApiService {
       _checkAuthResponse(getResp);
       if (getResp.statusCode == 200) {
         final data = jsonDecode(getResp.body);
-        debugPrint("🔥 BOOKINGS DUMP: ${getResp.body}");
         final List bookings = data is List
             ? data
             : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
@@ -767,7 +762,7 @@ class RoomzApiService {
               debugPrint("✅ Cancelled by URL ID: $foundBookingId");
               return true;
             }
-            debugPrint("❌ Try 1 FAILED: ${delResp.statusCode} - ${delResp.body}");
+            debugPrint("❌ Try 1 FAILED: ${delResp.statusCode}");
             break; // Targeted the specific booking, do not loop to other bookings!
           }
         }
@@ -788,7 +783,7 @@ class RoomzApiService {
       payload["forUserId"] = forUserId;
     }
     
-    debugPrint("⚠️ Falling back to body DELETE. Payload: $payload");
+    debugPrint("⚠️ Falling back to body DELETE for $effectiveDate");
     
     var response = await _client.delete(
       Uri.parse("$_apiBase/bookings"),
@@ -818,10 +813,10 @@ class RoomzApiService {
        if (altResponse.statusCode == 200 || altResponse.statusCode == 204) {
          return true;
        }
-       debugPrint("❌ Try 3 FAILED: ${altResponse.statusCode} - ${altResponse.body}");
+       debugPrint("❌ Try 3 FAILED: ${altResponse.statusCode}");
     }
 
-    debugPrint("❌ cancelReservation FAILED (Fallback body): ${response.statusCode} - ${response.body}");
+    debugPrint("❌ cancelReservation FAILED (Fallback body): ${response.statusCode}");
     return false;
   }
 
@@ -1198,6 +1193,7 @@ class RoomzApiService {
         Uri.parse("$_apiBase/users/current/bookings"),
         headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
       );
+      _checkAuthResponse(response);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List bookings = data is List
@@ -1259,6 +1255,7 @@ class RoomzApiService {
           }),
           body: jsonEncode(payload),
         );
+        _checkAuthResponse(response);
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           final List items = data is List
@@ -1320,6 +1317,7 @@ class RoomzApiService {
         Uri.parse("$_apiBase/favorites"),
         headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
       );
+      _checkAuthResponse(response);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List rawList = data is List
@@ -1740,7 +1738,7 @@ class RoomzApiService {
           if (items.length < limit) break;
           offset += limit;
         } else {
-          debugPrint("⚠️ getFloorOccupants HTTP ${response.statusCode}: ${response.body}");
+          debugPrint("⚠️ getFloorOccupants HTTP ${response.statusCode}");
           break;
         }
       }
