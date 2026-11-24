@@ -954,7 +954,8 @@ void main() {
         }
       }
 
-      final dayFinder = find.text(targetDayNum).first;
+      final matchingDays = find.text(targetDayNum);
+      final dayFinder = targetDay.day > 15 ? matchingDays.last : matchingDays.first;
       await tester.tap(dayFinder);
       await tester.pumpAndSettle();
 

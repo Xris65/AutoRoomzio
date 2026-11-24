@@ -32,10 +32,15 @@ android {
             storePassword = "autoroomzio"
         }
         create("release") {
-            keyAlias = "autoroomzio"
-            keyPassword = "autoroomzio"
-            storeFile = file("autoroomzio.jks")
-            storePassword = "autoroomzio"
+            val envKeystorePath = System.getenv("KEYSTORE_PATH")
+            val envKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
+            val envKeyAlias = System.getenv("KEY_ALIAS")
+            val envKeyPassword = System.getenv("KEY_PASSWORD")
+
+            keyAlias = if (!envKeyAlias.isNullOrBlank()) envKeyAlias else "autoroomzio"
+            keyPassword = if (!envKeyPassword.isNullOrBlank()) envKeyPassword else "autoroomzio"
+            storeFile = file(if (!envKeystorePath.isNullOrBlank()) envKeystorePath else "autoroomzio.jks")
+            storePassword = if (!envKeystorePassword.isNullOrBlank()) envKeystorePassword else "autoroomzio"
         }
     }
 
@@ -46,6 +51,12 @@ android {
         }
         release {
             signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

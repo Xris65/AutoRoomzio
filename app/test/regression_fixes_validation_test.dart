@@ -151,7 +151,7 @@ void main() {
       // Find calendar day cell and tap it
       final dayFinder = find.text('${targetDate.day}');
       if (dayFinder.evaluate().isNotEmpty) {
-        await tester.tap(dayFinder.first);
+        await tester.tap(targetDate.day > 15 ? dayFinder.last : dayFinder.first);
         await tester.pumpAndSettle();
 
         final reserveButton = find.text('Réserver ce jour');
@@ -221,7 +221,7 @@ void main() {
 
       final dayFinder = find.text('${targetDate.day}');
       if (dayFinder.evaluate().isNotEmpty) {
-        await tester.tap(dayFinder.first);
+        await tester.tap(targetDate.day > 15 ? dayFinder.last : dayFinder.first);
         await tester.pumpAndSettle();
 
         final reserveButton = find.text('Réserver ce jour');
