@@ -111,7 +111,7 @@ void main() {
       int requestCounter = 0;
       final client = MockClient((req) async {
         final id = ++requestCounter;
-        await Future.delayed(Duration(milliseconds: 2 + (id % 15)));
+        await Future<void>.delayed(Duration(milliseconds: 2 + (id % 15)));
         if (id % 2 == 0) {
           throw const SocketException('Transient socket drop');
         } else {
@@ -189,7 +189,7 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'test_token', 'refresh_token': 'ref_token'}), 200);
         }
         if (req.url.path.contains('/bookings')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         return http.Response('[]', 200);
       });

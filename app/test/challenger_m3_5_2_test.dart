@@ -270,7 +270,7 @@ void main() {
           }
         }
         if (path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/users/current')) {
           return http.Response(jsonEncode({'id': 'my-user-id'}), 200);

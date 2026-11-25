@@ -43,11 +43,11 @@ void main() {
         final id = int.tryParse(req.url.queryParameters['id'] ?? '0') ?? 0;
         if (id % 2 == 0) {
           // Failing requests: finish very quickly (10ms)
-          await Future.delayed(const Duration(milliseconds: 10));
+          await Future<void>.delayed(const Duration(milliseconds: 10));
           throw const SocketException('Simulated network drop');
         } else {
           // Successful requests: finish slower (60ms) - they finish last!
-          await Future.delayed(const Duration(milliseconds: 60));
+          await Future<void>.delayed(const Duration(milliseconds: 60));
           return http.Response(jsonEncode({'status': 'ok', 'id': id}), 200);
         }
       });
@@ -78,11 +78,11 @@ void main() {
         final id = int.tryParse(req.url.queryParameters['id'] ?? '0') ?? 0;
         if (id % 2 == 0) {
           // Successful requests: finish very quickly (10ms)
-          await Future.delayed(const Duration(milliseconds: 10));
+          await Future<void>.delayed(const Duration(milliseconds: 10));
           return http.Response(jsonEncode({'status': 'ok', 'id': id}), 200);
         } else {
           // Failing requests: finish slower (60ms) - they finish last!
-          await Future.delayed(const Duration(milliseconds: 60));
+          await Future<void>.delayed(const Duration(milliseconds: 60));
           throw const SocketException('Connection aborted by peer');
         }
       });
@@ -110,7 +110,7 @@ void main() {
 
       final client = MockClient((req) async {
         final id = int.tryParse(req.url.queryParameters['id'] ?? '0') ?? 0;
-        await Future.delayed(Duration(milliseconds: 5 + (id % 25)));
+        await Future<void>.delayed(Duration(milliseconds: 5 + (id % 25)));
         if (id < 45) {
           throw http.ClientException('Simulated HTTP client error $id');
         } else {

@@ -208,7 +208,7 @@ void main() {
 
       // Push Page 2
       Navigator.of(savedContext).push(
-        MaterialPageRoute(
+        MaterialPageRoute<void>(
           builder: (ctx2) => Scaffold(
             appBar: AppBar(title: const Text('Page 2')),
             body: const Center(child: Text('Page 2 Body')),
@@ -224,7 +224,7 @@ void main() {
 
       // Push Page 3
       Navigator.of(savedContext).push(
-        MaterialPageRoute(
+        MaterialPageRoute<void>(
           builder: (ctx3) => Scaffold(
             appBar: AppBar(title: const Text('Page 3')),
             body: const Center(child: Text('Page 3 Body')),
@@ -267,7 +267,7 @@ void main() {
                 body: Center(
                   child: ElevatedButton(
                     onPressed: () {
-                      showDialog(
+                      showDialog<void>(
                         context: ctx,
                         builder: (_) => const AlertDialog(
                           title: Text('Test Dialog'),

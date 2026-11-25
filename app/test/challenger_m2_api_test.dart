@@ -495,10 +495,10 @@ void main() {
       final client = MockClient((req) async {
         if (req.method == 'GET' && req.url.path.contains('/users/current/bookings')) {
           // Return no bookings in list, so it falls back to body-based DELETE
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.method == 'DELETE' && req.url.path == '/bookings') {
-          deletePayload = jsonDecode(req.body);
+          deletePayload = jsonDecode(req.body) as Map<String, dynamic>;
           return http.Response('', 200);
         }
         return http.Response('', 404);
@@ -528,10 +528,10 @@ void main() {
       Map<String, dynamic>? deletePayload;
       final client = MockClient((req) async {
         if (req.method == 'GET' && req.url.path.contains('/users/current/bookings')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.method == 'DELETE' && req.url.path == '/bookings') {
-          deletePayload = jsonDecode(req.body);
+          deletePayload = jsonDecode(req.body) as Map<String, dynamic>;
           return http.Response('', 200);
         }
         return http.Response('', 404);
@@ -609,7 +609,7 @@ void main() {
       final client = MockClient((req) async {
         expect(req.method, equals('POST'));
         queriedUrl = req.url.toString();
-        capturedBody = jsonDecode(req.body);
+        capturedBody = jsonDecode(req.body) as Map<String, dynamic>;
         return http.Response(
           jsonEncode({
             'data': [

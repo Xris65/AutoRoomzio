@@ -374,8 +374,8 @@ void main() {
       final rawJson = prefs.getString('favorite_colleagues');
       expect(rawJson, isNotNull);
       final decoded = jsonDecode(rawJson!);
-      expect(decoded, isA<List>());
-      expect((decoded as List).length, equals(1));
+      expect(decoded, isA<List<dynamic>>());
+      expect((decoded as List<dynamic>).length, equals(1));
     });
 
     test('isFavoriteColleague reports correctly and does not crash on corrupted storage', () async {

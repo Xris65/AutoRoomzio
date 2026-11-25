@@ -14,7 +14,7 @@ void main() {
   // Friday Nov 6, 2026 (far from current date so diff != 0, 1, -1)
   final friday = DateTime(2026, 11, 6);
 
-  RoomzApiService createMockApi({Function(String url, String body)? onPost}) {
+  RoomzApiService createMockApi({void Function(String url, String body)? onPost}) {
     final client = MockClient((req) async {
       final path = req.url.path;
       if (path.contains('/connect/token')) {
@@ -37,7 +37,7 @@ void main() {
         }), 200);
       }
       if (path.contains('/floors') && path.contains('/workspaces/calendars')) {
-        return http.Response(jsonEncode({'data': []}), 200);
+        return http.Response(jsonEncode({'data': <Object>[]}), 200);
       }
       if (path.contains('/workspaces') && req.method == 'GET') {
         return http.Response(jsonEncode([

@@ -32,10 +32,10 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'mock-access', 'refresh_token': 'mock-refresh'}), 200);
         }
         if (req.url.path.contains('/reservations') || req.url.path.contains('/bookings')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.url.path.contains('/occupancy') || req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         return http.Response('[]', 200);
       });
@@ -91,10 +91,10 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'mock-access', 'refresh_token': 'mock-refresh'}), 200);
         }
         if (req.url.path.contains('/reservations') || req.url.path.contains('/bookings')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.url.path.contains('/occupancy') || req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         return http.Response('[]', 200);
       });

@@ -2,6 +2,20 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [2.0.0] - 2026-11-25
+
+### Nouveautés
+- **Plan 2D plus fluide et réactif** : Affichage et déplacements accélérés sur les grands étages grâce à une mise en page optimisée des salles et des postes.
+- **Compatibilité WebAssembly & application Android allégée** : Version navigateur modernisée compatible WebAssembly, taille d'installation Android sensiblement réduite et suppression des autorisations de stockage inutiles.
+- **Annulation des mises à jour** : Ajout d'un bouton « Annuler » fonctionnel pendant le téléchargement d'une mise à jour, permettant d'interrompre proprement l'opération à tout moment.
+- **Couplage Web renforcé** : Sécurisation accrue des liens de connexion par QR Code vers la version navigateur afin de mieux protéger les données de session.
+
+### Correctifs
+- **Indicateur Or des favoris fiabilisé** : Un collègue inconnu occupant un poste autrefois attribué à un favori n'apparaît plus surligné en or par erreur, et le retrait d'un favori depuis sa fiche fonctionne de manière fiable dans tous les cas.
+- **Préservation du planning au changement de bureau** : Changer de bureau principal conserve désormais intactes vos dates programmées en attente ainsi que vos dates bloquées.
+- **Ouverture sereine de l'accueil** : Correction d'un blocage potentiel au démarrage lorsque l'onglet d'automatisation est masqué ou indisponible sur navigateur.
+- **Réservations automatiques & session renforcées** : Calculs de dates fiabilisés lors des changements d'heure été/hiver, synchronisation automatique à la réouverture de l'application et gestion propre des actualisations simultanées de session.
+
 ## [1.7.0] - 2026-11-23
 
 ### Nouveautés

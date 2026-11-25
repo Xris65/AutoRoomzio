@@ -199,7 +199,7 @@ void main() {
             calendarCompleters.putIfAbsent(d, () => []).add(completer);
             return await completer.future;
           }
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/workspaces')) {
           return http.Response(jsonEncode([
@@ -340,7 +340,7 @@ void main() {
           } else if (requestIndex % 3 == 2) {
             return http.Response('{"error": "internal_error"}', 500);
           } else {
-            return http.Response(jsonEncode({'data': []}), 200);
+            return http.Response(jsonEncode({'data': <Object>[]}), 200);
           }
         }
         return http.Response('[]', 200);
@@ -390,7 +390,7 @@ void main() {
         httpPostCount++;
 
         // Simulate network latency so concurrent callers overlap
-        await Future.delayed(const Duration(milliseconds: 40));
+        await Future<void>.delayed(const Duration(milliseconds: 40));
 
         return http.Response(
           jsonEncode({
@@ -437,7 +437,7 @@ void main() {
 
       final client = MockClient((req) async {
         httpPostCount++;
-        await Future.delayed(const Duration(milliseconds: 40));
+        await Future<void>.delayed(const Duration(milliseconds: 40));
         return http.Response(
           jsonEncode({
             'access_token': 'forced-access-token-$httpPostCount',
@@ -682,16 +682,16 @@ void main() {
       final api = RoomzApiService(client: client, storage: storage);
 
       await api.getSites('bad-token');
-      await Future.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       // Protected API calls on HTTP 401 must NOT trigger forced session expiry (per commit c0aa345)
       expect(expiryCount, equals(0));
 
       await api.getFloorOccupants('bad-token', 'fl-1', '2026-10-10');
-      await Future.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(expiryCount, equals(0));
 
       await api.reserveWorkspace('2026-10-10', 'bad-token', 'ws-1');
-      await Future.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(expiryCount, equals(0));
 
       // Refresh token is preserved to allow automatic re-authentication

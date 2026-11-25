@@ -10,6 +10,10 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
   errors:
     deprecated_member_use: error
   exclude:
@@ -36,6 +40,7 @@ linter:
     cancel_subscriptions: true
     close_sinks: true
     avoid_empty_else: true
+    avoid_void_async: true
     # avoid_print: false  # Uncomment to disable the `avoid_print` rule
     # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
 

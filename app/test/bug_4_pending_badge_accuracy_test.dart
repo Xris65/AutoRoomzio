@@ -282,7 +282,7 @@ void main() {
           }), 200);
         }
         if (path.contains('/floors') && path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200); // Empty: no confirmed booking
+          return http.Response(jsonEncode({'data': <Object>[]}), 200); // Empty: no confirmed booking
         }
         if (path.contains('/workspaces')) {
           return http.Response(jsonEncode([

@@ -125,13 +125,13 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'mock-access', 'refresh_token': 'mock-refresh'}), 200);
         }
         if (req.url.path.contains('/users/current/bookings') || req.url.path.contains('/reservations')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.url.path.contains('/users/current')) {
           return http.Response(jsonEncode({'id': 'user-123'}), 200);
         }
         if (req.url.path.contains('/workspaces/calendars') || req.url.path.contains('/occupancy')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         // Booking call fails (e.g. desk unavailable or 400)
         if (req.url.path.contains('/bookings') && req.method == 'POST') {
@@ -196,13 +196,13 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'mock-access', 'refresh_token': 'mock-refresh'}), 200);
         }
         if (req.url.path.contains('/users/current/bookings') || req.url.path.contains('/reservations')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.url.path.contains('/users/current')) {
           return http.Response(jsonEncode({'id': 'user-123'}), 200);
         }
         if (req.url.path.contains('/workspaces/calendars') || req.url.path.contains('/occupancy')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         // Connection error when trying to book
         if (req.url.path.contains('/bookings') && req.method == 'POST') {
@@ -282,7 +282,7 @@ void main() {
           ]), 200);
         }
         if (req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (req.url.path.contains('/buildings') && req.url.path.contains('/floors')) {
           return http.Response(jsonEncode([

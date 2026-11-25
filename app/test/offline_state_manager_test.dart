@@ -346,7 +346,7 @@ void main() {
       stateManager.markOffline();
 
       final mockInner = MockClient((request) async {
-        await Future.delayed(const Duration(milliseconds: 10));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
         return http.Response('{"index": "${request.url.path}"}', 200);
       });
 

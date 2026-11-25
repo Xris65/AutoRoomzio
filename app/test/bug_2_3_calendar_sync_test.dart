@@ -86,10 +86,10 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'new-tok', 'refresh_token': 'new-ref'}), 200);
         }
         if (req.url.path.contains('/users/current/reservations') || req.url.path.contains('/users/current/bookings')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.url.path.contains('/occupancy') || req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (req.url.path.contains('/bookings') && req.method == 'POST') {
           final body = jsonDecode(req.body);

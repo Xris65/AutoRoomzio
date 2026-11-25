@@ -216,7 +216,7 @@ void main() {
             return http.Response(jsonEncode({'access_token': 'mock-access', 'refresh_token': 'mock-refresh'}), 200);
           }
           if (req.url.path.contains('/users/current/bookings')) {
-            return http.Response(jsonEncode({'bookings': []}), 200);
+            return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
           }
           if (req.url.path.contains('/users/current')) {
             return http.Response(jsonEncode({'id': 'u-current-user', 'name': 'Current User'}), 200);
@@ -238,7 +238,7 @@ void main() {
                 ]
               }), 200);
             }
-            return http.Response(jsonEncode({'data': []}), 200);
+            return http.Response(jsonEncode({'data': <Object>[]}), 200);
           }
           return http.Response('[]', 200);
         });

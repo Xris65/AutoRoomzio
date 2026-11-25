@@ -326,7 +326,7 @@ void main() {
           ]), 200);
         }
         if (path.contains('/data')) {
-          return http.Response(jsonEncode({'features': []}), 200);
+          return http.Response(jsonEncode({'features': <Object>[]}), 200);
         }
         if (path.contains('/workspaces/calendars')) {
           return http.Response(jsonEncode({
@@ -413,10 +413,10 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'acc', 'refresh_token': 'ref'}), 200);
         }
         if (req.url.path.contains('/users/current/bookings')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (req.url.path.contains('/users/current')) {
           return http.Response(jsonEncode({'id': 'me'}), 200);

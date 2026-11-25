@@ -262,7 +262,7 @@ void main() {
         }
         if (req.url.path.contains('/workspaces/')) {
           return http.Response(jsonEncode({
-            'timeSlots': []
+            'timeSlots': <Object>[]
           }), 200);
         }
         if (req.url.path.contains('/users/current')) {
@@ -335,7 +335,7 @@ void main() {
         }
         if (req.url.path.contains('/workspaces/')) {
           return http.Response(jsonEncode({
-            'timeSlots': []
+            'timeSlots': <Object>[]
           }), 200);
         }
         if (req.url.path.contains('/users/current')) {
