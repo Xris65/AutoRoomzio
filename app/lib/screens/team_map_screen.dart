@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../api_service.dart';
 import '../models/colleague.dart';
@@ -32,6 +33,9 @@ class TeamMapScreen extends StatefulWidget {
   final bool? hideWeekends;
   final StorageService? storageService;
   final RoomzApiService? apiService;
+  final bool isEmbedded;
+  final ValueListenable<DateTime>? externalDateNotifier;
+  final VoidCallback? onReservationChanged;
 
   const TeamMapScreen({
     super.key,
@@ -41,6 +45,9 @@ class TeamMapScreen extends StatefulWidget {
     this.hideWeekends,
     this.storageService,
     this.apiService,
+    this.isEmbedded = false,
+    this.externalDateNotifier,
+    this.onReservationChanged,
   });
 
   @override
@@ -96,19 +103,56 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     super.initState();
     _storage = widget.storageService ?? StorageService();
     _api = widget.apiService ?? RoomzApiService();
-    _selectedDate = normalizeLocalDate(widget.initialDate ?? DateTime.now());
+    _selectedDate = normalizeLocalDate(
+      widget.initialDate ??
+          widget.externalDateNotifier?.value ??
+          DateTime.now(),
+    );
     if (widget.hideWeekends != null) {
       _hideWeekends = widget.hideWeekends!;
     }
     _selectedDate = _adjustWeekendForwardIfNeeded(_selectedDate, _hideWeekends);
+    widget.externalDateNotifier?.addListener(_handleExternalDateChanged);
     unawaited(_loadCacheFirst());
     unawaited(_loadInitialData());
   }
 
   @override
+  void didUpdateWidget(covariant TeamMapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.externalDateNotifier != widget.externalDateNotifier) {
+      oldWidget.externalDateNotifier
+          ?.removeListener(_handleExternalDateChanged);
+      widget.externalDateNotifier?.addListener(_handleExternalDateChanged);
+      if (widget.externalDateNotifier != null) {
+        _syncSelectedDateFromExternal(widget.externalDateNotifier!.value);
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    widget.externalDateNotifier?.removeListener(_handleExternalDateChanged);
     _selectionTimer?.cancel();
     super.dispose();
+  }
+
+  void _handleExternalDateChanged() {
+    final notifier = widget.externalDateNotifier;
+    if (notifier == null || !mounted) return;
+    _syncSelectedDateFromExternal(notifier.value);
+  }
+
+  void _syncSelectedDateFromExternal(DateTime nextDate) {
+    final normalized = _adjustWeekendForwardIfNeeded(
+      normalizeLocalDate(nextDate),
+      _hideWeekends,
+    );
+    if (DateHelpers.isSameDay(normalized, _selectedDate)) return;
+    setState(() {
+      _selectedDate = normalized;
+    });
+    unawaited(_loadOccupancyForDate(normalized));
   }
 
   DateTime _adjustWeekendForwardIfNeeded(DateTime date, bool hideWeekends) {
@@ -1176,6 +1220,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         await _storage.saveAllTimeElsewhereDates(allTimeElsewhere);
 
         await _fetchOccupants();
+        widget.onReservationChanged?.call();
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1258,6 +1303,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           );
         }
         await _fetchOccupants();
+        widget.onReservationChanged?.call();
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1318,6 +1364,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       await _storage.saveIgnoredDates(ignored);
     }
 
+    widget.onReservationChanged?.call();
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1345,6 +1393,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     await _storage.removeRequestedDate(dateStr);
     _requestedDates = (await _storage.getRequestedDates()).toSet();
     _requestedWorkspacesMap = await _storage.getRequestedWorkspacesMap();
+
+    widget.onReservationChanged?.call();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1535,6 +1585,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           );
         }
         await _fetchOccupants();
+        widget.onReservationChanged?.call();
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1642,6 +1693,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           );
         }
         await _fetchOccupants();
+        widget.onReservationChanged?.call();
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1866,7 +1918,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Plan d'équipe"),
+        automaticallyImplyLeading: !widget.isEmbedded,
+        toolbarHeight: widget.isEmbedded ? 48 : null,
+        title: Text(
+          "Plan d'équipe",
+          style: widget.isEmbedded ? const TextStyle(fontSize: 17) : null,
+        ),
         actions: <Widget>[
           IconButton(
             key: const ValueKey('favorites_week_summary_button'),
@@ -1950,133 +2007,143 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                             ),
                           ),
                         )
-                      : Stack(
-                          children: <Widget>[
-                            WorkspaceMapViewer(
-                              features: _features,
-                              workspaces: _workspaces,
-                              allWorkspaces: _allWorkspaces,
-                              occupants: _occupants,
-                              favoriteIds: _favoriteIds,
-                              favoriteNamesNormalized: _favoriteNamesNormalized,
-                              favoriteWorkspaceIds:
-                                  effectiveFavoriteWorkspaceIds,
-                              selectedWorkspaceId: _selectedDeskId,
-                              defaultWorkspaceId: _defaultWorkspaceId,
-                              focusedRoom: _focusedRoom,
-                              focusedWorkspaceId: _focusedWorkspaceId,
-                              pendingWorkspaceIds:
-                                  _getPendingWorkspaceIdsForSelectedDate(),
-                              showRoomHeatmap: _showRoomHeatmap,
-                              showHeatmapToggleChip: false,
-                              onToggleHeatmap: (bool val) {
-                                setState(() {
-                                  _showRoomHeatmap = val;
-                                });
-                              },
-                              onBackgroundTapped: () {
-                                _selectionTimer?.cancel();
-                                if (_selectedDeskId != null) {
-                                  setState(() {
-                                    _selectedDeskId = null;
-                                  });
-                                }
-                              },
-                              onSelected: (Map<String, dynamic> workspace) {
-                                _selectionTimer?.cancel();
-                                unawaited(_showFreeDeskSheet(workspace));
-                              },
-                              onOccupantTapped: (
-                                Map<String, dynamic> ws,
-                                DeskOccupant occ,
-                              ) {
-                                _selectionTimer?.cancel();
-                                final wsId =
-                                    ws['id']?.toString() ?? occ.workspaceId;
-                                setState(() {
-                                  _focusedWorkspaceId = wsId;
-                                });
-                                unawaited(_showOccupantDetails(ws, occ));
-                              },
-                            ),
-                            if (_isOccupantsPanelExpanded)
-                              Positioned.fill(
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: () => setState(
-                                    () => _isOccupantsPanelExpanded = false,
-                                  ),
+                      : LayoutBuilder(
+                          builder: (
+                            BuildContext context,
+                            BoxConstraints constraints,
+                          ) {
+                            return Stack(
+                              children: <Widget>[
+                                WorkspaceMapViewer(
+                                  features: _features,
+                                  workspaces: _workspaces,
+                                  allWorkspaces: _allWorkspaces,
+                                  occupants: _occupants,
+                                  favoriteIds: _favoriteIds,
+                                  favoriteNamesNormalized:
+                                      _favoriteNamesNormalized,
+                                  favoriteWorkspaceIds:
+                                      effectiveFavoriteWorkspaceIds,
+                                  selectedWorkspaceId: _selectedDeskId,
+                                  defaultWorkspaceId: _defaultWorkspaceId,
+                                  focusedRoom: _focusedRoom,
+                                  focusedWorkspaceId: _focusedWorkspaceId,
+                                  pendingWorkspaceIds:
+                                      _getPendingWorkspaceIdsForSelectedDate(),
+                                  showRoomHeatmap: _showRoomHeatmap,
+                                  showHeatmapToggleChip: false,
+                                  onToggleHeatmap: (bool val) {
+                                    setState(() {
+                                      _showRoomHeatmap = val;
+                                    });
+                                  },
+                                  onBackgroundTapped: () {
+                                    _selectionTimer?.cancel();
+                                    if (_selectedDeskId != null) {
+                                      setState(() {
+                                        _selectedDeskId = null;
+                                      });
+                                    }
+                                  },
+                                  onSelected: (Map<String, dynamic> workspace) {
+                                    _selectionTimer?.cancel();
+                                    unawaited(_showFreeDeskSheet(workspace));
+                                  },
+                                  onOccupantTapped: (
+                                    Map<String, dynamic> ws,
+                                    DeskOccupant occ,
+                                  ) {
+                                    _selectionTimer?.cancel();
+                                    final wsId =
+                                        ws['id']?.toString() ?? occ.workspaceId;
+                                    setState(() {
+                                      _focusedWorkspaceId = wsId;
+                                    });
+                                    unawaited(_showOccupantDetails(ws, occ));
+                                  },
                                 ),
-                              ),
-                            OccupantsSummaryPanel(
-                              isExpanded: _isOccupantsPanelExpanded,
-                              onToggleExpanded: () {
-                                setState(() {
-                                  _isOccupantsPanelExpanded =
-                                      !_isOccupantsPanelExpanded;
-                                });
-                              },
-                              onClose: () {
-                                setState(() {
-                                  _isOccupantsPanelExpanded = false;
-                                });
-                              },
-                              occupants: _occupants,
-                              allWorkspaces: _allWorkspaces,
-                              favoriteIds: _favoriteIds,
-                              favoriteEmailsNormalized:
-                                  _favoriteEmailsNormalized,
-                              favoriteNamesNormalized: _favoriteNamesNormalized,
-                              favoritesSeatedCount: favoritesSeatedCount,
-                              onSelectOccupant: (
-                                Map<String, dynamic> ws,
-                                DeskOccupant occ,
-                              ) {
-                                _selectionTimer?.cancel();
-                                final wsId =
-                                    ws['id']?.toString() ?? occ.workspaceId;
-                                setState(() {
-                                  _focusedWorkspaceId = wsId;
-                                  _isOccupantsPanelExpanded = false;
-                                });
-                                unawaited(_showOccupantDetails(ws, occ));
-                              },
-                              onHighlightDesk: _highlightDeskTemporarily,
-                            ),
-                            if (_isOccupancyLoading)
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: Material(
-                                  elevation: 4,
-                                  borderRadius: BorderRadius.circular(20),
-                                  color: theme.colorScheme.surface,
-                                  child: const Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 6,
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: <Widget>[
-                                        SizedBox(
-                                          width: 14,
-                                          height: 14,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                        SizedBox(width: 8),
-                                        Text(
-                                          'Mise à jour...',
-                                          style: TextStyle(fontSize: 11),
-                                        ),
-                                      ],
+                                if (_isOccupantsPanelExpanded)
+                                  Positioned.fill(
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () => setState(
+                                        () => _isOccupantsPanelExpanded = false,
+                                      ),
                                     ),
                                   ),
+                                OccupantsSummaryPanel(
+                                  isExpanded: _isOccupantsPanelExpanded,
+                                  onToggleExpanded: () {
+                                    setState(() {
+                                      _isOccupantsPanelExpanded =
+                                          !_isOccupantsPanelExpanded;
+                                    });
+                                  },
+                                  onClose: () {
+                                    setState(() {
+                                      _isOccupantsPanelExpanded = false;
+                                    });
+                                  },
+                                  occupants: _occupants,
+                                  allWorkspaces: _allWorkspaces,
+                                  favoriteIds: _favoriteIds,
+                                  favoriteEmailsNormalized:
+                                      _favoriteEmailsNormalized,
+                                  favoriteNamesNormalized:
+                                      _favoriteNamesNormalized,
+                                  favoritesSeatedCount: favoritesSeatedCount,
+                                  onSelectOccupant: (
+                                    Map<String, dynamic> ws,
+                                    DeskOccupant occ,
+                                  ) {
+                                    _selectionTimer?.cancel();
+                                    final wsId =
+                                        ws['id']?.toString() ?? occ.workspaceId;
+                                    setState(() {
+                                      _focusedWorkspaceId = wsId;
+                                      _isOccupantsPanelExpanded = false;
+                                    });
+                                    unawaited(_showOccupantDetails(ws, occ));
+                                  },
+                                  onHighlightDesk: _highlightDeskTemporarily,
+                                  availableWidth: constraints.maxWidth,
                                 ),
-                              ),
-                          ],
+                                if (_isOccupancyLoading)
+                                  Positioned(
+                                    top: 8,
+                                    right: 8,
+                                    child: Material(
+                                      elevation: 4,
+                                      borderRadius: BorderRadius.circular(20),
+                                      color: theme.colorScheme.surface,
+                                      child: const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 6,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: <Widget>[
+                                            SizedBox(
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                            SizedBox(width: 8),
+                                            Text(
+                                              'Mise à jour...',
+                                              style: TextStyle(fontSize: 11),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
             ),
           ],

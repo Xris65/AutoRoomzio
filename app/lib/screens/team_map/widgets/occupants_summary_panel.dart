@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../models/desk_occupant.dart';
@@ -19,6 +20,7 @@ class OccupantsSummaryPanel extends StatefulWidget {
   final void Function(Map<String, dynamic> workspace, DeskOccupant occupant)
       onSelectOccupant;
   final ValueChanged<String> onHighlightDesk;
+  final double? availableWidth;
 
   const OccupantsSummaryPanel({
     super.key,
@@ -33,6 +35,7 @@ class OccupantsSummaryPanel extends StatefulWidget {
     required this.favoritesSeatedCount,
     required this.onSelectOccupant,
     required this.onHighlightDesk,
+    this.availableWidth,
   });
 
   @override
@@ -106,11 +109,16 @@ class _OccupantsSummaryPanelState extends State<OccupantsSummaryPanel> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final totalOccupantsCount = _seatedList.length;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final maxAvailableWidth = widget.availableWidth ?? screenWidth;
+    final isWide = maxAvailableWidth >= 900 || screenWidth >= 1100;
+    final useBoundedRight = isWide && maxAvailableWidth >= 392;
 
     return Positioned(
       bottom: 72,
-      left: 16,
+      left: useBoundedRight ? null : 16,
       right: 16,
+      width: useBoundedRight ? math.min(maxAvailableWidth - 32, 460.0) : null,
       child: ValueListenableBuilder<Offset>(
         valueListenable: _barOffset,
         builder: (BuildContext context, Offset barOffset, Widget? child) {
@@ -181,90 +189,96 @@ class _OccupantsSummaryPanelState extends State<OccupantsSummaryPanel> {
               onTap: widget.onToggleExpanded,
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Icon(
-                      Icons.star,
-                      size: 16,
-                      color: widget.favoritesSeatedCount > 0
-                          ? Colors.amber.shade800
-                          : Colors.grey,
-                    ),
-                    if (_seatedFavorites.isNotEmpty) ...<Widget>[
-                      const SizedBox(width: 6),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          for (final fav in _seatedFavorites.take(3))
-                            Container(
-                              margin: const EdgeInsets.only(right: 3),
-                              width: 20,
-                              height: 20,
-                              decoration: BoxDecoration(
-                                color: isDark
-                                    ? const Color(0xFFD97706)
-                                    : const Color(0xFFFBBF24),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: isDark
-                                      ? const Color(0xFFFDE68A)
-                                      : const Color(0xFFB45309),
-                                  width: 1,
-                                ),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                fav.occupant.initials,
-                                style: TextStyle(
-                                  fontSize: 8.5,
-                                  fontWeight: FontWeight.bold,
-                                  color: isDark
-                                      ? Colors.white
-                                      : const Color(0xFF78350F),
-                                ),
-                              ),
-                            ),
-                          if (_seatedFavorites.length > 3)
-                            Container(
-                              width: 20,
-                              height: 20,
-                              decoration: BoxDecoration(
-                                color: isDark
-                                    ? const Color(0xFF78350F)
-                                    : const Color(0xFFFDE68A),
-                                shape: BoxShape.circle,
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                '+${_seatedFavorites.length - 3}',
-                                style: TextStyle(
-                                  fontSize: 8.5,
-                                  fontWeight: FontWeight.bold,
-                                  color: isDark
-                                      ? Colors.amber.shade200
-                                      : const Color(0xFF78350F),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        widget.favoritesSeatedCount > 0
-                            ? "${widget.favoritesSeatedCount} collègue${widget.favoritesSeatedCount > 1 ? 's' : ''} favori${widget.favoritesSeatedCount > 1 ? 's' : ''} sur site"
-                            : 'Aucun favori assis ce jour-là',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onSurface,
+                child: LayoutBuilder(
+                  builder: (BuildContext _, BoxConstraints leftConstraints) {
+                    final bool showAvatars = _seatedFavorites.isNotEmpty &&
+                        leftConstraints.maxWidth >= 140;
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(
+                          Icons.star,
+                          size: 16,
+                          color: widget.favoritesSeatedCount > 0
+                              ? Colors.amber.shade800
+                              : Colors.grey,
                         ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+                        if (showAvatars) ...<Widget>[
+                          const SizedBox(width: 6),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              for (final fav in _seatedFavorites.take(3))
+                                Container(
+                                  margin: const EdgeInsets.only(right: 3),
+                                  width: 20,
+                                  height: 20,
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? const Color(0xFFD97706)
+                                        : const Color(0xFFFBBF24),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: isDark
+                                          ? const Color(0xFFFDE68A)
+                                          : const Color(0xFFB45309),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    fav.occupant.initials,
+                                    style: TextStyle(
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: isDark
+                                          ? Colors.white
+                                          : const Color(0xFF78350F),
+                                    ),
+                                  ),
+                                ),
+                              if (_seatedFavorites.length > 3)
+                                Container(
+                                  width: 20,
+                                  height: 20,
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? const Color(0xFF78350F)
+                                        : const Color(0xFFFDE68A),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    '+${_seatedFavorites.length - 3}',
+                                    style: TextStyle(
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: isDark
+                                          ? Colors.amber.shade200
+                                          : const Color(0xFF78350F),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            widget.favoritesSeatedCount > 0
+                                ? "${widget.favoritesSeatedCount} collègue${widget.favoritesSeatedCount > 1 ? 's' : ''} favori${widget.favoritesSeatedCount > 1 ? 's' : ''} sur site"
+                                : 'Aucun favori assis ce jour-là',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),

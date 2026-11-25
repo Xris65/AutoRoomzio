@@ -139,17 +139,38 @@ class FavoritesWeekModal extends StatefulWidget {
 }
 
 class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
+  static const List<String> _shortMonths = <String>[
+    'janv.',
+    'févr.',
+    'mars',
+    'avr.',
+    'mai',
+    'juin',
+    'juil.',
+    'août',
+    'sept.',
+    'oct.',
+    'nov.',
+    'déc.',
+  ];
+
+  late DateTime _initialWeekAnchor;
+  late DateTime _currentWeekAnchor;
   late List<DateTime> _weekDays;
   late String _selectedIso;
   late bool _localShowIndicators;
   late bool _isLoadingWeek;
   late Map<String, Map<String, DeskOccupant>> _localCache;
+  final Set<String> _fetchedKeys = <String>{};
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    _initialWeekAnchor = normalizeLocalDate(widget.selectedDate);
+    _currentWeekAnchor = _initialWeekAnchor;
     _weekDays = TeamMapHelpers.getVisibleWeekDays(
-      widget.selectedDate,
+      _currentWeekAnchor,
       hideWeekends: widget.hideWeekends,
     );
     _selectedIso = DateHelpers.formatIsoDate(widget.selectedDate);
@@ -157,25 +178,60 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
     _localCache = Map<String, Map<String, DeskOccupant>>.from(
       widget.occupancyCache,
     );
+    _isLoadingWeek = false;
+    _loadMissingWeekOccupancy(fromInitState: true);
+  }
 
+  void _setWeekAnchor(DateTime nextAnchor) {
+    final normalized = normalizeLocalDate(nextAnchor);
+    setState(() {
+      _currentWeekAnchor = normalized;
+      _weekDays = TeamMapHelpers.getVisibleWeekDays(
+        _currentWeekAnchor,
+        hideWeekends: widget.hideWeekends,
+      );
+    });
+    _loadMissingWeekOccupancy();
+  }
+
+  void _loadMissingWeekOccupancy({bool fromInitState = false}) {
     final floorId = widget.floorId;
+    final generation = ++_loadGeneration;
     final missingDays = floorId == null
         ? <DateTime>[]
         : _weekDays.where((DateTime d) {
             final dStr = DateHelpers.formatIsoDate(d);
+            final cacheKey = '${floorId}_$dStr';
             return dStr != _selectedIso &&
-                !_localCache.containsKey('${floorId}_$dStr');
+                !_localCache.containsKey(cacheKey) &&
+                !_fetchedKeys.contains(cacheKey);
           }).toList();
 
-    _isLoadingWeek = missingDays.isNotEmpty;
-    if (missingDays.isNotEmpty && floorId != null) {
-      unawaited(_loadMissingDays(floorId, missingDays));
+    if (missingDays.isEmpty || floorId == null) {
+      if (fromInitState) {
+        _isLoadingWeek = false;
+      } else if (mounted && _isLoadingWeek) {
+        setState(() {
+          _isLoadingWeek = false;
+        });
+      }
+      return;
     }
+
+    if (fromInitState) {
+      _isLoadingWeek = true;
+    } else if (mounted) {
+      setState(() {
+        _isLoadingWeek = true;
+      });
+    }
+    unawaited(_loadMissingDays(floorId, missingDays, generation));
   }
 
   Future<void> _loadMissingDays(
     String floorId,
     List<DateTime> missingDays,
+    int generation,
   ) async {
     try {
       final String? token = await widget.apiService.refreshMyToken();
@@ -185,6 +241,7 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
       await Future.wait<void>(
         missingDays.map<Future<void>>((DateTime d) async {
           final dStr = DateHelpers.formatIsoDate(d);
+          final cacheKey = '${floorId}_$dStr';
           try {
             var occs =
                 await widget.storageService.getFloorOccupants(floorId, dStr);
@@ -200,9 +257,9 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
                 await widget.storageService
                     .saveFloorOccupants(floorId, dStr, occs);
               }
+              _fetchedKeys.add(cacheKey);
             }
             if (occs.isNotEmpty) {
-              final cacheKey = '${floorId}_$dStr';
               _localCache[cacheKey] = occs;
               widget.onCacheUpdated(cacheKey, occs);
             }
@@ -210,12 +267,21 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
         }),
       );
     } finally {
-      if (mounted) {
+      if (mounted && generation == _loadGeneration) {
         setState(() {
           _isLoadingWeek = false;
         });
       }
     }
+  }
+
+  String _formatWeekRangeLabel(DateTime first, DateTime last) {
+    final firstMonth = _shortMonths[first.month - 1];
+    final lastMonth = _shortMonths[last.month - 1];
+    if (first.year == last.year) {
+      return '${first.day} $firstMonth – ${last.day} $lastMonth ${last.year}';
+    }
+    return '${first.day} $firstMonth ${first.year} – ${last.day} $lastMonth ${last.year}';
   }
 
   Map<String, Map<String, DeskOccupant>> _buildWeekOccupants() {
@@ -280,6 +346,11 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
     final favoritesList = _buildFavoritesList(weekOccupants);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final isInitialWeek =
+        calendarDaysBetween(_initialWeekAnchor, _currentWeekAnchor).abs() < 7;
+    final weekRangeText = _weekDays.isNotEmpty
+        ? _formatWeekRangeLabel(_weekDays.first, _weekDays.last)
+        : DateHelpers.formatFrenchDate(_currentWeekAnchor, includeYear: true);
 
     return SafeArea(
       child: ConstrainedBox(
@@ -308,6 +379,76 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
+              ),
+              Container(
+                margin: const EdgeInsets.only(top: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        IconButton(
+                          key: const ValueKey<String>('fav_week_prev_btn'),
+                          icon: const Icon(Icons.chevron_left),
+                          tooltip: 'Semaine précédente',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => _setWeekAnchor(
+                            addCalendarDays(_currentWeekAnchor, -7),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            weekRangeText,
+                            key: const ValueKey<String>('fav_week_range_label'),
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          key: const ValueKey<String>('fav_week_next_btn'),
+                          icon: const Icon(Icons.chevron_right),
+                          tooltip: 'Semaine suivante',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => _setWeekAnchor(
+                            addCalendarDays(_currentWeekAnchor, 7),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (!isInitialWeek)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: TextButton.icon(
+                          key: const ValueKey<String>('fav_week_reset_btn'),
+                          onPressed: () => _setWeekAnchor(_initialWeekAnchor),
+                          icon: const Icon(Icons.today_rounded, size: 15),
+                          label: const Text(
+                            'Revenir à cette semaine',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 2,
+                            ),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               if (_isLoadingWeek) ...<Widget>[
                 const SizedBox(height: 6),
@@ -376,6 +517,18 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
     Colleague fav,
     Map<String, Map<String, DeskOccupant>> weekOccupants,
   ) {
+    var presentDaysCount = 0;
+    for (final d in _weekDays) {
+      final dStr = DateHelpers.formatIsoDate(d);
+      final occ = TeamMapHelpers.findOccupantForColleague(
+        weekOccupants[dStr] ?? const <String, DeskOccupant>{},
+        fav,
+      );
+      if (occ != null) {
+        presentDaysCount++;
+      }
+    }
+
     return Card(
       elevation: 0,
       margin: EdgeInsets.zero,
@@ -404,6 +557,32 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: presentDaysCount > 0
+                        ? Colors.amber.withValues(alpha: isDark ? 0.25 : 0.2)
+                        : theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$presentDaysCount/${_weekDays.length} j.',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: presentDaysCount > 0
+                          ? (isDark
+                              ? Colors.amber.shade200
+                              : Colors.amber.shade900)
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -414,8 +593,7 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
                   weekOccupants[dStr] ?? const <String, DeskOccupant>{},
                   fav,
                 );
-                final dayLabel =
-                    DateHelpers.frenchShortWeekdaysList[d.weekday - 1];
+                final dayLabel = DateHelpers.formatShortDay(d);
                 final deskDisplay = occ != null
                     ? TeamMapHelpers.resolveDeskDisplayName(
                         widget.allWorkspaces,
@@ -457,17 +635,21 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: <Widget>[
-                              Text(
-                                dayLabel,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: isPresent
-                                      ? (isDark
-                                          ? Colors.amber.shade200
-                                          : Colors.amber.shade900)
-                                      : theme.colorScheme.onSurface
-                                          .withValues(alpha: 0.6),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  dayLabel,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: isPresent
+                                        ? (isDark
+                                            ? Colors.amber.shade200
+                                            : Colors.amber.shade900)
+                                        : theme.colorScheme.onSurface
+                                            .withValues(alpha: 0.6),
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 2),
