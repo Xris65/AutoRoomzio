@@ -5,22 +5,27 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 ## [2.0.0] - 2026-11-25
 
 ### Nouveautés
-- **Plan 2D plus fluide et réactif** : Affichage et déplacements accélérés sur les grands étages grâce à une mise en page optimisée des salles et des postes.
-- **Compatibilité WebAssembly & Android modernisé** : Version navigateur modernisée compatible WebAssembly, optimisation R8 du code Android et suppression des autorisations de stockage/médias inutiles.
-- **Annulation des mises à jour** : Ajout d'un bouton « Annuler » fonctionnel pendant le téléchargement d'une mise à jour, permettant d'interrompre proprement l'opération à tout moment.
-- **Couplage Web renforcé** : Sécurisation accrue des liens de connexion par QR Code vers la version navigateur afin de mieux protéger les données de session.
+- **Interface adaptative Mobile, Tablette, Windows & Web** : barre de navigation modernisée avec le **Plan d'équipe** accessible d'un geste au premier plan, barre latérale sur tablette, et **vue côte-à-côte synchronisée** sur PC/Web affichant l'accueil ou le calendrier à gauche et le plan 2D interactif en direct à droite.
+- **Nouvel accueil « Ma semaine »** : vue hebdomadaire navigable directement dès l'ouverture avec votre statut du jour, les présences de vos collègues favoris et un accès rapide.
+- **Navigation entre les semaines (« Semaine de mes favoris »)** : flèches `<` et `>` avec affichage clair de la semaine consultée et bouton de retour rapide à la semaine courante.
+- **Synchronisation complète `.roomzio` & QR Code v2** : transfert sécurisé de toute votre configuration (règles multi-bureaux, favoris, congés, programmations et préférences), avec export/import sans déconnecter vos autres appareils.
+- **Mises à jour Android allégées & interchangeables** : l'application télécharge automatiquement la version optimisée pour votre téléphone (~21–22 Mo), tout en restant 100 % interchangeable avec l'installateur universel (~61 Mo) sans perte de données.
+- **Polices embarquées hors-ligne** : affichage typographique garanti même hors connexion ou derrière un pare-feu d'entreprise.
+- **Plan 2D plus fluide et réactif** : affichage et déplacements accélérés sur les grands étages grâce à une mise en page optimisée des salles et des postes.
+- **Annulation des mises à jour** : ajout d'un bouton « Annuler » fonctionnel pendant le téléchargement d'une mise à jour, permettant d'interrompre proprement l'opération à tout moment.
 
 ### Correctifs
-- **Indicateur Or des favoris fiabilisé** : Un collègue inconnu occupant un poste autrefois attribué à un favori n'apparaît plus surligné en or par erreur, et le retrait d'un favori depuis sa fiche fonctionne de manière fiable dans tous les cas.
-- **Préservation du planning au changement de bureau** : Changer de bureau principal conserve désormais intactes vos dates programmées en attente ainsi que vos dates bloquées.
-- **Ouverture sereine de l'accueil** : Correction d'un blocage potentiel au démarrage lorsque l'onglet d'automatisation est masqué ou indisponible sur navigateur.
-- **Réservations automatiques & session renforcées** : Calculs de dates fiabilisés lors des changements d'heure été/hiver, synchronisation automatique à la réouverture de l'application et gestion propre des actualisations simultanées de session.
+- **Indicateur Or des favoris fiabilisé** : un collègue inconnu occupant un poste autrefois attribué à un favori n'apparaît plus surligné en or par erreur, et le retrait d'un favori depuis sa fiche fonctionne de manière fiable dans tous les cas.
+- **Préservation du planning au changement de bureau** : changer de bureau principal recalcule instantanément l'affichage (« ici » vs « ailleurs ») tout en conservant intactes vos réservations, vos dates programmées en attente et vos dates bloquées.
+- **Ouverture sereine de l'accueil** : correction d'un blocage potentiel au démarrage lorsque l'onglet d'automatisation ou des statistiques est masqué ou indisponible sur navigateur.
+- **Réservations automatiques, stockage & session renforcés** : calculs de dates fiabilisés lors des changements d'heure été/hiver, synchronisation fiable entre l'application et le service d'arrière-plan, actualisation propre des sessions simultanées et protection des données hors-ligne.
 
 ### Montées de versions & socle technique
-- **Socle Flutter & Dart 3** : Passage au socle Dart 3.13+ / Flutter 3.47+ avec analyse stricte activée et zéro API dépréciée dans l'application.
-- **Dépendances majeures** : Remplacement de `flutter_markdown` (discontinué) par `flutter_markdown_plus` (1.0.12), montée vers `flutter_local_notifications` 23, `open_filex` 5, `google_fonts` 8, `table_calendar` 3.3, `flutter_secure_storage` 11, `workmanager` 0.10 et `flutter_launcher_icons` 0.14 ; suppression des dépendances inutilisées (`cupertino_icons`).
-- **Web moderne (`--wasm`)** : Migration de `dart:html` vers `package:web` (`js_interop`) et isolation des modules natifs pour une compilation WebAssembly propre.
-- **Android & CI/CD** : Optimisation R8 / suppression des ressources inutilisées, geste de retour prédictif (Android 14+), versioning monotone (`2.0.0+20000`) et modernisation des pipelines GitHub Actions (`setup-java@v4`, `setup-gradle@v4`, `actions-gh-pages@v4`, publication atomique).
+- **Socle Flutter & Dart 3** : passage au socle Dart 3.13+ / Flutter 3.47+ avec analyse stricte activée et zéro API dépréciée dans l'application.
+- **Chiffrement authentifié & polices locales** : migration vers `cryptography` (AES-256-GCM authentifié + dérivation HKDF-SHA256) et `archive` pour le couplage Web et les sauvegardes `.roomzio`, embarquement des polices locales (Roboto, Poppins, FiraCode) et retrait complet d'`encrypt`, `google_fonts`, `pointycastle` et `js`.
+- **Dépendances majeures** : remplacement de `flutter_markdown` (discontinué) par `flutter_markdown_plus` (1.0.12), montée vers `flutter_local_notifications` 23, `open_filex` 5, `table_calendar` 3.3, `flutter_secure_storage` 11, `workmanager` 0.10 et `flutter_launcher_icons` 0.14 ; suppression des dépendances inutilisées (`cupertino_icons`).
+- **Stockage unifié & WebAssembly (`--wasm`)** : unification du stockage local des réservations sur `SharedPreferencesAsync` avec migration transparente, migration de `dart:html` vers `package:web` (`js_interop`) et isolation des modules natifs pour une compilation WebAssembly propre.
+- **Android multi-ABI & CI/CD** : optimisation R8 / suppression des ressources inutilisées, APKs split par architecture (`arm64-v8a`, `armeabi-v7a`, `universal`) avec versionnement monotone compatible (`2.0.0+20000`), geste de retour prédictif (Android 14+) et pipelines GitHub Actions modernisés (`setup-java@v4`, `setup-gradle@v4`, `actions-gh-pages@v4`).
 
 ## [1.7.0] - 2026-11-23
 

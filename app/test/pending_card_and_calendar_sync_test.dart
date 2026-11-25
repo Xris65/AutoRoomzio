@@ -59,6 +59,8 @@ void main() {
       expect(blockBtn, findsNothing);
 
       // Tap the delete button on the pending booking
+      await tester.ensureVisible(deleteBtn.first);
+      await tester.pumpAndSettle();
       await tester.tap(deleteBtn.first);
       await tester.pumpAndSettle();
 
