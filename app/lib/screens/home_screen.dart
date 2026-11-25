@@ -2247,6 +2247,66 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(_reloadAutomationAndSettings());
   }
 
+  List<AdaptiveNavItem> _buildVisibleDestinations() {
+    return <AdaptiveNavItem>[
+      const AdaptiveNavItem(
+        destination: AppDestination.home,
+        label: 'Accueil',
+        icon: Icons.home_outlined,
+        selectedIcon: Icons.home_rounded,
+      ),
+      const AdaptiveNavItem(
+        destination: AppDestination.map,
+        label: 'Plan',
+        icon: Icons.map_outlined,
+        selectedIcon: Icons.map_rounded,
+      ),
+      const AdaptiveNavItem(
+        destination: AppDestination.calendar,
+        label: 'Calendrier',
+        icon: Icons.calendar_month_outlined,
+        selectedIcon: Icons.calendar_month_rounded,
+      ),
+      if (_showAutomation && !kIsWeb)
+        const AdaptiveNavItem(
+          destination: AppDestination.automation,
+          label: 'Automate',
+          icon: Icons.auto_awesome_outlined,
+          selectedIcon: Icons.auto_awesome,
+        ),
+      if (_showStats)
+        const AdaptiveNavItem(
+          destination: AppDestination.stats,
+          label: 'Stats',
+          icon: Icons.insights_outlined,
+          selectedIcon: Icons.insights_rounded,
+        ),
+      const AdaptiveNavItem(
+        destination: AppDestination.settings,
+        label: 'Paramètres',
+        icon: Icons.settings_outlined,
+        selectedIcon: Icons.settings_rounded,
+      ),
+    ];
+  }
+
+  void _handleCompactTabSwipe(int delta) {
+    final List<AdaptiveNavItem> destinations = _buildVisibleDestinations();
+    if (destinations.isEmpty) return;
+    final int currentIndex = destinations.indexWhere(
+      (AdaptiveNavItem item) => item.destination == _selectedDestination,
+    );
+    final int safeCurrentIndex = currentIndex >= 0 ? currentIndex : 0;
+    final int rawTarget = safeCurrentIndex + delta;
+    final int targetIndex = rawTarget < 0
+        ? 0
+        : (rawTarget >= destinations.length
+            ? destinations.length - 1
+            : rawTarget);
+    if (targetIndex == safeCurrentIndex) return;
+    _onDestinationSelected(destinations[targetIndex].destination);
+  }
+
   Widget _buildEmbeddedTeamMap({Key? key}) {
     return TeamMapScreen(
       key: key,
@@ -2516,46 +2576,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         body: FunLoadingWidget(messageNotifier: _loadingTextNotifier),
       );
     } else {
-      final List<AdaptiveNavItem> destinations = <AdaptiveNavItem>[
-        const AdaptiveNavItem(
-          destination: AppDestination.home,
-          label: 'Accueil',
-          icon: Icons.home_outlined,
-          selectedIcon: Icons.home_rounded,
-        ),
-        const AdaptiveNavItem(
-          destination: AppDestination.map,
-          label: 'Plan',
-          icon: Icons.map_outlined,
-          selectedIcon: Icons.map_rounded,
-        ),
-        const AdaptiveNavItem(
-          destination: AppDestination.calendar,
-          label: 'Calendrier',
-          icon: Icons.calendar_month_outlined,
-          selectedIcon: Icons.calendar_month_rounded,
-        ),
-        if (_showAutomation && !kIsWeb)
-          const AdaptiveNavItem(
-            destination: AppDestination.automation,
-            label: 'Automate',
-            icon: Icons.auto_awesome_outlined,
-            selectedIcon: Icons.auto_awesome,
-          ),
-        if (_showStats)
-          const AdaptiveNavItem(
-            destination: AppDestination.stats,
-            label: 'Stats',
-            icon: Icons.insights_outlined,
-            selectedIcon: Icons.insights_rounded,
-          ),
-        const AdaptiveNavItem(
-          destination: AppDestination.settings,
-          label: 'Paramètres',
-          icon: Icons.settings_outlined,
-          selectedIcon: Icons.settings_rounded,
-        ),
-      ];
+      final List<AdaptiveNavItem> destinations = _buildVisibleDestinations();
 
       final AppDestination activeDest = _isDestinationVisible(
         _selectedDestination,
@@ -2665,6 +2686,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         destinations: destinations,
         selectedDestination: activeDest,
         onDestinationSelected: _onDestinationSelected,
+        onCompactHorizontalSwipe: _handleCompactTabSwipe,
         appBar: appBar,
         body: body,
         fullWidthBody: activeDest == AppDestination.map,

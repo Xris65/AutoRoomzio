@@ -495,6 +495,120 @@ void main() {
         expect(embeddedSplitMap, findsOneWidget);
       },
     );
+
+    testWidgets(
+      'Mobile (400x800) supports horizontal swipe between tabs outside Plan while Desktop (1440x900) ignores horizontal swipe',
+      (WidgetTester tester) async {
+        // 1. Mobile (400x800)
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final StorageService storage = await _seedConfiguredStorage();
+        final RoomzApiService api = RoomzApiService(
+          client: _createHomeMockClient(),
+          storage: storage,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: HomeScreen(storageService: storage, apiService: api),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Ma semaine'), findsOneWidget);
+
+        // Swipe left from Accueil -> Plan
+        await tester.fling(
+          find.text('Ma semaine'),
+          const Offset(-300, 0),
+          1000,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey<String>('embedded_tab_team_map')),
+          findsOneWidget,
+        );
+
+        // Swipe horizontally on Plan -> stays on Plan (2D pan/zoom preserved)
+        await tester.fling(
+          find.byKey(const ValueKey<String>('embedded_tab_team_map')),
+          const Offset(-300, 0),
+          1000,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey<String>('embedded_tab_team_map')),
+          findsOneWidget,
+        );
+
+        // Tap Calendrier, then swipe left -> Automate (or Stats if Automate hidden)
+        await tester.tap(
+          find.descendant(
+            of: find.byType(NavigationBar),
+            matching: find.text('Calendrier'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Mes places'), findsOneWidget);
+
+        await tester.fling(
+          find.text('Mes places'),
+          const Offset(-300, 0),
+          1000,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Ma semaine type'), findsOneWidget);
+
+        // Tap Calendrier again, then swipe right -> Plan
+        await tester.tap(
+          find.descendant(
+            of: find.byType(NavigationBar),
+            matching: find.text('Calendrier'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Mes places'), findsOneWidget);
+
+        await tester.fling(
+          find.text('Mes places'),
+          const Offset(300, 0),
+          1000,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey<String>('embedded_tab_team_map')),
+          findsOneWidget,
+        );
+
+        // 2. Desktop (1440x900)
+        tester.view.physicalSize = const Size(1440, 900);
+        await tester.pumpAndSettle();
+
+        await tester.tap(
+          find.descendant(
+            of: find.byType(NavigationRail),
+            matching: find.text('Accueil'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Ma semaine'), findsOneWidget);
+
+        await tester.fling(
+          find.text('Ma semaine'),
+          const Offset(-300, 0),
+          1000,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Ma semaine'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey<String>('embedded_tab_team_map')),
+          findsNothing,
+        );
+      },
+    );
   });
 
   group('3. WeeklyCockpitCard Statuses, Week Navigation & Cached Favorites', () {
@@ -599,7 +713,14 @@ void main() {
         );
         expect(favBadge, findsOneWidget);
         expect(
-          find.descendant(of: favBadge, matching: find.text('⭐ 2')),
+          find.descendant(
+            of: favBadge,
+            matching: find.byIcon(Icons.star_rounded),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: favBadge, matching: find.text('2')),
           findsOneWidget,
         );
 

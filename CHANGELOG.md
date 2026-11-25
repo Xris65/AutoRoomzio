@@ -17,6 +17,9 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 - **Annulation des mises à jour** : ajout d'un bouton « Annuler » fonctionnel pendant le téléchargement d'une mise à jour, permettant d'interrompre proprement l'opération à tout moment.
 
 ### Correctifs
+- **Migration transparente depuis les versions 1.x** : récupération automatique de vos préférences, favoris et réservations enregistrées lors de la mise à jour, sans aucune perte de données.
+- **Polices sous WebAssembly & icônes vectorielles** : bascule instantanée entre les styles de police sous WebAssembly et rendu net d'icônes vectorielles sans recours à des ressources externes.
+- **Balayage horizontal sur mobile** : maintien du changement d'onglet par balayage horizontal sur petit écran mobile, tout en le désactivant sur le Plan d'équipe et sur grand écran pour préserver la navigation 2D.
 - **Indicateur Or des favoris fiabilisé** : un collègue inconnu occupant un poste autrefois attribué à un favori n'apparaît plus surligné en or par erreur, et le retrait d'un favori depuis sa fiche fonctionne de manière fiable dans tous les cas.
 - **Préservation du planning au changement de bureau** : changer de bureau principal recalcule instantanément l'affichage (« ici » vs « ailleurs ») tout en conservant intactes vos réservations, vos dates programmées en attente et vos dates bloquées.
 - **Ouverture sereine de l'accueil** : correction d'un blocage potentiel au démarrage lorsque l'onglet d'automatisation ou des statistiques est masqué ou indisponible sur navigateur.

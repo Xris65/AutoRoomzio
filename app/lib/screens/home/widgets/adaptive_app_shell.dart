@@ -27,6 +27,7 @@ class AdaptiveAppShell extends StatelessWidget {
   final List<AdaptiveNavItem> destinations;
   final AppDestination selectedDestination;
   final ValueChanged<AppDestination> onDestinationSelected;
+  final ValueChanged<int>? onCompactHorizontalSwipe;
   final PreferredSizeWidget? appBar;
   final Widget body;
   final Widget? splitMapPanel;
@@ -39,6 +40,7 @@ class AdaptiveAppShell extends StatelessWidget {
     required this.selectedDestination,
     required this.onDestinationSelected,
     required this.body,
+    this.onCompactHorizontalSwipe,
     this.appBar,
     this.splitMapPanel,
     this.showSplitMap = false,
@@ -124,9 +126,26 @@ class AdaptiveAppShell extends StatelessWidget {
             ),
           );
 
+          final Widget compactBody =
+              (onCompactHorizontalSwipe != null &&
+                      selectedDestination != AppDestination.map)
+                  ? GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onHorizontalDragEnd: (DragEndDetails details) {
+                        final double velocity = details.primaryVelocity ?? 0;
+                        if (velocity < -300) {
+                          onCompactHorizontalSwipe?.call(1);
+                        } else if (velocity > 300) {
+                          onCompactHorizontalSwipe?.call(-1);
+                        }
+                      },
+                      child: body,
+                    )
+                  : body;
+
           return Scaffold(
             appBar: appBar,
-            body: body,
+            body: compactBody,
             bottomNavigationBar: NavigationBarTheme(
               data: navBarTheme,
               child: NavigationBar(
