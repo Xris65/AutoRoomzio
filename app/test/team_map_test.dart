@@ -24,7 +24,9 @@ class _OccupiedMockApiService extends RoomzApiService {
 
   @override
   Future<({Map<String, String> occupiedByOthers, Map<String, String> delegatedBookings, Set<String> delegatedHere, Set<String> delegatedElsewhere})> getWorkspaceOccupancy(
-      String token, String workspaceId, String floorId, List<String> dates, String? myUserId, Map<String, String> elsewhereMap) async {
+      String token, String workspaceId, String floorId, List<String> dates, String? myUserId, Map<String, String> elsewhereMap,
+      {List<Map<String, dynamic>>? allWorkspaces,
+      void Function(String, Map<String, DeskOccupant>)? onFloorOccupantsParsed}) async {
     return (
       occupiedByOthers: {for (final d in dates) d: 'Alex Martin'},
       delegatedBookings: <String, String>{},
