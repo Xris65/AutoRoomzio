@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:workmanager/workmanager.dart';
 import 'api_service.dart';
 import 'background_task.dart';
@@ -90,17 +89,17 @@ Future<void> main() async {
 }
 
 ThemeData _buildAppTheme(ColorScheme scheme, String fontKey) {
+  final String fontFamily = switch (fontKey) {
+    'poppins' => 'Poppins',
+    'firaCode' => 'FiraCode',
+    _ => 'Roboto',
+  };
   final ThemeData baseTheme = ThemeData(
     colorScheme: scheme,
     useMaterial3: true,
+    fontFamily: fontFamily,
   );
-  final TextTheme Function([TextTheme?]) getFontTheme = switch (fontKey) {
-    'poppins' => GoogleFonts.poppinsTextTheme,
-    'firaCode' => GoogleFonts.firaCodeTextTheme,
-    _ => GoogleFonts.robotoTextTheme,
-  };
   return baseTheme.copyWith(
-    textTheme: getFontTheme(baseTheme.textTheme),
     appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
     cardTheme: CardThemeData(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
