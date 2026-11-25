@@ -18,7 +18,7 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 
 ### Correctifs
 - **Migration transparente depuis les versions 1.x** : récupération automatique de vos préférences, favoris et réservations enregistrées lors de la mise à jour, sans aucune perte de données.
-- **Polices sous WebAssembly & icônes vectorielles** : bascule instantanée entre les styles de police sous WebAssembly et rendu net d'icônes vectorielles sans recours à des ressources externes.
+- **Polices en version Web & icônes vectorielles** : bascule instantanée entre les styles de police en version Web et rendu net d'icônes vectorielles sans recours à des ressources externes.
 - **Balayage horizontal sur mobile** : maintien du changement d'onglet par balayage horizontal sur petit écran mobile, tout en le désactivant sur le Plan d'équipe et sur grand écran pour préserver la navigation 2D.
 - **Indicateur Or des favoris fiabilisé** : un collègue inconnu occupant un poste autrefois attribué à un favori n'apparaît plus surligné en or par erreur, et le retrait d'un favori depuis sa fiche fonctionne de manière fiable dans tous les cas.
 - **Préservation du planning au changement de bureau** : changer de bureau principal recalcule instantanément l'affichage (« ici » vs « ailleurs ») tout en conservant intactes vos réservations, vos dates programmées en attente et vos dates bloquées.
@@ -30,7 +30,7 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 - **Chiffrement authentifié & polices locales** : migration vers `cryptography` (AES-256-GCM authentifié + dérivation HKDF-SHA256) et `archive` pour le couplage Web et les sauvegardes `.roomzio`, embarquement des polices locales (Roboto, Poppins, FiraCode) et retrait complet d'`encrypt`, `google_fonts`, `pointycastle` et `js`.
 - **Dépendances majeures** : remplacement de `flutter_markdown` (discontinué) par `flutter_markdown_plus` (1.0.12), montée vers `flutter_local_notifications` 23, `open_filex` 5, `table_calendar` 3.3, `flutter_secure_storage` 11, `workmanager` 0.10 et `flutter_launcher_icons` 0.14 ; suppression des dépendances inutilisées (`cupertino_icons`).
 - **Stockage unifié & WebAssembly (`--wasm`)** : unification du stockage local des réservations sur `SharedPreferencesAsync` avec migration transparente, migration de `dart:html` vers `package:web` (`js_interop`) et isolation des modules natifs pour une compilation WebAssembly propre.
-- **Android multi-ABI & CI/CD** : optimisation R8 / suppression des ressources inutilisées, APKs split par architecture (`arm64-v8a`, `armeabi-v7a`, `universal`) avec versionnement monotone compatible (`2.0.0+20000`), geste de retour prédictif (Android 14+) et pipelines GitHub Actions modernisés (`setup-java@v4`, `setup-gradle@v4`, `actions-gh-pages@v4`).
+- **Android multi-ABI & CI/CD** : optimisation R8 / suppression des ressources inutilisées, APKs split par architecture (`arm64-v8a`, `armeabi-v7a`, `universal`) avec versionnement monotone compatible (`2.0.0+20000`), geste de retour prédictif (Android 14+) et pipelines GitHub Actions modernisés sous Node 24 (`checkout@v7`, `setup-java@v6`, `setup-gradle@v6`, `upload-artifact@v7`, `download-artifact@v8`, `action-gh-release@v3`, déploiement direct `gh-pages` et publication atomique).
 
 ## [1.7.0] - 2026-11-23
 
