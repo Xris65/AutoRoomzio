@@ -83,32 +83,22 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
       String? token = await _api.refreshMyToken();
       token ??= await _storage.getRefreshToken();
       if (token != null && token.isNotEmpty) {
-        final remoteFavs = await _api.getFavorites(token);
-        if (mounted && remoteFavs.isNotEmpty) {
-          final Map<String, Colleague> map = <String, Colleague>{};
-          for (final f in _favorites) {
-            final key = f.id.isNotEmpty ? f.id : (f.email.isNotEmpty ? f.email : f.name);
-            map[key] = f;
+        final remoteFavs = await _api.fetchFavoritesOrNull(token);
+        if (remoteFavs != null) {
+          await _storage.mergeFavoriteColleagues(remoteFavs);
+          final merged = await _storage.getFavoriteColleagues();
+          if (mounted) {
+            setState(() {
+              _favorites = merged;
+              _filteredFavorites = _searchQuery.isEmpty
+                  ? List<Colleague>.from(merged)
+                  : _favorites.where((c) {
+                      final qLower = _searchQuery.toLowerCase();
+                      return c.name.toLowerCase().contains(qLower) ||
+                          c.email.toLowerCase().contains(qLower);
+                    }).toList();
+            });
           }
-          for (final rf in remoteFavs) {
-            final key = rf.id.isNotEmpty ? rf.id : (rf.email.isNotEmpty ? rf.email : rf.name);
-            if (!map.containsKey(key)) {
-              final newFav = rf.copyWith(isFavorite: true);
-              map[key] = newFav;
-              await _storage.addFavoriteColleague(newFav);
-            }
-          }
-          final merged = map.values.toList();
-          setState(() {
-            _favorites = merged;
-            _filteredFavorites = _searchQuery.isEmpty
-                ? List<Colleague>.from(merged)
-                : _favorites.where((c) {
-                    final qLower = _searchQuery.toLowerCase();
-                    return c.name.toLowerCase().contains(qLower) ||
-                        c.email.toLowerCase().contains(qLower);
-                  }).toList();
-          });
         }
       }
     } catch (_) {

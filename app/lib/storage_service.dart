@@ -201,7 +201,7 @@ class StorageService {
   static const String _rememberEmailKey = 'remember_email';
   static const String _savedEmailKey = 'saved_email';
   static const String _mapSelectedFloorIdKey = 'map_selected_floor_id';
-  static const int _maxFloorCacheEntries = 12;
+  static const int _maxFloorCacheEntries = 24;
 
   /// Strictly volatile RAM-only fallback when secure storage is blocked/locked.
   /// Never persisted in plaintext to SharedPreferences.
@@ -1316,6 +1316,60 @@ class StorageService {
     await _prefs.setString('favorite_colleagues', jsonStr);
   }
 
+  static bool _isTemporaryColleagueId(String id) {
+    return id.startsWith('ext_') || id.startsWith('harv_');
+  }
+
+  static bool _colleaguesMatch(Colleague a, Colleague b) {
+    final aId = a.id.trim();
+    final bId = b.id.trim();
+    if (aId.isNotEmpty &&
+        bId.isNotEmpty &&
+        aId.toLowerCase() == bId.toLowerCase()) {
+      return true;
+    }
+
+    final aFavId = a.favoriteId?.trim() ?? '';
+    final bFavId = b.favoriteId?.trim() ?? '';
+    if (aFavId.isNotEmpty && bFavId.isNotEmpty && aFavId == bFavId) {
+      return true;
+    }
+
+    final aEmail = a.email.trim().toLowerCase();
+    final bEmail = b.email.trim().toLowerCase();
+    if (aEmail.isNotEmpty && bEmail.isNotEmpty && aEmail == bEmail) {
+      return true;
+    }
+
+    final aName = a.name.trim().toLowerCase();
+    final bName = b.name.trim().toLowerCase();
+    if (aName.isNotEmpty && bName.isNotEmpty && aName == bName) {
+      final compatibleEmails =
+          aEmail.isEmpty || bEmail.isEmpty || aEmail == bEmail;
+      final compatibleIds = aId.isEmpty ||
+          bId.isEmpty ||
+          _isTemporaryColleagueId(aId) ||
+          _isTemporaryColleagueId(bId) ||
+          aId.toLowerCase() == bId.toLowerCase();
+      return compatibleEmails && compatibleIds;
+    }
+
+    return false;
+  }
+
+  static String? _resolveFavoriteId(Colleague api, [Colleague? local]) {
+    if (api.favoriteId != null && api.favoriteId!.isNotEmpty) {
+      return api.favoriteId;
+    }
+    if (local?.favoriteId != null && local!.favoriteId!.isNotEmpty) {
+      return local.favoriteId;
+    }
+    if (api.id.isNotEmpty && !_isTemporaryColleagueId(api.id)) {
+      return api.id;
+    }
+    return null;
+  }
+
   Future<void> mergeFavoriteColleagues(List<Colleague> apiFavorites) async {
     final current = await getFavoriteColleagues();
     final merged = <Colleague>[];
@@ -1323,44 +1377,52 @@ class StorageService {
 
     for (final local in current) {
       final apiIndex = apiFavorites.indexWhere(
-        (api) =>
-            (local.id.isNotEmpty && api.id.isNotEmpty && local.id == api.id) ||
-            (local.favoriteId != null &&
-                api.favoriteId != null &&
-                local.favoriteId == api.favoriteId) ||
-            (local.email.isNotEmpty &&
-                api.email.isNotEmpty &&
-                local.email.toLowerCase() == api.email.toLowerCase()),
+        (api) => _colleaguesMatch(local, api),
       );
 
+      final Colleague candidate;
       if (apiIndex >= 0) {
         matchedApiIndices.add(apiIndex);
         final apiColleague = apiFavorites[apiIndex];
-        merged.add(
-          apiColleague.copyWith(
-            isFavorite: true,
-            favoriteId: apiColleague.favoriteId ?? local.favoriteId,
-          ),
+        candidate = Colleague(
+          id: apiColleague.id.isNotEmpty ? apiColleague.id : local.id,
+          name: apiColleague.name.isNotEmpty ? apiColleague.name : local.name,
+          email:
+              apiColleague.email.isNotEmpty ? apiColleague.email : local.email,
+          isFavorite: true,
+          deskName: (apiColleague.deskName != null &&
+                  apiColleague.deskName!.isNotEmpty)
+              ? apiColleague.deskName
+              : local.deskName,
+          roomName: (apiColleague.roomName != null &&
+                  apiColleague.roomName!.isNotEmpty)
+              ? apiColleague.roomName
+              : local.roomName,
+          avatarUrl: (apiColleague.avatarUrl != null &&
+                  apiColleague.avatarUrl!.isNotEmpty)
+              ? apiColleague.avatarUrl
+              : local.avatarUrl,
+          favoriteId: _resolveFavoriteId(apiColleague, local),
         );
       } else {
-        merged.add(local.copyWith(isFavorite: true));
+        candidate = local.copyWith(isFavorite: true);
+      }
+
+      if (!merged.any((c) => _colleaguesMatch(c, candidate))) {
+        merged.add(candidate);
       }
     }
 
     for (int i = 0; i < apiFavorites.length; i++) {
       if (!matchedApiIndices.contains(i)) {
         final apiColleague = apiFavorites[i];
-        final exists = merged.any(
-          (c) =>
-              (c.id.isNotEmpty &&
-                  apiColleague.id.isNotEmpty &&
-                  c.id == apiColleague.id) ||
-              (c.email.isNotEmpty &&
-                  apiColleague.email.isNotEmpty &&
-                  c.email.toLowerCase() == apiColleague.email.toLowerCase()),
-        );
-        if (!exists) {
-          merged.add(apiColleague.copyWith(isFavorite: true));
+        if (!merged.any((c) => _colleaguesMatch(c, apiColleague))) {
+          merged.add(
+            apiColleague.copyWith(
+              isFavorite: true,
+              favoriteId: _resolveFavoriteId(apiColleague),
+            ),
+          );
         }
       }
     }

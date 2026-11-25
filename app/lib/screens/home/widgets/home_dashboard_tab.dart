@@ -8,7 +8,7 @@ import '../../../utils/delegation_display_helper.dart';
 import 'weekly_cockpit_card.dart';
 
 /// Dashboard (Home) tab displaying the weekly cockpit, selected workspace,
-/// quick actions, team map / favorites shortcuts, and upcoming reservations.
+/// quick actions, and upcoming reservations.
 class HomeDashboardTab extends StatelessWidget {
   final bool isCalendarBusy;
   final bool pullToRefreshEnabled;
@@ -22,8 +22,6 @@ class HomeDashboardTab extends StatelessWidget {
   final VoidCallback onResetWorkspace;
   final bool hideWeekends;
   final Future<void> Function(int daysOffset) onQuickBook;
-  final VoidCallback onOpenTeamMapToday;
-  final VoidCallback onOpenFavoritesManager;
   final bool showAllReservations;
   final ValueChanged<bool> onToggleShowAllReservations;
   final bool showDelegatedReservations;
@@ -56,6 +54,7 @@ class HomeDashboardTab extends StatelessWidget {
   final String? floorId;
   final bool showFavoriteWeekIndicators;
   final int cockpitRefreshToken;
+  final Future<void> Function(List<DateTime> weekDays)? onRequestWeekOccupants;
 
   const HomeDashboardTab({
     super.key,
@@ -71,8 +70,6 @@ class HomeDashboardTab extends StatelessWidget {
     required this.onResetWorkspace,
     required this.hideWeekends,
     required this.onQuickBook,
-    required this.onOpenTeamMapToday,
-    required this.onOpenFavoritesManager,
     required this.showAllReservations,
     required this.onToggleShowAllReservations,
     required this.showDelegatedReservations,
@@ -100,6 +97,7 @@ class HomeDashboardTab extends StatelessWidget {
     this.floorId,
     this.showFavoriteWeekIndicators = true,
     this.cockpitRefreshToken = 0,
+    this.onRequestWeekOccupants,
   });
 
   Widget _wrapWithPtr(Widget child) {
@@ -477,6 +475,7 @@ class HomeDashboardTab extends StatelessWidget {
                             showFavoriteWeekIndicators:
                                 showFavoriteWeekIndicators,
                             refreshToken: cockpitRefreshToken,
+                            onRequestWeekOccupants: onRequestWeekOccupants,
                           ),
                           Card(
                             clipBehavior: Clip.antiAlias,
@@ -602,124 +601,6 @@ class HomeDashboardTab extends StatelessWidget {
                                   ),
                                 ),
                               ],
-                            ),
-                            const SizedBox(height: 12),
-                            Card(
-                              elevation: 0,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.4),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(
-                                  color: Theme.of(context)
-                                      .dividerColor
-                                      .withValues(alpha: 0.2),
-                                ),
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(12),
-                                onTap: onOpenTeamMapToday,
-                                child: const Padding(
-                                  padding: EdgeInsets.all(12),
-                                  child: Row(
-                                    children: <Widget>[
-                                      Icon(
-                                        Icons.people_outline,
-                                        color: Colors.amber,
-                                        size: 24,
-                                      ),
-                                      SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: <Widget>[
-                                            Text(
-                                              "Plan d'équipe",
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 13,
-                                              ),
-                                            ),
-                                            Text(
-                                              "Voir où sont assis vos collègues aujourd'hui",
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                color: Colors.grey,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Icon(
-                                        Icons.chevron_right,
-                                        color: Colors.grey,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Card(
-                              elevation: 0,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.4),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(
-                                  color: Theme.of(context)
-                                      .dividerColor
-                                      .withValues(alpha: 0.2),
-                                ),
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(12),
-                                onTap: onOpenFavoritesManager,
-                                child: const Padding(
-                                  padding: EdgeInsets.all(12),
-                                  child: Row(
-                                    children: <Widget>[
-                                      Icon(
-                                        Icons.star_rounded,
-                                        color: Colors.amber,
-                                        size: 24,
-                                      ),
-                                      SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: <Widget>[
-                                            Text(
-                                              'Mes collègues favoris',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 13,
-                                              ),
-                                            ),
-                                            Text(
-                                              'Rechercher et gérer vos collègues favoris',
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                color: Colors.grey,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Icon(
-                                        Icons.chevron_right,
-                                        color: Colors.grey,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
                             ),
                             const SizedBox(height: 24),
                             Column(

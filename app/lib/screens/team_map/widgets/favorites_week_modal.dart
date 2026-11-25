@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../api_service.dart';
 import '../../../models/colleague.dart';
 import '../../../models/desk_occupant.dart';
+import '../../../offline_state_manager.dart';
 import '../../../storage_service.dart';
 import '../../../utils/date_helpers.dart';
 import '../models/team_map_models.dart';
@@ -65,6 +66,7 @@ class FavoritesWeekModal extends StatefulWidget {
       onCacheUpdated;
   final void Function(DateTime targetDay, String workspaceId) onJumpToDesk;
   final Future<void> Function(bool enabled) onToggleIndicators;
+  final VoidCallback? onManageFavorites;
 
   const FavoritesWeekModal({
     super.key,
@@ -84,6 +86,7 @@ class FavoritesWeekModal extends StatefulWidget {
     required this.onCacheUpdated,
     required this.onJumpToDesk,
     required this.onToggleIndicators,
+    this.onManageFavorites,
   });
 
   static Future<void> show({
@@ -105,6 +108,7 @@ class FavoritesWeekModal extends StatefulWidget {
         onCacheUpdated,
     required void Function(DateTime targetDay, String workspaceId) onJumpToDesk,
     required Future<void> Function(bool enabled) onToggleIndicators,
+    VoidCallback? onManageFavorites,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -130,6 +134,7 @@ class FavoritesWeekModal extends StatefulWidget {
         onCacheUpdated: onCacheUpdated,
         onJumpToDesk: onJumpToDesk,
         onToggleIndicators: onToggleIndicators,
+        onManageFavorites: onManageFavorites,
       ),
     );
   }
@@ -161,7 +166,7 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
   late bool _localShowIndicators;
   late bool _isLoadingWeek;
   late Map<String, Map<String, DeskOccupant>> _localCache;
-  final Set<String> _fetchedKeys = <String>{};
+  final Set<String> _modalFetchedKeys = <String>{};
   int _loadGeneration = 0;
 
   @override
@@ -203,8 +208,7 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
             final dStr = DateHelpers.formatIsoDate(d);
             final cacheKey = '${floorId}_$dStr';
             return dStr != _selectedIso &&
-                !_localCache.containsKey(cacheKey) &&
-                !_fetchedKeys.contains(cacheKey);
+                !_modalFetchedKeys.contains(cacheKey);
           }).toList();
 
     if (missingDays.isEmpty || floorId == null) {
@@ -237,33 +241,45 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
       final String? token = await widget.apiService.refreshMyToken();
       final delegatedMap = await widget.storageService.getDelegatedBookingsMap();
       final savedEmail = await widget.storageService.getSavedEmail();
+      final String? myUserId = (token != null && token.isNotEmpty)
+          ? await widget.apiService.getCurrentUserId(token)
+          : null;
 
       await Future.wait<void>(
         missingDays.map<Future<void>>((DateTime d) async {
           final dStr = DateHelpers.formatIsoDate(d);
           final cacheKey = '${floorId}_$dStr';
           try {
-            var occs =
-                await widget.storageService.getFloorOccupants(floorId, dStr);
-            if (occs.isEmpty && token != null && token.isNotEmpty) {
-              occs = await widget.apiService.getFloorOccupants(
+            if (token != null && token.isNotEmpty) {
+              final occs = await widget.apiService.getFloorOccupants(
                 token,
                 floorId,
                 dStr,
+                myUserId: myUserId,
                 myUserEmail: savedEmail,
                 delegatedBookingsMap: delegatedMap,
               );
-              if (occs.isNotEmpty) {
+              if (!OfflineStateManager.instance.isOffline || occs.isNotEmpty) {
+                _modalFetchedKeys.add(cacheKey);
+                _localCache[cacheKey] = occs;
                 await widget.storageService
                     .saveFloorOccupants(floorId, dStr, occs);
+                widget.onCacheUpdated(cacheKey, occs);
+                return;
               }
-              _fetchedKeys.add(cacheKey);
             }
-            if (occs.isNotEmpty) {
-              _localCache[cacheKey] = occs;
-              widget.onCacheUpdated(cacheKey, occs);
+            final cached =
+                await widget.storageService.getFloorOccupants(floorId, dStr);
+            if (cached.isNotEmpty || !_localCache.containsKey(cacheKey)) {
+              _localCache[cacheKey] = cached;
             }
-          } catch (_) {}
+          } catch (_) {
+            final cached =
+                await widget.storageService.getFloorOccupants(floorId, dStr);
+            if (cached.isNotEmpty && !_localCache.containsKey(cacheKey)) {
+              _localCache[cacheKey] = cached;
+            }
+          }
         }),
       );
     } finally {
@@ -370,10 +386,35 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
                   const Expanded(
                     child: Text(
                       'Semaine de mes favoris',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style:
                           TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                     ),
                   ),
+                  if (widget.onManageFavorites != null)
+                    Tooltip(
+                      message: 'Gérer mes favoris',
+                      child: TextButton.icon(
+                        key: const ValueKey<String>(
+                          'modal_manage_favorites_btn',
+                        ),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          widget.onManageFavorites?.call();
+                        },
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        label: const Text('Gérer'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ),
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.pop(context),

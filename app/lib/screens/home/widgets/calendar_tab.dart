@@ -33,6 +33,7 @@ class CalendarTab extends StatelessWidget {
   final Map<String, String> bookedElsewhereMap;
   final Map<String, String> delegatedBookingsMap;
   final Map<String, String> occupiedByOthers;
+  final Map<String, int> favoriteCountsByDate;
 
   const CalendarTab({
     super.key,
@@ -62,6 +63,7 @@ class CalendarTab extends StatelessWidget {
     required this.bookedElsewhereMap,
     required this.delegatedBookingsMap,
     required this.occupiedByOthers,
+    this.favoriteCountsByDate = const <String, int>{},
   });
 
   Widget _wrapWithPtr(Widget child) {
@@ -185,6 +187,13 @@ class CalendarTab extends StatelessWidget {
           : '🎉 Jour férié : $holidayName';
     }
 
+    final int favCount = favoriteCountsByDate[dateStr] ?? 0;
+    if (favCount > 0) {
+      final String favLabel =
+          '⭐ $favCount collègue${favCount > 1 ? 's' : ''} favori${favCount > 1 ? 's' : ''}';
+      cellTooltip = cellTooltip != null ? '$cellTooltip • $favLabel' : favLabel;
+    }
+
     final Widget cell = Stack(
       alignment: Alignment.center,
       children: <Widget>[
@@ -217,6 +226,36 @@ class CalendarTab extends StatelessWidget {
             ),
           ),
         ),
+        if (favCount > 0)
+          Positioned(
+            key: ValueKey<String>('calendar_fav_badge_$dateStr'),
+            top: 1,
+            left: 1,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 0.5),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.amber.shade900.withValues(alpha: 0.9)
+                    : Colors.amber.shade100,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.amber.shade400
+                      : Colors.amber.shade700,
+                  width: 0.6,
+                ),
+              ),
+              child: Text(
+                '⭐$favCount',
+                style: TextStyle(
+                  fontSize: 8.5,
+                  height: 1.05,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.amber.shade100 : Colors.amber.shade900,
+                ),
+              ),
+            ),
+          ),
         if (holidayName != null)
           Positioned(
             top: 4,
@@ -311,11 +350,14 @@ class CalendarTab extends StatelessWidget {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: <Widget>[
-                            const Text(
-                              'Mon Calendrier',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                            const Expanded(
+                              child: Text(
+                                'Mon Calendrier',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             Row(

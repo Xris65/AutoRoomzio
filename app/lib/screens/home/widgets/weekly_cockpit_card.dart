@@ -54,6 +54,7 @@ class WeeklyCockpitCard extends StatefulWidget {
   final String? floorId;
   final bool showFavoriteWeekIndicators;
   final int refreshToken;
+  final Future<void> Function(List<DateTime> weekDays)? onRequestWeekOccupants;
 
   const WeeklyCockpitCard({
     super.key,
@@ -75,6 +76,7 @@ class WeeklyCockpitCard extends StatefulWidget {
     this.floorId,
     this.showFavoriteWeekIndicators = true,
     this.refreshToken = 0,
+    this.onRequestWeekOccupants,
   });
 
   @override
@@ -120,6 +122,11 @@ class _WeeklyCockpitCardState extends State<WeeklyCockpitCard> {
         widget.storageService != oldWidget.storageService) {
       unawaited(_loadCachedFavoritesForWeek());
     }
+    if (weekChanged &&
+        widget.showFavoriteWeekIndicators &&
+        widget.onRequestWeekOccupants != null) {
+      unawaited(widget.onRequestWeekOccupants!(_visibleWeekDays(_weekAnchor)));
+    }
   }
 
   List<DateTime> _visibleWeekDays(DateTime anchor) {
@@ -134,6 +141,10 @@ class _WeeklyCockpitCardState extends State<WeeklyCockpitCard> {
       _weekAnchor = addCalendarDays(_weekAnchor, deltaDays);
     });
     unawaited(_loadCachedFavoritesForWeek());
+    if (widget.showFavoriteWeekIndicators &&
+        widget.onRequestWeekOccupants != null) {
+      unawaited(widget.onRequestWeekOccupants!(_visibleWeekDays(_weekAnchor)));
+    }
   }
 
   Future<void> _loadCachedFavoritesForWeek() async {

@@ -10,6 +10,7 @@ import '../holiday_service.dart';
 import '../main.dart';
 import '../models/booking_result.dart';
 import '../models/colleague.dart';
+import '../models/desk_occupant.dart';
 import '../offline_state_manager.dart';
 import '../services/app_update_service.dart';
 import '../services/automation_engine.dart';
@@ -33,6 +34,7 @@ import 'home/widgets/vacation_dialogs.dart';
 import 'login_screen.dart';
 import 'optimization_screen.dart';
 import 'setup_screen.dart';
+import 'team_map/models/team_map_models.dart';
 import 'team_map_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -102,6 +104,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   AppDestination _selectedDestination = AppDestination.home;
   bool _isSplitMapVisible = true;
   int _cockpitRefreshToken = 0;
+  int _favoritesSyncVersion = 0;
+  Map<String, int> _favoriteSummaryByDate = <String, int>{};
+  final Set<String> _fetchedOccupantsDates = <String>{};
   int _permissionStatus = 0;
 
   // All-time historical bookings for stats
@@ -278,21 +283,151 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (BuildContext _) => TeamMapScreen(
-          initialDate: targetDate,
-          hideWeekends: _hideWeekends,
-          storageService: _storage,
-          apiService: _api,
+    if (mounted) {
+      _onDestinationSelected(AppDestination.map);
+    }
+  }
+
+  Future<Map<String, int>> _computeFavoriteSummaryFromStorage({
+    String? floorId,
+    Iterable<String>? extraDates,
+  }) async {
+    final String? targetFloorId = floorId ?? _floorId ?? await _storage.getFloorId();
+    if (targetFloorId == null || targetFloorId.isEmpty) {
+      return <String, int>{};
+    }
+
+    final List<Colleague> favorites = await _storage.getFavoriteColleagues();
+    if (favorites.isEmpty) {
+      return <String, int>{};
+    }
+
+    final Set<String> favIds = <String>{};
+    final Set<String> favEmails = <String>{};
+    final Set<String> favNames = <String>{};
+    for (final Colleague fav in favorites) {
+      if (fav.id.isNotEmpty) favIds.add(fav.id.toLowerCase());
+      if (fav.email.isNotEmpty) {
+        final String emailLower = fav.email.trim().toLowerCase();
+        favIds.add(emailLower);
+        favEmails.add(emailLower);
+      }
+      if (fav.name.trim().isNotEmpty) {
+        favNames.add(fav.name.trim().toLowerCase());
+      }
+    }
+
+    final DateTime today = normalizeLocalDate(DateTime.now());
+    final Set<String> candidateDates = <String>{
+      ..._fetchedOccupantsDates,
+      ..._favoriteSummaryByDate.keys,
+      ...?extraDates,
+      for (int i = 0; i <= 30; i++)
+        DateHelpers.formatIsoDate(addCalendarDays(today, i)),
+      for (final DateTime d in TeamMapHelpers.getVisibleWeekDays(
+        _focusedMapDateNotifier.value,
+        hideWeekends: false,
+      ))
+        DateHelpers.formatIsoDate(d),
+    };
+
+    final List<String> dateList = candidateDates.toList();
+    final List<Map<String, DeskOccupant>> occResults =
+        await Future.wait<Map<String, DeskOccupant>>(
+      dateList.map<Future<Map<String, DeskOccupant>>>(
+        (String iso) => _storage.getFloorOccupants(targetFloorId, iso),
+      ),
+    );
+
+    final Map<String, int> summary = <String, int>{};
+    for (int i = 0; i < dateList.length; i++) {
+      final Map<String, DeskOccupant> occs = occResults[i];
+      if (occs.isEmpty) continue;
+      final int count = TeamMapHelpers.countUniqueFavorites(
+        occs,
+        favoriteIds: favIds,
+        favoriteEmailsNormalized: favEmails,
+        favoriteNamesNormalized: favNames,
+      );
+      if (count > 0) {
+        summary[dateList[i]] = count;
+      }
+    }
+    return summary;
+  }
+
+  Future<void> _refreshFavoriteSummaryFromCache({bool bumpSyncVersion = false}) async {
+    final Map<String, int> favSummary =
+        await _computeFavoriteSummaryFromStorage();
+    if (!mounted) return;
+    setState(() {
+      _favoriteSummaryByDate = favSummary;
+      _cockpitRefreshToken++;
+      if (bumpSyncVersion) {
+        _favoritesSyncVersion++;
+      }
+    });
+  }
+
+  void _handleMapDataSynced() {
+    if (!mounted) return;
+    unawaited(_refreshFavoriteSummaryFromCache());
+  }
+
+  Future<void> _fetchWeekOccupantsForCockpit(List<DateTime> weekDays) async {
+    final String? currentFloorId = _floorId ?? await _storage.getFloorId();
+    if (currentFloorId == null || currentFloorId.isEmpty) return;
+
+    final List<String> missingDates = <String>[];
+    for (final DateTime day in weekDays) {
+      final String iso = DateHelpers.formatIsoDate(day);
+      if (_fetchedOccupantsDates.contains(iso)) continue;
+      final Map<String, DeskOccupant> cached =
+          await _storage.getFloorOccupants(currentFloorId, iso);
+      if (cached.isNotEmpty) {
+        _fetchedOccupantsDates.add(iso);
+        continue;
+      }
+      missingDates.add(iso);
+    }
+
+    if (missingDates.isEmpty) return;
+
+    final String? token = await _api.refreshMyToken();
+    if (token == null || token.isEmpty) return;
+
+    final String? myUserId = await _api.getCurrentUserId(token);
+    final List<Map<String, DeskOccupant>> results =
+        await Future.wait<Map<String, DeskOccupant>>(
+      missingDates.map<Future<Map<String, DeskOccupant>>>(
+        (String iso) => _api.getFloorOccupants(
+          token,
+          currentFloorId,
+          iso,
+          myUserId: myUserId,
+          delegatedBookingsMap: _delegatedBookingsMap,
         ),
       ),
     );
-    if (mounted) {
-      await _reloadPendingSchedules();
-      await _reloadAutomationAndSettings();
-      await _syncCalendar();
+
+    if (OfflineStateManager.instance.isOffline) return;
+
+    for (int i = 0; i < missingDates.length; i++) {
+      final String iso = missingDates[i];
+      await _storage.saveFloorOccupants(currentFloorId, iso, results[i]);
+      _fetchedOccupantsDates.add(iso);
     }
+
+    final Map<String, int> favSummary =
+        await _computeFavoriteSummaryFromStorage(
+      floorId: currentFloorId,
+      extraDates: missingDates,
+    );
+    if (!mounted) return;
+    setState(() {
+      _favoriteSummaryByDate = favSummary;
+      _cockpitRefreshToken++;
+    });
   }
 
   Future<void> _reloadLocalBookingSnapshot() async {
@@ -306,6 +441,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final Map<String, String> reqNames =
         await _storage.getRequestedWorkspaceNamesMap();
     final Map<String, int> stats = await _storage.getBookingStats();
+    final Map<String, int> favSummary =
+        await _computeFavoriteSummaryFromStorage(floorId: flId);
     if (!mounted) return;
     setState(() {
       _defaultWorkspaceId = wsId;
@@ -316,6 +453,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _requestedWorkspacesMap = reqWs;
       _requestedWorkspaceNamesMap = reqNames;
       _statsMap = stats;
+      _favoriteSummaryByDate = favSummary;
       _cockpitRefreshToken++;
     });
     await _reloadAutomationAndSettings();
@@ -388,7 +526,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       ).then((void _) {
         if (mounted) {
-          setState(() => _cockpitRefreshToken++);
+          unawaited(_refreshFavoriteSummaryFromCache(bumpSyncVersion: true));
         }
       }),
     );
@@ -486,6 +624,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final Map<String, String> delegated =
         await _storage.getDelegatedBookingsMap();
     final Map<String, String> occupied = await _storage.getOccupiedByOthers();
+    final Map<String, int> cachedFavSummary =
+        await _computeFavoriteSummaryFromStorage(floorId: flId);
 
     final int safeInitialTab = _sanitizeInitialTab(
       rawInitialTab,
@@ -508,6 +648,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _bookedElsewhereMap = partition.elsewhere;
         _delegatedBookingsMap = delegated;
         _occupiedByOthers = occupied;
+        _favoriteSummaryByDate = cachedFavSummary;
         _allTimeBookedDates = allTimeBooked.toSet();
         _allTimeElsewhereDates = allTimeElsewhere.toSet();
         _automationEnabled = autoEnabled;
@@ -960,6 +1101,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _occupiedByOthers = <String, String>{};
         _workspaceName = null;
+        _favoriteSummaryByDate = <String, int>{};
+        _fetchedOccupantsDates.clear();
       });
       await _storage.saveOccupiedByOthers(<String, String>{});
       await _storage.saveLastSyncTime(forceReset: true);
@@ -986,6 +1129,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _workspaceName = null;
         _defaultWorkspaceId = null;
         _floorId = null;
+        _favoriteSummaryByDate = <String, int>{};
+        _fetchedOccupantsDates.clear();
         _cockpitRefreshToken++;
       });
     }
@@ -1350,6 +1495,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
 
       final String? currentFloorId = await _storage.getFloorId();
+      final List<Colleague>? remoteFavs =
+          await _api.fetchFavoritesOrNull(accessToken);
+
       final ({
         Set<String> here,
         Map<String, String> elsewhere,
@@ -1360,26 +1508,80 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final String? myUserId =
           myBookings.myUserId ?? await _api.getCurrentUserId(accessToken);
 
+      List<Map<String, dynamic>> floorWorkspaces = <Map<String, dynamic>>[];
+      if (currentFloorId != null && currentFloorId.isNotEmpty) {
+        floorWorkspaces = await _storage.getFloorWorkspaces(currentFloorId);
+        if (floorWorkspaces.isEmpty) {
+          try {
+            final String currentSiteId = (await _storage.getSiteId()) ?? '';
+            final List<Map<String, dynamic>> fetchedWs =
+                await _api.getAllWorkspaces(
+              accessToken,
+              currentSiteId,
+              currentFloorId,
+            );
+            if (fetchedWs.isNotEmpty && !OfflineStateManager.instance.isOffline) {
+              floorWorkspaces = fetchedWs;
+              await _storage.saveFloorWorkspaces(currentFloorId, fetchedWs);
+            }
+          } catch (_) {
+            // Non-blocking: continue sync without floor workspaces metadata.
+          }
+        }
+      }
+
+      final Map<String, Map<String, DeskOccupant>> pendingFloorOccupants =
+          <String, Map<String, DeskOccupant>>{};
+
       final ({
         Map<String, String> occupiedByOthers,
         Map<String, String> delegatedBookings,
         Set<String> delegatedHere,
         Set<String> delegatedElsewhere,
-      }) occResult = currentFloorId != null
-          ? await _api.getWorkspaceOccupancy(
-              accessToken,
-              workspaceId,
-              currentFloorId,
-              visibleDates,
-              myUserId,
-              myBookings.elsewhere,
-            )
-          : (
-              occupiedByOthers: <String, String>{},
-              delegatedBookings: <String, String>{},
-              delegatedHere: <String>{},
-              delegatedElsewhere: <String>{},
-            );
+      }) occResult;
+      if (currentFloorId != null) {
+        ({
+          Map<String, String> occupiedByOthers,
+          Map<String, String> delegatedBookings,
+          Set<String> delegatedHere,
+          Set<String> delegatedElsewhere,
+        }) result;
+        try {
+          result = await _api.getWorkspaceOccupancy(
+            accessToken,
+            workspaceId,
+            currentFloorId,
+            visibleDates,
+            myUserId,
+            myBookings.elsewhere,
+            allWorkspaces: floorWorkspaces,
+            onFloorOccupantsParsed: (
+              String dateIso,
+              Map<String, DeskOccupant> occs,
+            ) {
+              pendingFloorOccupants[dateIso] = occs;
+            },
+          );
+        } on NoSuchMethodError {
+          // Fallback for test subclasses overriding only the legacy 6-arg signature.
+          result = await _api.getWorkspaceOccupancy(
+            accessToken,
+            workspaceId,
+            currentFloorId,
+            visibleDates,
+            myUserId,
+            myBookings.elsewhere,
+          );
+        }
+        occResult = result;
+      } else {
+        occResult = (
+          occupiedByOthers: <String, String>{},
+          delegatedBookings: <String, String>{},
+          delegatedHere: <String>{},
+          delegatedElsewhere: <String>{},
+        );
+      }
 
       // Guard BEFORE mutating any state or storage: never overwrite local cache while offline.
       if (OfflineStateManager.instance.isOffline) {
@@ -1439,6 +1641,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return;
       }
 
+      bool didMergeFavorites = false;
+      if (remoteFavs != null) {
+        await _storage.mergeFavoriteColleagues(remoteFavs);
+        didMergeFavorites = true;
+      }
+
+      if (currentFloorId != null && pendingFloorOccupants.isNotEmpty) {
+        for (final MapEntry<String, Map<String, DeskOccupant>> entry
+            in pendingFloorOccupants.entries) {
+          await _storage.saveFloorOccupants(
+            currentFloorId,
+            entry.key,
+            entry.value,
+          );
+          _fetchedOccupantsDates.add(entry.key);
+        }
+      }
+
+      final Map<String, int> favSummary =
+          await _computeFavoriteSummaryFromStorage(
+        floorId: currentFloorId,
+        extraDates: pendingFloorOccupants.keys,
+      );
+
       if (mounted) {
         setState(() {
           _bookedDates = newBookedDates;
@@ -1449,8 +1675,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _bookedElsewhereMap = bookedElsewhere;
           _delegatedBookingsMap = mergedDelegated;
           _occupiedByOthers = occupiedDates;
+          _favoriteSummaryByDate = favSummary;
           _allTimeBookedDates.addAll(bookedHere);
           _allTimeElsewhereDates.addAll(bookedElsewhere.keys);
+          if (didMergeFavorites) {
+            _favoritesSyncVersion++;
+          }
           _cockpitRefreshToken++;
         });
         await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
@@ -2027,6 +2257,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       isEmbedded: true,
       externalDateNotifier: _focusedMapDateNotifier,
       onReservationChanged: _handleMapReservationChanged,
+      onDataSynced: _handleMapDataSynced,
+      favoritesSyncVersion: _favoritesSyncVersion,
     );
   }
 
@@ -2049,9 +2281,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           onResetWorkspace: () => unawaited(_resetWorkspace()),
           hideWeekends: _hideWeekends,
           onQuickBook: _quickBook,
-          onOpenTeamMapToday: () =>
-              unawaited(_openTeamMap(date: DateTime.now())),
-          onOpenFavoritesManager: _openFavoritesManager,
           showAllReservations: _showAllReservations,
           onToggleShowAllReservations: (bool val) =>
               setState(() => _showAllReservations = val),
@@ -2081,18 +2310,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           onCockpitDaySelected: (DateTime day) {
             _syncFocusedMapDate(day);
             if (!isSplitActive) {
-              final DateTime today = normalizeLocalDate(DateTime.now());
-              if (!normalizeLocalDate(day).isBefore(today)) {
-                unawaited(_handleDateTap(day));
-              } else {
-                unawaited(_openTeamMap(date: day));
-              }
+              _onDestinationSelected(AppDestination.map);
             }
           },
           storageService: _storage,
           floorId: _floorId,
           showFavoriteWeekIndicators: _showFavoriteWeekIndicators,
           cockpitRefreshToken: _cockpitRefreshToken,
+          onRequestWeekOccupants: _fetchWeekOccupantsForCockpit,
         );
       case AppDestination.map:
         return _buildEmbeddedTeamMap(
@@ -2133,6 +2358,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           bookedElsewhereMap: _bookedElsewhereMap,
           delegatedBookingsMap: _delegatedBookingsMap,
           occupiedByOthers: _occupiedByOthers,
+          favoriteCountsByDate: _showFavoriteWeekIndicators
+              ? _favoriteSummaryByDate
+              : const <String, int>{},
         );
       case AppDestination.automation:
         return AutomationTab(

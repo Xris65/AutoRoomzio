@@ -10,6 +10,7 @@ import '../utils/date_helpers.dart';
 import '../utils/error_sanitizer.dart';
 import '../utils/workspace_helpers.dart';
 import '../widgets/action_loading_overlay.dart';
+import '../widgets/colleague_selection_dialog.dart';
 import '../widgets/occupant_details_sheet.dart';
 import '../widgets/time_slider_bar.dart';
 import '../widgets/workspace_map_viewer.dart';
@@ -36,6 +37,8 @@ class TeamMapScreen extends StatefulWidget {
   final bool isEmbedded;
   final ValueListenable<DateTime>? externalDateNotifier;
   final VoidCallback? onReservationChanged;
+  final VoidCallback? onDataSynced;
+  final int favoritesSyncVersion;
 
   const TeamMapScreen({
     super.key,
@@ -48,6 +51,8 @@ class TeamMapScreen extends StatefulWidget {
     this.isEmbedded = false,
     this.externalDateNotifier,
     this.onReservationChanged,
+    this.onDataSynced,
+    this.favoritesSyncVersion = 0,
   });
 
   @override
@@ -62,6 +67,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   String? _siteId;
   String? _floorId;
   String? _defaultWorkspaceId;
+  String? _myUserId;
   int _occupancyRequestId = 0;
 
   List<Map<String, dynamic>> _floors = <Map<String, dynamic>>[];
@@ -71,6 +77,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   Map<String, DeskOccupant> _occupants = <String, DeskOccupant>{};
   final Map<String, Map<String, DeskOccupant>> _occupancyCache =
       <String, Map<String, DeskOccupant>>{};
+  final Set<String> _sessionFetchedOccupancyKeys = <String>{};
 
   @visibleForTesting
   Map<String, Map<String, DeskOccupant>> get occupancyCache => _occupancyCache;
@@ -128,6 +135,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _syncSelectedDateFromExternal(widget.externalDateNotifier!.value);
       }
     }
+    if (oldWidget.favoritesSyncVersion != widget.favoritesSyncVersion) {
+      unawaited(_loadFavorites(notifySynced: false));
+    }
   }
 
   @override
@@ -166,8 +176,11 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     return date;
   }
 
-  Future<void> _loadFavorites() async {
-    final favs = await _storage.getFavoriteColleagues();
+  ({
+    Set<String> ids,
+    Set<String> emails,
+    Set<String> names,
+  }) _buildFavoriteLookupSets(List<Colleague> favs) {
     final favIds = <String>{};
     final favEmails = <String>{};
     final favNames = <String>{};
@@ -184,13 +197,56 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }
     }
 
+    return (ids: favIds, emails: favEmails, names: favNames);
+  }
+
+  List<DateTime> _build13DayAndVisibleWeekDates(DateTime baseDate) {
+    final seenIso = <String>{};
+    final dates = <DateTime>[];
+
+    void addIfUnique(DateTime d) {
+      final normalized = normalizeLocalDate(d);
+      final iso = DateHelpers.formatIsoDate(normalized);
+      if (seenIso.add(iso)) {
+        dates.add(normalized);
+      }
+    }
+
+    final visibleWeek = TeamMapHelpers.getVisibleWeekDays(
+      baseDate,
+      hideWeekends: _hideWeekends,
+    );
+    for (final d in visibleWeek) {
+      addIfUnique(d);
+    }
+
+    final today = normalizeLocalDate(DateTime.now());
+    for (var i = 0; i <= 13; i++) {
+      final d = addCalendarDays(today, i);
+      if (_hideWeekends &&
+          (d.weekday == DateTime.saturday || d.weekday == DateTime.sunday)) {
+        continue;
+      }
+      addIfUnique(d);
+    }
+
+    return dates;
+  }
+
+  Future<void> _loadFavorites({bool notifySynced = true}) async {
+    final favs = await _storage.getFavoriteColleagues();
+    final favSets = _buildFavoriteLookupSets(favs);
+
     if (mounted) {
       setState(() {
         _favorites = favs;
-        _favoriteIds = favIds;
-        _favoriteEmailsNormalized = favEmails;
-        _favoriteNamesNormalized = favNames;
+        _favoriteIds = favSets.ids;
+        _favoriteEmailsNormalized = favSets.emails;
+        _favoriteNamesNormalized = favSets.names;
       });
+    }
+    if (notifySynced) {
+      widget.onDataSynced?.call();
     }
   }
 
@@ -201,6 +257,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           await _storage.getFloorId();
       final dateStr = DateHelpers.formatIsoDate(_selectedDate);
       final showFavWeek = await _storage.getShowFavoriteWeekIndicators();
+      final hw = await _storage.getHideWeekends();
+      final effectiveHide = widget.hideWeekends ?? hw;
+      _hideWeekends = effectiveHide;
 
       final (
         List<String> booked,
@@ -209,6 +268,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         Map<String, DeskOccupant> occs,
         Object? planData,
         List<Map<String, dynamic>> allWs,
+        List<Colleague> favs,
       ) = await (
         _storage.getBookedDates(),
         _storage.getBookedElsewhereDates(),
@@ -226,6 +286,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             : Future<List<Map<String, dynamic>>>.value(
                 const <Map<String, dynamic>>[],
               ),
+        _storage.getFavoriteColleagues(),
       ).wait;
 
       final allBooked = <String>{
@@ -241,11 +302,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       final bookable = allWs.where(isBookableWorkspace).toList();
 
       if (floorId != null) {
-        final visibleDays = TeamMapHelpers.getVisibleWeekDays(
-          _selectedDate,
-          hideWeekends: _hideWeekends,
-        );
-        for (final d in visibleDays) {
+        final horizonDates = _build13DayAndVisibleWeekDates(_selectedDate);
+        for (final d in horizonDates) {
           final dStr = DateHelpers.formatIsoDate(d);
           final key = '${floorId}_$dStr';
           if (!_occupancyCache.containsKey(key)) {
@@ -254,15 +312,25 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
                 : await _storage.getFloorOccupants(floorId, dStr);
             if (cachedDay.isNotEmpty) {
               _occupancyCache[key] = cachedDay;
+              if (cachedDay.values.any((DeskOccupant o) => o.isMe)) {
+                allBooked.add(dStr);
+              }
             }
           }
         }
       }
 
       if (mounted) {
+        final favSets = _buildFavoriteLookupSets(favs);
         setState(() {
           _showFavoriteWeekIndicators = showFavWeek;
           _bookedDates.addAll(allBooked);
+          if (favs.isNotEmpty && _favorites.isEmpty) {
+            _favorites = favs;
+            _favoriteIds = favSets.ids;
+            _favoriteEmailsNormalized = favSets.emails;
+            _favoriteNamesNormalized = favSets.names;
+          }
           if (occs.isNotEmpty && _occupants.isEmpty) {
             _occupants = occs;
           }
@@ -310,7 +378,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         ...userRes.keys,
       };
 
-      await _loadFavorites();
+      await _loadFavorites(notifySynced: false);
 
       _siteId = widget.initialSiteId ?? await _storage.getSiteId();
       _floorId = widget.initialFloorId ??
@@ -469,9 +537,17 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   Future<void> _loadFloorMapAndOccupancy(
     String token,
     String siteId,
-    String floorId,
-  ) async {
+    String floorId, {
+    bool forceRefresh = false,
+  }) async {
     final dateStr = DateHelpers.formatIsoDate(_selectedDate);
+    if (forceRefresh) {
+      final prefix = '${floorId}_';
+      _sessionFetchedOccupancyKeys.removeWhere(
+        (String k) => k.startsWith(prefix),
+      );
+    }
+    _myUserId ??= await _api.getCurrentUserId(token);
     final delegatedMap = await _storage.getDelegatedBookingsMap();
     final savedEmail = await _storage.getSavedEmail();
 
@@ -479,6 +555,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     List<Map<String, dynamic>> allWs = <Map<String, dynamic>>[];
     Map<String, DeskOccupant> occs = <String, DeskOccupant>{};
     Object? lastError;
+    var occsFetchFailed = false;
 
     try {
       final (
@@ -501,11 +578,13 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
               token,
               floorId,
               dateStr,
+              myUserId: _myUserId,
               myUserEmail: savedEmail,
               delegatedBookingsMap: delegatedMap,
             )
             .catchError((Object e) {
           debugPrint('⚠️ getFloorOccupants error: $e');
+          occsFetchFailed = true;
           lastError ??= e;
           return <String, DeskOccupant>{};
         }),
@@ -525,9 +604,15 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         allWs = await _storage.getFloorWorkspaces(floorId);
       }
 
-      if (rawOccs.isNotEmpty) {
-        occs = rawOccs;
-        await _storage.saveFloorOccupants(floorId, dateStr, occs);
+      if (!occsFetchFailed &&
+          (!OfflineStateManager.instance.isOffline || rawOccs.isNotEmpty)) {
+        if (rawOccs.isNotEmpty || forceRefresh) {
+          occs = rawOccs;
+          await _storage.saveFloorOccupants(floorId, dateStr, occs);
+        } else {
+          occs = await _storage.getFloorOccupants(floorId, dateStr);
+        }
+        _sessionFetchedOccupancyKeys.add('${floorId}_$dateStr');
       } else {
         occs = await _storage.getFloorOccupants(floorId, dateStr);
       }
@@ -574,7 +659,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _isOccupancyLoading = false;
         _errorMessage = null;
       });
-      unawaited(_preloadWeekOccupancy(_selectedDate));
+      unawaited(_preloadHorizonOccupancy(_selectedDate));
 
       if (lastError != null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -608,7 +693,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           _occupants = cachedOccs;
           _isOccupancyLoading = false;
         });
-        unawaited(_preloadWeekOccupancy(date));
+        unawaited(_preloadHorizonOccupancy(date));
         return;
       }
     }
@@ -621,23 +706,37 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       final String? token = await _api.refreshMyToken();
 
       if (token != null && token.isNotEmpty && floorId != null) {
+        _myUserId ??= await _api.getCurrentUserId(token);
         final delegatedMap = await _storage.getDelegatedBookingsMap();
         final savedEmail = await _storage.getSavedEmail();
         var occs = await _api.getFloorOccupants(
           token,
           floorId,
           dateStr,
+          myUserId: _myUserId,
           myUserEmail: savedEmail,
           delegatedBookingsMap: delegatedMap,
         );
-        if (occs.isEmpty) {
-          occs = await _storage.getFloorOccupants(floorId, dateStr);
+        final cacheKey = '${floorId}_$dateStr';
+        if (!OfflineStateManager.instance.isOffline || occs.isNotEmpty) {
+          if (occs.isNotEmpty || forceRefresh) {
+            await _storage.saveFloorOccupants(floorId, dateStr, occs);
+          } else {
+            final diskOccs =
+                await _storage.getFloorOccupants(floorId, dateStr);
+            if (diskOccs.isNotEmpty) {
+              occs = diskOccs;
+            } else {
+              await _storage.saveFloorOccupants(floorId, dateStr, occs);
+            }
+          }
+          _sessionFetchedOccupancyKeys.add(cacheKey);
         } else {
-          await _storage.saveFloorOccupants(floorId, dateStr, occs);
+          occs = await _storage.getFloorOccupants(floorId, dateStr);
         }
         if (mounted && requestId == _occupancyRequestId) {
           if (!OfflineStateManager.instance.isOffline || occs.isNotEmpty) {
-            _occupancyCache['${floorId}_$dateStr'] = occs;
+            _occupancyCache[cacheKey] = occs;
           }
           if (occs.values.any((DeskOccupant o) => o.isMe)) {
             _bookedDates.add(dateStr);
@@ -646,7 +745,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             _occupants = occs;
             _isOccupancyLoading = false;
           });
-          unawaited(_preloadWeekOccupancy(date));
+          unawaited(
+            _preloadHorizonOccupancy(date, forceRefresh: forceRefresh),
+          );
         }
       } else if (floorId != null) {
         final cached = await _storage.getFloorOccupants(floorId, dateStr);
@@ -702,65 +803,85 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
-  Future<void> _preloadWeekOccupancy(DateTime baseDate) async {
+  Future<void> _preloadHorizonOccupancy(
+    DateTime baseDate, {
+    bool forceRefresh = false,
+  }) async {
     final floorId = _floorId;
-    if (floorId == null) return;
+    if (floorId == null || floorId.isEmpty) return;
+
+    if (forceRefresh) {
+      final prefix = '${floorId}_';
+      _sessionFetchedOccupancyKeys.removeWhere(
+        (String k) => k.startsWith(prefix),
+      );
+    }
+
     final String? token = await _api.refreshMyToken();
     if (token == null || token.isEmpty) return;
 
-    final weekDays = TeamMapHelpers.getVisibleWeekDays(
-      baseDate,
-      hideWeekends: _hideWeekends,
-    );
-
-    final missingDays = weekDays.where((DateTime d) {
+    final targetDates = _build13DayAndVisibleWeekDates(baseDate);
+    final missingDays = targetDates.where((DateTime d) {
       final key = '${floorId}_${DateHelpers.formatIsoDate(d)}';
-      return !_occupancyCache.containsKey(key);
+      return !_sessionFetchedOccupancyKeys.contains(key);
     }).toList();
 
     if (missingDays.isEmpty) return;
 
+    _myUserId ??= await _api.getCurrentUserId(token);
     final delegatedMap = await _storage.getDelegatedBookingsMap();
     final savedEmail = await _storage.getSavedEmail();
 
-    await Future.wait<void>(
-      missingDays.map<Future<void>>((DateTime d) async {
-        try {
-          final dStr = DateHelpers.formatIsoDate(d);
-          var occs = await _api.getFloorOccupants(
-            token,
-            floorId,
-            dStr,
-            myUserEmail: savedEmail,
-            delegatedBookingsMap: delegatedMap,
-          );
-          if (occs.isEmpty) {
-            occs = await _storage.getFloorOccupants(floorId, dStr);
-          } else {
-            await _storage.saveFloorOccupants(floorId, dStr, occs);
-          }
-          if (occs.isNotEmpty) {
-            _occupancyCache['${floorId}_$dStr'] = occs;
-          }
-          if (occs.values.any((DeskOccupant o) => o.isMe)) {
-            _bookedDates.add(dStr);
-          }
-        } catch (_) {
-          // Silently swallow background preload error
-        }
-      }),
-    );
+    var anyUpdated = false;
+    const int chunkSize = 5;
+    for (var i = 0; i < missingDays.length; i += chunkSize) {
+      if (!mounted || _floorId != floorId) return;
+      final end = (i + chunkSize) > missingDays.length
+          ? missingDays.length
+          : (i + chunkSize);
+      final chunk = missingDays.sublist(i, end);
 
-    if (mounted) {
-      final currentKey =
-          '${floorId}_${DateHelpers.formatIsoDate(_selectedDate)}';
-      if (_occupancyCache.containsKey(currentKey) && _occupants.isEmpty) {
+      await Future.wait<void>(
+        chunk.map<Future<void>>((DateTime d) async {
+          final dStr = DateHelpers.formatIsoDate(d);
+          final key = '${floorId}_$dStr';
+          try {
+            final occs = await _api.getFloorOccupants(
+              token,
+              floorId,
+              dStr,
+              myUserId: _myUserId,
+              myUserEmail: savedEmail,
+              delegatedBookingsMap: delegatedMap,
+            );
+            if (!OfflineStateManager.instance.isOffline || occs.isNotEmpty) {
+              _occupancyCache[key] = occs;
+              await _storage.saveFloorOccupants(floorId, dStr, occs);
+              _sessionFetchedOccupancyKeys.add(key);
+              anyUpdated = true;
+            }
+            if (occs.values.any((DeskOccupant o) => o.isMe)) {
+              _bookedDates.add(dStr);
+            }
+          } catch (_) {
+            // Silently swallow background preload error
+          }
+        }),
+      );
+
+      if (mounted && _floorId == floorId && anyUpdated) {
+        final currentKey =
+            '${floorId}_${DateHelpers.formatIsoDate(_selectedDate)}';
         setState(() {
-          _occupants = _occupancyCache[currentKey]!;
+          if (_occupancyCache.containsKey(currentKey) && _occupants.isEmpty) {
+            _occupants = _occupancyCache[currentKey]!;
+          }
         });
-      } else {
-        setState(() {});
       }
+    }
+
+    if (mounted && anyUpdated) {
+      widget.onDataSynced?.call();
     }
   }
 
@@ -813,6 +934,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }
 
       _occupancyCache.clear();
+      _sessionFetchedOccupancyKeys.clear();
       _requestedDates = (await _storage.getRequestedDates()).toSet();
       _requestedWorkspacesMap = await _storage.getRequestedWorkspacesMap();
 
@@ -830,7 +952,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           token.isNotEmpty &&
           _siteId != null &&
           _floorId != null) {
-        await _loadFloorMapAndOccupancy(token, _siteId!, _floorId!);
+        await _loadFloorMapAndOccupancy(
+          token,
+          _siteId!,
+          _floorId!,
+          forceRefresh: true,
+        );
       } else {
         await _loadInitialData();
       }
@@ -969,7 +1096,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           token.isNotEmpty &&
           _siteId != null &&
           _siteId!.isNotEmpty) {
-        await _loadFloorMapAndOccupancy(token, _siteId!, newFloorId);
+        await _loadFloorMapAndOccupancy(
+          token,
+          _siteId!,
+          newFloorId,
+          forceRefresh: true,
+        );
       } else if (mounted) {
         setState(() {
           _isLoading = false;
@@ -1820,6 +1952,22 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
+  Future<void> _openFavoritesManager() async {
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) => ColleagueSelectionDialog(
+        date: DateHelpers.formatIsoDate(_selectedDate),
+        isManagementMode: true,
+        apiService: _api,
+        storageService: _storage,
+      ),
+    );
+    if (!mounted) return;
+    await _loadFavorites(notifySynced: false);
+    widget.onDataSynced?.call();
+    widget.onReservationChanged?.call();
+  }
+
   Future<void> _showFavoritesWeekSummaryModal() async {
     final savedFavs = await _storage.getFavoriteColleagues();
     if (!mounted) return;
@@ -1854,6 +2002,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           });
         }
       },
+      onManageFavorites: () => unawaited(_openFavoritesManager()),
     );
   }
 
@@ -1925,6 +2074,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           style: widget.isEmbedded ? const TextStyle(fontSize: 17) : null,
         ),
         actions: <Widget>[
+          IconButton(
+            key: const ValueKey<String>('plan_manage_favorites_button'),
+            icon: const Icon(Icons.group_add_outlined),
+            tooltip: 'Gérer mes collègues favoris',
+            onPressed: _openFavoritesManager,
+          ),
           IconButton(
             key: const ValueKey('favorites_week_summary_button'),
             icon: FavoritesWeekIcon(dimStar: !_showFavoriteWeekIndicators),
