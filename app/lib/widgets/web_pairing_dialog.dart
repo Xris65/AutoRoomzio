@@ -5,12 +5,13 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:workmanager/workmanager.dart';
 import '../screens/login_screen.dart';
+import '../services/profile_sync_service.dart';
 import '../storage_service.dart';
 import '../token_crypto.dart';
 
-/// Prompts the user for confirmation, invalidates the local session (and stops
-/// Android background tasks), then displays [WebPairingDialog] with a secure
-/// `#token=...` fragment URL before redirecting to [LoginScreen].
+/// Prompts the user for confirmation, generates full-profile pairing URLs
+/// (`#bundle=...`), invalidates the local session (and stops Android background
+/// tasks), then displays [WebPairingDialog] before redirecting to [LoginScreen].
 Future<void> showWebPairingDialog(
   BuildContext context, {
   required StorageService storage,
@@ -28,6 +29,7 @@ Future<void> showWebPairingDialog(
         'Le transfert de session vers le Web va déconnecter cette application. '
         'L\'automate en arrière-plan sera arrêté.\n\n'
         'Une fois le QR Code généré, la session actuelle sera détruite pour des raisons de sécurité. '
+        'Toute votre configuration (règles, favoris, congés, préférences) sera transférée en sécurité.\n\n'
         'Voulez-vous continuer ?',
       ),
       actions: <Widget>[
@@ -49,10 +51,28 @@ Future<void> showWebPairingDialog(
   final String? token = await storage.getRefreshToken();
   if (token == null || token.isEmpty) return;
 
-  final String bId = siteId ?? await storage.getBuildingId() ?? '';
-  final String fId = floorId ?? await storage.getFloorId() ?? '';
-  final String wId = workspaceId ?? await storage.getWorkspaceId() ?? '';
-  final String wNameRaw = workspaceName ?? await storage.getWorkspaceName() ?? '';
+  if (siteId != null && siteId.isNotEmpty) {
+    await storage.saveSiteId(siteId);
+  }
+  if (floorId != null && floorId.isNotEmpty) {
+    await storage.saveFloorId(floorId);
+  }
+  if (workspaceId != null && workspaceId.isNotEmpty) {
+    await storage.saveWorkspaceId(workspaceId);
+  }
+  if (workspaceName != null && workspaceName.isNotEmpty) {
+    await storage.saveWorkspaceName(workspaceName);
+  }
+
+  final String fullUrl =
+      await WebPairingDialog.buildFullProfilePairingUrl(storage);
+  String qrUrl = fullUrl;
+  if (qrUrl.length > 1500) {
+    qrUrl = await WebPairingDialog.buildFullProfilePairingUrl(
+      storage,
+      maxFavoritesForQr: 20,
+    );
+  }
 
   await storage.clearTokens();
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
@@ -61,19 +81,14 @@ Future<void> showWebPairingDialog(
     } catch (_) {}
   }
 
-  final String url = WebPairingDialog.buildPairingUrl(
-    refreshToken: token,
-    buildingId: bId,
-    floorId: fId,
-    workspaceId: wId,
-    workspaceName: wNameRaw,
-  );
-
   if (!context.mounted) return;
   await showDialog<void>(
     context: context,
     barrierDismissible: false,
-    builder: (BuildContext _) => WebPairingDialog(pairingUrl: url),
+    builder: (BuildContext _) => WebPairingDialog(
+      pairingUrl: fullUrl,
+      qrPairingUrl: qrUrl,
+    ),
   );
 
   if (!context.mounted) return;
@@ -94,26 +109,37 @@ Future<void> showWebPairingDialog(
 }
 
 /// Shared modal dialog displaying a QR Code and copy/open actions for pairing
-/// a Web session using an encrypted `#token=...` URI fragment.
+/// a Web session using an encrypted `#bundle=...` or `#token=...` URI fragment.
 class WebPairingDialog extends StatelessWidget {
   final String pairingUrl;
+  final String? qrPairingUrl;
 
   const WebPairingDialog({
     super.key,
     required this.pairingUrl,
+    this.qrPairingUrl,
   });
 
-  /// Builds the Web pairing URL placing sensitive parameters inside the URL
-  /// fragment (`#token=...&b=...&f=...&w=...&wn=...`) so tokens are never sent
-  /// over HTTP requests or logged by servers/proxies.
-  static String buildPairingUrl({
+  static String _resolveBaseUrl() {
+    final bool isLocalWeb = kIsWeb &&
+        (Uri.base.host == 'localhost' || Uri.base.host == '127.0.0.1');
+    return (kIsWeb && !isLocalWeb)
+        ? '${Uri.base.origin}${Uri.base.path}'
+        : (kReleaseMode
+            ? 'https://xris65.github.io/AutoRoomzio/'
+            : 'https://xris65.github.io/AutoRoomzio/recette/');
+  }
+
+  /// Builds a legacy Web pairing URL placing the encrypted token and workspace
+  /// parameters inside the URL fragment (`#token=...&b=...&f=...&w=...&wn=...`).
+  static Future<String> buildPairingUrl({
     required String refreshToken,
     String buildingId = '',
     String floorId = '',
     String workspaceId = '',
     String workspaceName = '',
-  }) {
-    final String encrypted = TokenCryptoService.encryptToken(refreshToken);
+  }) async {
+    final String encrypted = await TokenCryptoService.encryptToken(refreshToken);
     final String encodedToken = Uri.encodeComponent(encrypted);
     final String backupParam =
         '&b=${Uri.encodeComponent(buildingId)}'
@@ -121,19 +147,28 @@ class WebPairingDialog extends StatelessWidget {
         '&w=${Uri.encodeComponent(workspaceId)}'
         '&wn=${Uri.encodeComponent(workspaceName)}';
 
-    final bool isLocalWeb = kIsWeb &&
-        (Uri.base.host == 'localhost' || Uri.base.host == '127.0.0.1');
-    final String baseUrl = (kIsWeb && !isLocalWeb)
-        ? '${Uri.base.origin}${Uri.base.path}'
-        : (kReleaseMode
-            ? 'https://xris65.github.io/AutoRoomzio/'
-            : 'https://xris65.github.io/AutoRoomzio/recette/');
+    return '${_resolveBaseUrl()}#token=$encodedToken$backupParam';
+  }
 
-    return '$baseUrl#token=$encodedToken$backupParam';
+  /// Builds a full-profile Web pairing URL placing the GZip-compressed,
+  /// AES-256-GCM encrypted bundle (session + rules + favorites + vacations +
+  /// preferences) inside the URL fragment (`#bundle=...`).
+  static Future<String> buildFullProfilePairingUrl(
+    StorageService storage, {
+    int? maxFavoritesForQr,
+  }) async {
+    final String bundle = await ProfileSyncService.exportProfileCode(
+      storage,
+      includeAuthToken: true,
+      maxFavorites: maxFavoritesForQr,
+    );
+    return '${_resolveBaseUrl()}#bundle=${Uri.encodeComponent(bundle)}';
   }
 
   @override
   Widget build(BuildContext context) {
+    final String qrData = qrPairingUrl ?? pairingUrl;
+
     return AlertDialog(
       title: const Text('Connecter un appareil Web'),
       content: SingleChildScrollView(
@@ -141,7 +176,9 @@ class WebPairingDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             const Text(
-              'Scannez ce QR Code avec l\'appareil photo de votre smartphone pour vous connecter automatiquement sur la version Web.\n\nVous pouvez aussi l\'ouvrir directement sur ce PC :',
+              'Scannez ce QR Code avec l\'appareil photo de votre smartphone pour vous connecter automatiquement sur la version Web.\n\n'
+              'Toute votre configuration (règles, favoris, congés, préférences) est transférée en sécurité.\n\n'
+              'Vous pouvez aussi l\'ouvrir ou copier le lien complet ci-dessous :',
             ),
             const SizedBox(height: 16),
             Container(
@@ -175,7 +212,7 @@ class WebPairingDialog extends StatelessWidget {
               ),
               child: QrImageView(
                 key: const ValueKey<String>('web_pairing_qr'),
-                data: pairingUrl,
+                data: qrData,
                 version: QrVersions.auto,
                 size: 200.0,
                 backgroundColor: Colors.white,

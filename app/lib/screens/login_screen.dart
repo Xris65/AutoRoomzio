@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../api_service.dart';
+import '../services/profile_sync_service.dart';
 import '../storage_service.dart';
 import '../token_crypto.dart';
 import '../utils/error_sanitizer.dart';
@@ -154,8 +155,10 @@ class _LoginScreenState extends State<LoginScreen> {
       try {
         final Map<String, String> fragmentParams =
             Uri.splitQueryString(normalized);
+        final String? fragmentBundle = fragmentParams['bundle'];
         final String? fragmentToken = fragmentParams['token'];
-        if (fragmentToken != null && fragmentToken.isNotEmpty) {
+        if ((fragmentBundle != null && fragmentBundle.isNotEmpty) ||
+            (fragmentToken != null && fragmentToken.isNotEmpty)) {
           return fragmentParams;
         }
       } catch (_) {
@@ -165,8 +168,68 @@ class _LoginScreenState extends State<LoginScreen> {
     return uri.queryParameters;
   }
 
+  Future<void> _navigateAfterWebPairing() async {
+    final String? currentWsId = await _storage.getWorkspaceId();
+    if (!mounted) return;
+    if (currentWsId != null && currentWsId.isNotEmpty) {
+      Navigator.of(context).pushReplacement<void, void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const HomeScreen(),
+          settings: const RouteSettings(name: '/'),
+        ),
+      );
+      return;
+    }
+
+    String? accessToken;
+    try {
+      accessToken = await _api.refreshMyToken(force: true);
+    } catch (_) {
+      accessToken = null;
+    }
+    if (!mounted) return;
+    if (accessToken != null && accessToken.isNotEmpty) {
+      Navigator.of(context).pushReplacement<void, void>(
+        MaterialPageRoute<void>(
+          builder: (_) => SetupScreen(accessToken: accessToken!),
+          settings: const RouteSettings(name: '/'),
+        ),
+      );
+    } else {
+      Navigator.of(context).pushReplacement<void, void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const HomeScreen(),
+          settings: const RouteSettings(name: '/'),
+        ),
+      );
+    }
+  }
+
   Future<void> _checkWebToken() async {
     final Map<String, String> params = _extractWebPairingParams(Uri.base);
+    final String? bundleEncrypted = params['bundle'];
+
+    if (bundleEncrypted != null && bundleEncrypted.isNotEmpty) {
+      clearWebUrl();
+
+      final ProfileImportResult result = await ProfileSyncService.importBundle(
+        bundleEncrypted,
+        _storage,
+        applyAuthToken: true,
+      );
+      if (!result.success) {
+        await _storage.clearTokens();
+        return;
+      }
+
+      final String? refreshToken = await _storage.getRefreshToken();
+      if (!mounted) return;
+      if (refreshToken != null && refreshToken.isNotEmpty) {
+        await _navigateAfterWebPairing();
+      }
+      return;
+    }
+
     final String? tokenEncrypted = params['token'];
 
     if (tokenEncrypted != null && tokenEncrypted.isNotEmpty) {
@@ -180,7 +243,8 @@ class _LoginScreenState extends State<LoginScreen> {
       clearWebUrl();
 
       // 1. Decrypt token
-      final String? token = TokenCryptoService.decryptToken(tokenEncrypted);
+      final String? token =
+          await TokenCryptoService.decryptToken(tokenEncrypted);
       if (token == null) {
         await _storage.clearTokens();
         return;
@@ -206,40 +270,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // 3. Save refresh token
       await _storage.saveRefreshToken(token);
-
-      final String? currentWsId = await _storage.getWorkspaceId();
-      if (currentWsId != null && currentWsId.isNotEmpty) {
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement<void, void>(
-          MaterialPageRoute<void>(
-            builder: (_) => const HomeScreen(),
-            settings: const RouteSettings(name: '/'),
-          ),
-        );
-      } else {
-        String? accessToken;
-        try {
-          accessToken = await _api.refreshMyToken(force: true);
-        } catch (_) {
-          accessToken = null;
-        }
-        if (!mounted) return;
-        if (accessToken != null && accessToken.isNotEmpty) {
-          Navigator.of(context).pushReplacement<void, void>(
-            MaterialPageRoute<void>(
-              builder: (_) => SetupScreen(accessToken: accessToken!),
-              settings: const RouteSettings(name: '/'),
-            ),
-          );
-        } else {
-          Navigator.of(context).pushReplacement<void, void>(
-            MaterialPageRoute<void>(
-              builder: (_) => const HomeScreen(),
-              settings: const RouteSettings(name: '/'),
-            ),
-          );
-        }
-      }
+      if (!mounted) return;
+      await _navigateAfterWebPairing();
     }
     // Never wipe configured workspaces, automation rules, or favorites when opening LoginScreen without a URL token!
   }

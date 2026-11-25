@@ -216,7 +216,8 @@ class RoomzApiService {
       "password": password,
       "ts": DateTime.now().millisecondsSinceEpoch,
     });
-    final encryptedPayload = TokenCryptoService.encryptToken(rawJson);
+    final encryptedPayload =
+        await TokenCryptoService.encryptLegacyCbc(rawJson);
 
     final response = await _httpClient.post(
       Uri.parse(targetUrl),
