@@ -7,11 +7,11 @@
 -keep class com.autoroomzio.app.** { *; }
 -dontwarn io.flutter.embedding.**
 
-# Gson / Serialization (used by flutter_local_notifications & plugins)
--keepattributes Signature
--keepattributes *Annotation*
+# Gson / Serialization (R8 Full Mode compatibility for flutter_local_notifications & plugins)
+-keepattributes Signature, *Annotation*, EnclosingMethod, InnerClasses
 -keep class com.google.gson.** { *; }
 -keep class * extends com.google.gson.reflect.TypeToken
+-keepclassmembers class * extends com.google.gson.reflect.TypeToken { <init>(); }
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
 }
@@ -19,9 +19,8 @@
 # flutter_local_notifications
 -keep class com.dexterous.** { *; }
 
-# workmanager & AndroidX WorkManager
+# workmanager (AndroidX WorkManager consumer rules are bundled upstream)
 -keep class dev.fluttercommunity.workmanager.** { *; }
--keep class androidx.work.** { *; }
 -keepclassmembers class * extends androidx.work.Worker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
@@ -29,9 +28,8 @@
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
 
-# flutter_secure_storage & Tink
+# flutter_secure_storage
 -keep class com.it_nomads.fluttersecurestorage.** { *; }
--keep class com.google.crypto.tink.** { *; }
 -dontwarn com.google.crypto.tink.**
 -dontwarn javax.annotation.**
 

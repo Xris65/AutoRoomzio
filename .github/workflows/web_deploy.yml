@@ -1,20 +1,21 @@
 name: Deploy Web to GitHub Pages
 
-concurrency:
-  group: deploy-gh-pages
-  cancel-in-progress: false
-
 on:
   push:
     branches:
       - '**'
-
-permissions:
-  contents: write
+      - '!gh-pages'
 
 jobs:
-  build-and-deploy-web:
+  build-web:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: build-web-${{ github.ref }}
+      cancel-in-progress: true
+    outputs:
+      dest_dir: ${{ steps.config.outputs.dest_dir }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,29 +30,105 @@ jobs:
         working-directory: ./app
         run: flutter pub get
 
+      - name: Analyze
+        working-directory: ./app
+        run: flutter analyze
+
+      - name: Run tests
+        working-directory: ./app
+        run: flutter test
+
       - name: Configure Web Build Variables
         id: config
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "BASE_HREF=/AutoRoomzio/" >> $GITHUB_ENV
-            echo "DEST_DIR=." >> $GITHUB_ENV
+            BASE_HREF="/AutoRoomzio/"
+            DEST_DIR="."
           elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
-            echo "BASE_HREF=/AutoRoomzio/recette/" >> $GITHUB_ENV
-            echo "DEST_DIR=recette" >> $GITHUB_ENV
+            BASE_HREF="/AutoRoomzio/recette/"
+            DEST_DIR="recette"
           else
-            echo "BASE_HREF=/AutoRoomzio/dev/" >> $GITHUB_ENV
-            echo "DEST_DIR=dev" >> $GITHUB_ENV
+            BASE_HREF="/AutoRoomzio/dev/"
+            DEST_DIR="dev"
           fi
+          echo "BASE_HREF=$BASE_HREF" >> "$GITHUB_ENV"
+          echo "DEST_DIR=$DEST_DIR" >> "$GITHUB_ENV"
+          echo "dest_dir=$DEST_DIR" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Build Web
         working-directory: ./app
         run: flutter build web --release --wasm --base-href "${{ env.BASE_HREF }}"
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Upload Web Build Artifact
+        uses: actions/upload-artifact@v4
         with:
-          github_token: "${{ secrets.GITHUB_TOKEN }}"
-          publish_dir: ./app/build/web
-          destination_dir: "${{ env.DEST_DIR }}"
-          keep_files: true
+          name: web-build
+          path: app/build/web/
+          include-hidden-files: true
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy-web:
+    needs: build-web
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: deploy-gh-pages
+      cancel-in-progress: false
+    steps:
+      - name: Download Web Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: ${{ runner.temp }}/web-dist
+
+      - name: Clean Target and Deploy to gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEST_DIR: ${{ needs.build-web.outputs.dest_dir }}
+          WEB_DIST: ${{ runner.temp }}/web-dist
+        run: |
+          set -euo pipefail
+          REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$REPO_URL" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --single-branch --branch gh-pages "$REPO_URL" gh-pages-worktree
+          else
+            mkdir gh-pages-worktree
+            git -C gh-pages-worktree init
+            git -C gh-pages-worktree checkout --orphan gh-pages
+            git -C gh-pages-worktree remote add origin "$REPO_URL"
+          fi
+
+          cd gh-pages-worktree
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ "$DEST_DIR" = "recette" ] || [ "$DEST_DIR" = "dev" ]; then
+            rm -rf "./$DEST_DIR"
+            mkdir -p "./$DEST_DIR"
+            cp -a "$WEB_DIST/." "./$DEST_DIR/"
+          elif [ "$DEST_DIR" = "." ]; then
+            find . -mindepth 1 -maxdepth 1 \
+              ! -name '.git' \
+              ! -name 'recette' \
+              ! -name 'dev' \
+              ! -name 'CNAME' \
+              -exec rm -rf {} +
+            cp -a "$WEB_DIST/." ./
+          else
+            echo "Unexpected DEST_DIR: $DEST_DIR" >&2
+            exit 1
+          fi
+
+          touch .nojekyll
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to deploy to gh-pages ($DEST_DIR)."
+          else
+            git commit -m "Deploy ${GITHUB_REF_NAME} (${GITHUB_SHA::7}) to ${DEST_DIR}"
+            git push origin HEAD:gh-pages
+          fi
+        shell: bash

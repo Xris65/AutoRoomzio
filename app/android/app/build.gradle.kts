@@ -24,23 +24,31 @@ android {
         manifestPlaceholders["appName"] = "AutoRoomzio"
     }
 
+    val fallbackKeystore = file("autoroomzio.jks")
+    val envKeystorePath = System.getenv("KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+    val resolvedReleaseKeystore = envKeystorePath?.let { file(it) }
+        ?: fallbackKeystore.takeIf { it.exists() }
+
     signingConfigs {
         getByName("debug") {
-            keyAlias = "autoroomzio"
-            keyPassword = "autoroomzio"
-            storeFile = file("autoroomzio.jks")
-            storePassword = "autoroomzio"
+            if (fallbackKeystore.exists()) {
+                keyAlias = "autoroomzio"
+                keyPassword = "autoroomzio"
+                storeFile = fallbackKeystore
+                storePassword = "autoroomzio"
+            }
         }
-        create("release") {
-            val envKeystorePath = System.getenv("KEYSTORE_PATH")
-            val envKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
-            val envKeyAlias = System.getenv("KEY_ALIAS")
-            val envKeyPassword = System.getenv("KEY_PASSWORD")
+        if (resolvedReleaseKeystore != null) {
+            create("release") {
+                val envKeystorePassword = System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+                val envKeyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() }
+                val envKeyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() }
 
-            keyAlias = if (!envKeyAlias.isNullOrBlank()) envKeyAlias else "autoroomzio"
-            keyPassword = if (!envKeyPassword.isNullOrBlank()) envKeyPassword else "autoroomzio"
-            storeFile = file(if (!envKeystorePath.isNullOrBlank()) envKeystorePath else "autoroomzio.jks")
-            storePassword = if (!envKeystorePassword.isNullOrBlank()) envKeystorePassword else "autoroomzio"
+                storeFile = resolvedReleaseKeystore
+                storePassword = envKeystorePassword ?: "autoroomzio"
+                keyAlias = envKeyAlias ?: "autoroomzio"
+                keyPassword = envKeyPassword ?: "autoroomzio"
+            }
         }
     }
 
@@ -50,7 +58,7 @@ android {
             manifestPlaceholders["appName"] = "AutoRoomzio (Debug)"
         }
         release {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

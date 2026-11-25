@@ -9,8 +9,10 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  build-android:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.APP_VERSION }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -19,9 +21,11 @@ jobs:
         id: get_version
         working-directory: ./app
         run: |
-          VERSION=$(grep '^version: ' pubspec.yaml | awk '{print $2}')
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "APP_VERSION=$VERSION" >> $GITHUB_OUTPUT
+          RAW_VER=$(grep '^version: ' pubspec.yaml | awk '{print $2}' | tr -d '\r')
+          VERSION="${RAW_VER%%+*}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -42,41 +46,58 @@ jobs:
         working-directory: ./app
         run: flutter pub get
 
+      - name: Analyze
+        working-directory: ./app
+        run: flutter analyze
+
+      - name: Run tests
+        working-directory: ./app
+        run: flutter test
+
+      - name: Configure Android Signing Keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_PASSWORD_SECRET: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS_SECRET: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD_SECRET: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            KEYSTORE_FILE="${{ runner.temp }}/release.jks"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_FILE"
+            echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD:-$KEYSTORE_PASSWORD_SECRET}" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=${ANDROID_KEY_ALIAS:-$KEY_ALIAS_SECRET}" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=${ANDROID_KEY_PASSWORD:-$KEY_PASSWORD_SECRET}" >> "$GITHUB_ENV"
+          fi
+        shell: bash
+
       - name: Build APK
         working-directory: ./app
         run: flutter build apk --release
 
-      - name: Push Git Tag
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f v${{ env.VERSION }}
-          git push -f origin v${{ env.VERSION }}
+      - name: Cleanup Temporary Keystore
+        if: always()
+        run: rm -f "${{ runner.temp }}/release.jks"
+        shell: bash
 
       - name: Rename APK
-        run: mv app/build/app/outputs/flutter-apk/app-release.apk app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}.apk
+        run: mv app/build/app/outputs/flutter-apk/app-release.apk "app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}.apk"
+        shell: bash
 
-      - name: Extract Release Notes
-        id: extract_notes
-        run: |
-          awk -v ver="## [${{ env.VERSION }}]" 'index($0, ver) == 1 {p=1; next} /^## / {if(p) exit} p' CHANGELOG.md > release_notes.txt
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: v${{ steps.get_version.outputs.APP_VERSION }}
-          name: AutoRoomzio v${{ steps.get_version.outputs.APP_VERSION }}
-          body_path: release_notes.txt
-          files: |
-            app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: release-android-apk
+          path: app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}.apk
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 1
 
-  build-windows-release:
+  build-windows:
     runs-on: windows-latest
-    needs: build-and-release
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -85,7 +106,7 @@ jobs:
         id: get_version
         working-directory: ./app
         run: |
-          $Version = (Select-String -Path pubspec.yaml -Pattern '^version: (.*)').Matches.Groups[1].Value
+          $Version = ((Select-String -Path pubspec.yaml -Pattern '^version:\s*([^\s+]+)').Matches.Groups[1].Value)
           echo "APP_VERSION=$Version" >> $env:GITHUB_OUTPUT
         shell: powershell
 
@@ -105,13 +126,73 @@ jobs:
 
       - name: Zip Windows Build
         working-directory: ./app/build/windows/x64/runner/Release
-        run: Compress-Archive -Path * -DestinationPath ../../../../../AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-windows-portable.zip
+        run: Compress-Archive -Path * -DestinationPath "../../../../../AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-windows-portable.zip"
         shell: powershell
 
-      - name: Add to GitHub Release
+      - name: Upload Windows ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-zip
+          path: app/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-windows-portable.zip
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    needs: [build-android, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract Version from pubspec.yaml
+        id: get_version
+        working-directory: ./app
+        run: |
+          RAW_VER=$(grep '^version: ' pubspec.yaml | awk '{print $2}' | tr -d '\r')
+          VERSION="${RAW_VER%%+*}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Download Release Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create and Push Annotated Git Tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "Tag v${VERSION} already exists on origin, skipping tag creation."
+          else
+            git tag -a "v${VERSION}" -m "Release v${VERSION}"
+            git push origin "refs/tags/v${VERSION}"
+          fi
+        shell: bash
+
+      - name: Extract Release Notes
+        id: extract_notes
+        run: |
+          awk -v ver="## [${{ env.VERSION }}]" 'index($0, ver) == 1 {p=1; next} /^## / {if(p) exit} p' CHANGELOG.md > release_notes.txt
+          if [ ! -s release_notes.txt ]; then
+            echo "Release v${{ env.VERSION }}" > release_notes.txt
+          fi
+        shell: bash
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.get_version.outputs.APP_VERSION }}
-          files: app/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-windows-portable.zip
+          name: AutoRoomzio v${{ steps.get_version.outputs.APP_VERSION }}
+          body_path: release_notes.txt
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}.apk
+            release-assets/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-windows-portable.zip
         env:
-          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

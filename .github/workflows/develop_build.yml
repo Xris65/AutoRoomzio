@@ -1,5 +1,9 @@
 name: Test Build (Develop)
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
@@ -7,6 +11,7 @@ on:
   pull_request:
     branches:
       - develop
+      - main
 
 jobs:
   test-build:
@@ -41,6 +46,10 @@ jobs:
       - name: Run tests
         working-directory: ./app
         run: flutter test
+
+      - name: Build Web (Wasm)
+        working-directory: ./app
+        run: flutter build web --release --wasm
 
       - name: Build APK
         working-directory: ./app
