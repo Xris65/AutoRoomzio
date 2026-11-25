@@ -6,7 +6,7 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 
 ### Nouveautés
 - **Plan 2D plus fluide et réactif** : Affichage et déplacements accélérés sur les grands étages grâce à une mise en page optimisée des salles et des postes.
-- **Compatibilité WebAssembly & application Android allégée** : Version navigateur modernisée compatible WebAssembly, taille d'installation Android sensiblement réduite et suppression des autorisations de stockage inutiles.
+- **Compatibilité WebAssembly & Android modernisé** : Version navigateur modernisée compatible WebAssembly, optimisation R8 du code Android et suppression des autorisations de stockage/médias inutiles.
 - **Annulation des mises à jour** : Ajout d'un bouton « Annuler » fonctionnel pendant le téléchargement d'une mise à jour, permettant d'interrompre proprement l'opération à tout moment.
 - **Couplage Web renforcé** : Sécurisation accrue des liens de connexion par QR Code vers la version navigateur afin de mieux protéger les données de session.
 
@@ -15,6 +15,12 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 - **Préservation du planning au changement de bureau** : Changer de bureau principal conserve désormais intactes vos dates programmées en attente ainsi que vos dates bloquées.
 - **Ouverture sereine de l'accueil** : Correction d'un blocage potentiel au démarrage lorsque l'onglet d'automatisation est masqué ou indisponible sur navigateur.
 - **Réservations automatiques & session renforcées** : Calculs de dates fiabilisés lors des changements d'heure été/hiver, synchronisation automatique à la réouverture de l'application et gestion propre des actualisations simultanées de session.
+
+### Montées de versions & socle technique
+- **Socle Flutter & Dart 3** : Passage au socle Dart 3.13+ / Flutter 3.47+ avec analyse stricte activée et zéro API dépréciée dans l'application.
+- **Dépendances majeures** : Remplacement de `flutter_markdown` (discontinué) par `flutter_markdown_plus` (1.0.12), montée vers `flutter_local_notifications` 23, `open_filex` 5, `google_fonts` 8, `table_calendar` 3.3, `flutter_secure_storage` 11, `workmanager` 0.10 et `flutter_launcher_icons` 0.14 ; suppression des dépendances inutilisées (`cupertino_icons`).
+- **Web moderne (`--wasm`)** : Migration de `dart:html` vers `package:web` (`js_interop`) et isolation des modules natifs pour une compilation WebAssembly propre.
+- **Android & CI/CD** : Optimisation R8 / suppression des ressources inutilisées, geste de retour prédictif (Android 14+), versioning monotone (`2.0.0+20000`) et modernisation des pipelines GitHub Actions (`setup-java@v4`, `setup-gradle@v4`, `actions-gh-pages@v4`, publication atomique).
 
 ## [1.7.0] - 2026-11-23
 
