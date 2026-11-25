@@ -1,12 +1,12 @@
 {
-    "name": "auto_roomzio",
-    "short_name": "auto_roomzio",
+    "name": "AutoRoomzio",
+    "short_name": "AutoRoomzio",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#3B4FC8",
+    "theme_color": "#3B4FC8",
+    "description": "Réservation et automatisation intelligente MyRoomz",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {
