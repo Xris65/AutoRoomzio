@@ -265,6 +265,15 @@ void main() {
 
       final client = MockClient((request) async {
         final uri = request.url.toString();
+        if (uri.contains('/connect/token') || uri.contains('/oauth/token')) {
+          return http.Response(
+            jsonEncode(<String, String>{
+              'access_token': 'mock-access',
+              'refresh_token': 'mock-refresh',
+            }),
+            200,
+          );
+        }
         if (uri.contains('/sites/site-1/floors/fl-1/workspaces')) {
           return http.Response(jsonEncode([
             {'id': 'ws-1', 'name': 'B01', 'isReservable': true}

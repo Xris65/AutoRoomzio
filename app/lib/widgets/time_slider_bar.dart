@@ -28,8 +28,8 @@ class TimeSliderBar extends StatefulWidget {
     required this.selectedDate,
     required this.onDateSelected,
     this.hideWeekends = true,
-    this.bookedDates = const {},
-    this.pendingDates = const {},
+    this.bookedDates = const <String>{},
+    this.pendingDates = const <String>{},
     this.hasConfirmedReservation,
     this.isPendingReservation,
     this.onPickDate,
@@ -37,7 +37,7 @@ class TimeSliderBar extends StatefulWidget {
     this.onNextDay,
     this.onToday,
     this.isLoading = false,
-    this.favoriteCountsByDate = const {},
+    this.favoriteCountsByDate = const <String, int>{},
     this.showFavoriteIndicators = true,
   });
 
@@ -49,16 +49,16 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
   int? _lastDraggedIndex;
 
   DateTime get _monday {
-    final d = widget.selectedDate;
+    final DateTime d = widget.selectedDate;
     return DateTime(d.year, d.month, d.day - (d.weekday - 1));
   }
 
   List<DateTime> get _days {
-    final monday = _monday;
-    final count = widget.hideWeekends ? 5 : 7;
-    return List.generate(
+    final DateTime monday = _monday;
+    final int count = widget.hideWeekends ? 5 : 7;
+    return List<DateTime>.generate(
       count,
-      (i) => DateTime(monday.year, monday.month, monday.day + i),
+      (int i) => DateTime(monday.year, monday.month, monday.day + i),
     );
   }
 

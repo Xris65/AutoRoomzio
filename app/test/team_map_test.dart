@@ -277,7 +277,7 @@ void main() {
       expect(tappedOccupant!.occupantId, equals('usr-sophie'));
     });
 
-    testWidgets('Focused room dims desks outside focused room with 0.25 opacity', (tester) async {
+    testWidgets('Focused room dims desks outside focused room via direct color alpha without Opacity saveLayer', (tester) async {
       tester.view.physicalSize = const Size(800, 1200);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -296,8 +296,24 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      final opacities = tester.widgetList<Opacity>(find.byType(Opacity));
-      expect(opacities.any((o) => o.opacity == 0.25), isTrue);
+      // Zero Opacity widgets (no GPU saveLayer overhead)
+      expect(find.byType(Opacity), findsNothing);
+
+      // Desk in focused room B01 is not dimmed and keeps full alpha
+      final b01Finder = find.ancestor(
+        of: find.text('GERMAIN S.'),
+        matching: find.byType(Container),
+      ).first;
+      final b01Decoration = tester.widget<Container>(b01Finder).decoration as BoxDecoration;
+      expect(b01Decoration.color!.a, closeTo(1.0, 0.01));
+
+      // Desk outside focused room (B02-01) is dimmed directly via 0.25 alpha factor
+      final b02Finder = find.ancestor(
+        of: find.text('MYSELF'),
+        matching: find.byType(Container),
+      ).first;
+      final b02Decoration = tester.widget<Container>(b02Finder).decoration as BoxDecoration;
+      expect(b02Decoration.color!.a, closeTo(0.25, 0.01));
     });
   });
 
@@ -954,7 +970,7 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'mock-access', 'refresh_token': 'mock-refresh'}), 200);
         }
         if (path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         return http.Response('[]', 200);
       });
@@ -1035,7 +1051,7 @@ void main() {
       final client = MockClient((req) async {
         if (req.method == 'POST' && req.url.path.contains('/bookings')) {
           postAttempts++;
-          final body = jsonDecode(req.body);
+          final body = jsonDecode(req.body) as Map<String, dynamic>;
           if (body.containsKey('bookAsUserId')) {
             // First attempt: Server rejects with Organizer not found
             return http.Response(
@@ -1090,10 +1106,10 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'new-tok', 'refresh_token': 'new-ref'}), 200);
         }
         if (req.url.path.contains('/users/current/reservations') || req.url.path.contains('/users/current/bookings')) {
-          return http.Response(jsonEncode({'bookings': []}), 200);
+          return http.Response(jsonEncode({'bookings': <Object>[]}), 200);
         }
         if (req.url.path.contains('/occupancy') || req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (req.url.path.contains('/bookings') && req.method == 'POST') {
           return http.Response(jsonEncode({'id': 'b-auto-1'}), 201);
@@ -1155,7 +1171,7 @@ void main() {
         }
         if (path.contains('/workspaces/calendars')) {
           calendarRequestCount++;
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/sites')) {
           return http.Response(jsonEncode([{'id': 'site-1', 'name': 'Site'}]), 200);

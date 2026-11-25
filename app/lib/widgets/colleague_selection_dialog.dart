@@ -41,10 +41,10 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
 
-  List<Colleague> _favorites = [];
-  List<Colleague> _filteredFavorites = [];
-  List<Colleague> _remoteResults = [];
-  final Set<String> _pendingFavoriteIds = {};
+  List<Colleague> _favorites = <Colleague>[];
+  List<Colleague> _filteredFavorites = <Colleague>[];
+  List<Colleague> _remoteResults = <Colleague>[];
+  final Set<String> _pendingFavoriteIds = <String>{};
 
   bool _isLoadingFavorites = true;
   bool _isRemoteSearching = false;
@@ -75,7 +75,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
       if (mounted && favs.isNotEmpty) {
         setState(() {
           _favorites = favs;
-          _filteredFavorites = List.from(favs);
+          _filteredFavorites = List<Colleague>.from(favs);
         });
       }
 
@@ -85,7 +85,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
       if (token != null && token.isNotEmpty) {
         final remoteFavs = await _api.getFavorites(token);
         if (mounted && remoteFavs.isNotEmpty) {
-          final Map<String, Colleague> map = {};
+          final Map<String, Colleague> map = <String, Colleague>{};
           for (final f in _favorites) {
             final key = f.id.isNotEmpty ? f.id : (f.email.isNotEmpty ? f.email : f.name);
             map[key] = f;
@@ -102,7 +102,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
           setState(() {
             _favorites = merged;
             _filteredFavorites = _searchQuery.isEmpty
-                ? List.from(merged)
+                ? List<Colleague>.from(merged)
                 : _favorites.where((c) {
                     final qLower = _searchQuery.toLowerCase();
                     return c.name.toLowerCase().contains(qLower) ||
@@ -126,8 +126,8 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
 
     if (query.isEmpty) {
       setState(() {
-        _filteredFavorites = List.from(_favorites);
-        _remoteResults = [];
+        _filteredFavorites = List<Colleague>.from(_favorites);
+        _remoteResults = <Colleague>[];
         _isRemoteSearching = false;
       });
       return;
@@ -288,7 +288,7 @@ class _ColleagueSelectionDialogState extends State<ColleagueSelectionDialog> {
               c.email.toLowerCase().contains(qLower);
         }).toList();
       } else {
-        _filteredFavorites = List.from(_favorites);
+        _filteredFavorites = List<Colleague>.from(_favorites);
       }
     } catch (e) {
       OfflineStateManager.instance.reportException(e);

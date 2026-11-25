@@ -28,8 +28,8 @@ class MiniMapOverlay extends StatefulWidget {
     required this.transformationController,
     required this.viewportSize,
     required this.mapSize,
-    this.rooms = const [],
-    this.desks = const [],
+    this.rooms = const <Rect>[],
+    this.desks = const <Rect>[],
     this.initiallyExpanded = false,
     this.miniMapWidth = 148.0,
     this.miniMapHeight = 104.0,
@@ -69,39 +69,40 @@ class _MiniMapOverlayState extends State<MiniMapOverlay> {
       return;
     }
 
-    final mapW = widget.mapSize.width;
-    final mapH = widget.mapSize.height;
-    final viewW = widget.viewportSize.width;
-    final viewH = widget.viewportSize.height;
+    final double mapW = widget.mapSize.width;
+    final double mapH = widget.mapSize.height;
+    final double viewW = widget.viewportSize.width;
+    final double viewH = widget.viewportSize.height;
 
-    final scaleFactor = math.min(
+    final double scaleFactor = math.min(
       canvasSize.width / mapW,
       canvasSize.height / mapH,
     );
     if (scaleFactor <= 0) return;
 
-    final contentW = mapW * scaleFactor;
-    final contentH = mapH * scaleFactor;
-    final offsetX = (canvasSize.width - contentW) / 2.0;
-    final offsetY = (canvasSize.height - contentH) / 2.0;
+    final double contentW = mapW * scaleFactor;
+    final double contentH = mapH * scaleFactor;
+    final double offsetX = (canvasSize.width - contentW) / 2.0;
+    final double offsetY = (canvasSize.height - contentH) / 2.0;
 
     // Clamp local touch within floor bounds
-    final clampedX = localPos.dx.clamp(offsetX, offsetX + contentW);
-    final clampedY = localPos.dy.clamp(offsetY, offsetY + contentH);
+    final double clampedX = localPos.dx.clamp(offsetX, offsetX + contentW);
+    final double clampedY = localPos.dy.clamp(offsetY, offsetY + contentH);
 
     // Convert to scene coordinates
-    final targetSceneX = (clampedX - offsetX) / scaleFactor;
-    final targetSceneY = (clampedY - offsetY) / scaleFactor;
+    final double targetSceneX = (clampedX - offsetX) / scaleFactor;
+    final double targetSceneY = (clampedY - offsetY) / scaleFactor;
 
     // Current camera scale
-    final currentMatrix = widget.transformationController.value;
-    final currentScale = currentMatrix.entry(0, 0) > 0 ? currentMatrix.entry(0, 0) : 1.0;
+    final Matrix4 currentMatrix = widget.transformationController.value;
+    final double currentScale =
+        currentMatrix.entry(0, 0) > 0 ? currentMatrix.entry(0, 0) : 1.0;
 
     // Reposition camera so (targetSceneX, targetSceneY) is at the center of the viewport
-    final newDx = (viewW / 2.0) - (targetSceneX * currentScale);
-    final newDy = (viewH / 2.0) - (targetSceneY * currentScale);
+    final double newDx = (viewW / 2.0) - (targetSceneX * currentScale);
+    final double newDy = (viewH / 2.0) - (targetSceneY * currentScale);
 
-    final updatedMatrix = currentMatrix.clone();
+    final Matrix4 updatedMatrix = currentMatrix.clone();
     updatedMatrix.setEntry(0, 3, newDx);
     updatedMatrix.setEntry(1, 3, newDy);
 
@@ -111,26 +112,26 @@ class _MiniMapOverlayState extends State<MiniMapOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final accent = widget.accentColor ?? theme.colorScheme.primary;
+    final ThemeData theme = Theme.of(context);
+    final bool isDark = theme.brightness == Brightness.dark;
+    final Color accent = widget.accentColor ?? theme.colorScheme.primary;
 
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 250),
       reverseDuration: const Duration(milliseconds: 220),
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
-      layoutBuilder: (currentChild, previousChildren) {
+      layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
         return Stack(
           alignment: widget.expansionAlignment,
           clipBehavior: Clip.none,
-          children: [
+          children: <Widget>[
             ...previousChildren,
             ?currentChild,
           ],
         );
       },
-      transitionBuilder: (child, animation) {
+      transitionBuilder: (Widget child, Animation<double> animation) {
         return FadeTransition(
           opacity: animation,
           child: ScaleTransition(
@@ -163,12 +164,13 @@ class _MiniMapOverlayState extends State<MiniMapOverlay> {
           height: 38,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: theme.colorScheme.surface.withValues(alpha: isDark ? 0.90 : 0.94),
+            color:
+                theme.colorScheme.surface.withValues(alpha: isDark ? 0.90 : 0.94),
             border: Border.all(
               color: accent.withValues(alpha: 0.55),
               width: 1.5,
             ),
-            boxShadow: [
+            boxShadow: <BoxShadow>[
               BoxShadow(
                 color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.15),
                 blurRadius: 6,
@@ -211,111 +213,117 @@ class _MiniMapOverlayState extends State<MiniMapOverlay> {
         key: const Key('mini_map_panel'),
         width: widget.miniMapWidth,
         height: widget.miniMapHeight,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface.withValues(alpha: isDark ? 0.92 : 0.96),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: accent.withValues(alpha: 0.45),
-          width: 1.2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.18),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
+        decoration: BoxDecoration(
+          color:
+              theme.colorScheme.surface.withValues(alpha: isDark ? 0.92 : 0.96),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: accent.withValues(alpha: 0.45),
+            width: 1.2,
           ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.only(left: 8, right: 4, top: 4, bottom: 2),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.radar, size: 13, color: accent),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Radar',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.bold,
-                        color: accent,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ],
-                ),
-                InkWell(
-                  key: const Key('mini_map_collapse_button'),
-                  onTap: _toggleExpanded,
-                  borderRadius: BorderRadius.circular(10),
-                  child: Padding(
-                    padding: const EdgeInsets.all(2.0),
-                    child: Icon(
-                      Icons.close,
-                      size: 13,
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                    ),
-                  ),
-                ),
-              ],
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.18),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
             ),
-          ),
-          // Canvas
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 6, right: 6, bottom: 6),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final canvasSize = Size(constraints.maxWidth, constraints.maxHeight);
-                    return SizedBox(
-                      key: const Key('mini_map_canvas'),
-                      width: constraints.maxWidth,
-                      height: constraints.maxHeight,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (details) =>
-                            _handleTouch(details.localPosition, canvasSize),
-                        onPanStart: (details) =>
-                            _handleTouch(details.localPosition, canvasSize),
-                        onPanUpdate: (details) =>
-                            _handleTouch(details.localPosition, canvasSize),
-                        child: CustomPaint(
-                          size: canvasSize,
-                          painter: _MiniMapPainter(
-                            repaint: widget.transformationController,
-                            transformationController: widget.transformationController,
-                            viewportSize: widget.viewportSize,
-                            mapSize: widget.mapSize,
-                            rooms: widget.rooms,
-                            desks: widget.desks,
-                            accentColor: accent,
-                            isDark: isDark,
-                          ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            // Header
+            Padding(
+              padding:
+                  const EdgeInsets.only(left: 8, right: 4, top: 4, bottom: 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: <Widget>[
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(Icons.radar, size: 13, color: accent),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Radar',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.bold,
+                          color: accent,
+                          letterSpacing: 0.2,
                         ),
                       ),
-                    );
-                  },
+                    ],
+                  ),
+                  InkWell(
+                    key: const Key('mini_map_collapse_button'),
+                    onTap: _toggleExpanded,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2.0),
+                      child: Icon(
+                        Icons.close,
+                        size: 13,
+                        color:
+                            theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Canvas
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 6, right: 6, bottom: 6),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LayoutBuilder(
+                    builder: (BuildContext context, BoxConstraints constraints) {
+                      final Size canvasSize =
+                          Size(constraints.maxWidth, constraints.maxHeight);
+                      return SizedBox(
+                        key: const Key('mini_map_canvas'),
+                        width: constraints.maxWidth,
+                        height: constraints.maxHeight,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTapDown: (TapDownDetails details) =>
+                              _handleTouch(details.localPosition, canvasSize),
+                          onPanStart: (DragStartDetails details) =>
+                              _handleTouch(details.localPosition, canvasSize),
+                          onPanUpdate: (DragUpdateDetails details) =>
+                              _handleTouch(details.localPosition, canvasSize),
+                          child: CustomPaint(
+                            size: canvasSize,
+                            painter: _MiniMapPainter(
+                              repaint: widget.transformationController,
+                              transformationController:
+                                  widget.transformationController,
+                              viewportSize: widget.viewportSize,
+                              mapSize: widget.mapSize,
+                              rooms: widget.rooms,
+                              desks: widget.desks,
+                              accentColor: accent,
+                              isDark: isDark,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
 /// Custom painter for drawing the mini-map rooms, desks, and camera viewport rectangle.
+/// Pre-allocates all [Paint] objects to avoid per-frame allocations during pan/zoom.
 class _MiniMapPainter extends CustomPainter {
   final TransformationController transformationController;
   final Size viewportSize;
@@ -324,6 +332,20 @@ class _MiniMapPainter extends CustomPainter {
   final List<Rect> desks;
   final Color accentColor;
   final bool isDark;
+
+  final Paint _bgPaint;
+  final Paint _floorFillPaint;
+  final Paint _floorBorderPaint;
+  final Paint _roomFillPaint;
+  final Paint _roomBorderPaint;
+  final Paint _deskPaint;
+  final Paint _vpFillPaint;
+  final Paint _vpBorderPaint;
+  final Paint _centerDotPaint;
+
+  static const Radius _canvasRadius = Radius.circular(6);
+  static const Radius _floorRadius = Radius.circular(4);
+  static const Radius _roomRadius = Radius.circular(2);
 
   _MiniMapPainter({
     required super.repaint,
@@ -334,7 +356,34 @@ class _MiniMapPainter extends CustomPainter {
     required this.desks,
     required this.accentColor,
     required this.isDark,
-  });
+  })  : _bgPaint = Paint()
+          ..color = isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+        _floorFillPaint = Paint()
+          ..color = isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0),
+        _floorBorderPaint = Paint()
+          ..color = isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+        _roomFillPaint = Paint()
+          ..color = isDark
+              ? const Color(0xFF334155).withValues(alpha: 0.6)
+              : Colors.white.withValues(alpha: 0.85),
+        _roomBorderPaint = Paint()
+          ..color = isDark ? const Color(0xFF475569) : const Color(0xFF94A3B8)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8,
+        _deskPaint = Paint()
+          ..color = isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
+        _vpFillPaint = Paint()
+          ..color = accentColor.withValues(alpha: isDark ? 0.25 : 0.20)
+          ..style = PaintingStyle.fill,
+        _vpBorderPaint = Paint()
+          ..color = accentColor.withValues(alpha: 0.90)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+        _centerDotPaint = Paint()
+          ..color = accentColor
+          ..style = PaintingStyle.fill;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -347,123 +396,100 @@ class _MiniMapPainter extends CustomPainter {
       return;
     }
 
-    final canvasRect = Rect.fromLTWH(0, 0, size.width, size.height);
-    canvas.clipRRect(RRect.fromRectAndRadius(canvasRect, const Radius.circular(6)));
+    final Rect canvasRect = Rect.fromLTWH(0, 0, size.width, size.height);
+    canvas.clipRRect(RRect.fromRectAndRadius(canvasRect, _canvasRadius));
 
     // 1. Canvas background
-    final bgPaint = Paint()
-      ..color = isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9);
-    canvas.drawRect(canvasRect, bgPaint);
+    canvas.drawRect(canvasRect, _bgPaint);
 
-    final scaleFactor = math.min(
+    final double scaleFactor = math.min(
       size.width / mapSize.width,
       size.height / mapSize.height,
     );
     if (scaleFactor <= 0) return;
 
-    final contentW = mapSize.width * scaleFactor;
-    final contentH = mapSize.height * scaleFactor;
-    final offsetX = (size.width - contentW) / 2.0;
-    final offsetY = (size.height - contentH) / 2.0;
+    final double contentW = mapSize.width * scaleFactor;
+    final double contentH = mapSize.height * scaleFactor;
+    final double offsetX = (size.width - contentW) / 2.0;
+    final double offsetY = (size.height - contentH) / 2.0;
 
     // 2. Floor perimeter boundary
-    final floorRect = Rect.fromLTWH(offsetX, offsetY, contentW, contentH);
-    final floorFillPaint = Paint()
-      ..color = isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
-    final floorBorderPaint = Paint()
-      ..color = isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-
-    final floorRRect = RRect.fromRectAndRadius(floorRect, const Radius.circular(4));
-    canvas.drawRRect(floorRRect, floorFillPaint);
-    canvas.drawRRect(floorRRect, floorBorderPaint);
+    final Rect floorRect = Rect.fromLTWH(offsetX, offsetY, contentW, contentH);
+    final RRect floorRRect = RRect.fromRectAndRadius(floorRect, _floorRadius);
+    canvas.drawRRect(floorRRect, _floorFillPaint);
+    canvas.drawRRect(floorRRect, _floorBorderPaint);
 
     // 3. Draw rooms
-    final roomFillPaint = Paint()
-      ..color = isDark
-          ? const Color(0xFF334155).withValues(alpha: 0.6)
-          : Colors.white.withValues(alpha: 0.85);
-    final roomBorderPaint = Paint()
-      ..color = isDark
-          ? const Color(0xFF475569)
-          : const Color(0xFF94A3B8)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8;
-
-    for (final room in rooms) {
-      final rLeft = offsetX + room.left * scaleFactor;
-      final rTop = offsetY + room.top * scaleFactor;
-      final rWidth = room.width * scaleFactor;
-      final rHeight = room.height * scaleFactor;
+    for (final Rect room in rooms) {
+      final double rLeft = offsetX + room.left * scaleFactor;
+      final double rTop = offsetY + room.top * scaleFactor;
+      final double rWidth = room.width * scaleFactor;
+      final double rHeight = room.height * scaleFactor;
 
       if (rWidth > 1 && rHeight > 1) {
-        final rRect = RRect.fromRectAndRadius(
+        final RRect rRect = RRect.fromRectAndRadius(
           Rect.fromLTWH(rLeft, rTop, rWidth, rHeight),
-          const Radius.circular(2),
+          _roomRadius,
         );
-        canvas.drawRRect(rRect, roomFillPaint);
-        canvas.drawRRect(rRect, roomBorderPaint);
+        canvas.drawRRect(rRect, _roomFillPaint);
+        canvas.drawRRect(rRect, _roomBorderPaint);
       }
     }
 
     // 4. Draw desks silhouette
-    final deskPaint = Paint()
-      ..color = isDark
-          ? const Color(0xFF64748B)
-          : const Color(0xFF94A3B8);
+    for (final Rect desk in desks) {
+      final double dLeft = offsetX + desk.left * scaleFactor;
+      final double dTop = offsetY + desk.top * scaleFactor;
+      final double dWidth = math.max(1.0, desk.width * scaleFactor);
+      final double dHeight = math.max(1.0, desk.height * scaleFactor);
 
-    for (final desk in desks) {
-      final dLeft = offsetX + desk.left * scaleFactor;
-      final dTop = offsetY + desk.top * scaleFactor;
-      final dWidth = math.max(1.0, desk.width * scaleFactor);
-      final dHeight = math.max(1.0, desk.height * scaleFactor);
-
-      canvas.drawRect(Rect.fromLTWH(dLeft, dTop, dWidth, dHeight), deskPaint);
+      canvas.drawRect(
+        Rect.fromLTWH(dLeft, dTop, dWidth, dHeight),
+        _deskPaint,
+      );
     }
 
     // 5. Draw Viewport Indicator
-    final matrix = transformationController.value;
-    final scale = matrix.entry(0, 0) > 0 ? matrix.entry(0, 0) : 1.0;
-    final dx = matrix.entry(0, 3);
-    final dy = matrix.entry(1, 3);
+    final Matrix4 matrix = transformationController.value;
+    final double scale = matrix.entry(0, 0) > 0 ? matrix.entry(0, 0) : 1.0;
+    final double dx = matrix.entry(0, 3);
+    final double dy = matrix.entry(1, 3);
 
-    // Visible scene coordinates
-    final sceneVpLeft = -dx / scale;
-    final sceneVpTop = -dy / scale;
-    final sceneVpWidth = viewportSize.width / scale;
-    final sceneVpHeight = viewportSize.height / scale;
+    final double sceneVpLeft = -dx / scale;
+    final double sceneVpTop = -dy / scale;
+    final double sceneVpWidth = viewportSize.width / scale;
+    final double sceneVpHeight = viewportSize.height / scale;
 
-    // Viewport mapped to mini-map coordinates
-    final vpCanvasLeft = offsetX + sceneVpLeft * scaleFactor;
-    final vpCanvasTop = offsetY + sceneVpTop * scaleFactor;
-    final vpCanvasWidth = sceneVpWidth * scaleFactor;
-    final vpCanvasHeight = sceneVpHeight * scaleFactor;
+    final double vpCanvasLeft = offsetX + sceneVpLeft * scaleFactor;
+    final double vpCanvasTop = offsetY + sceneVpTop * scaleFactor;
+    final double vpCanvasWidth = sceneVpWidth * scaleFactor;
+    final double vpCanvasHeight = sceneVpHeight * scaleFactor;
 
-    final vpRect = Rect.fromLTWH(vpCanvasLeft, vpCanvasTop, vpCanvasWidth, vpCanvasHeight);
+    final Rect vpRect = Rect.fromLTWH(
+      vpCanvasLeft,
+      vpCanvasTop,
+      vpCanvasWidth,
+      vpCanvasHeight,
+    );
 
-    // Viewport fill
-    final vpFillPaint = Paint()
-      ..color = accentColor.withValues(alpha: isDark ? 0.25 : 0.20)
-      ..style = PaintingStyle.fill;
-    canvas.drawRect(vpRect, vpFillPaint);
-
-    // Viewport border
-    final vpBorderPaint = Paint()
-      ..color = accentColor.withValues(alpha: 0.90)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawRect(vpRect, vpBorderPaint);
+    canvas.drawRect(vpRect, _vpFillPaint);
+    canvas.drawRect(vpRect, _vpBorderPaint);
 
     // Center focal point
-    final vpCenter = Offset(
+    final Offset vpCenter = Offset(
       vpCanvasLeft + vpCanvasWidth / 2.0,
       vpCanvasTop + vpCanvasHeight / 2.0,
     );
-    final centerDotPaint = Paint()
-      ..color = accentColor
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(vpCenter, 2.0, centerDotPaint);
+    canvas.drawCircle(vpCenter, 2.0, _centerDotPaint);
+  }
+
+  static bool _rectsEqual(List<Rect> a, List<Rect> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -471,9 +497,9 @@ class _MiniMapPainter extends CustomPainter {
     return oldDelegate.transformationController != transformationController ||
         oldDelegate.viewportSize != viewportSize ||
         oldDelegate.mapSize != mapSize ||
-        oldDelegate.rooms != rooms ||
-        oldDelegate.desks != desks ||
         oldDelegate.accentColor != accentColor ||
-        oldDelegate.isDark != isDark;
+        oldDelegate.isDark != isDark ||
+        !_rectsEqual(oldDelegate.rooms, rooms) ||
+        !_rectsEqual(oldDelegate.desks, desks);
   }
 }

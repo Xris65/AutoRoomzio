@@ -33,14 +33,14 @@ class OccupantDetailsSheet extends StatelessWidget {
     VoidCallback? onCancelMyBooking,
     VoidCallback? onCancelDelegatedBooking,
   }) {
-    return showModalBottomSheet(
+    return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => OccupantDetailsSheet(
+      builder: (BuildContext context) => OccupantDetailsSheet(
         workspace: workspace,
         occupant: occupant,
         isFavorite: isFavorite,
@@ -53,12 +53,18 @@ class OccupantDetailsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final ThemeData theme = Theme.of(context);
+    final bool isDark = theme.brightness == Brightness.dark;
 
-    final deskName = workspace['name']?.toString() ?? occupant.workspaceId;
-    final roomName = workspace['roomName']?.toString() ??
-        extractRoomName({'name': deskName}, trim: false);
+    final String deskName =
+        workspace['name']?.toString() ?? occupant.workspaceId;
+    final String extractedRoom = extractRoomName(workspace, trim: false);
+    final String roomName = extractedRoom.isNotEmpty
+        ? extractedRoom
+        : extractRoomName(
+            <String, dynamic>{'name': deskName},
+            trim: false,
+          );
 
     Color avatarBg;
     Color avatarText;
