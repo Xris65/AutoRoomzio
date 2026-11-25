@@ -1,9 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-/// Central singleton managing network connectivity state for AutoRoomzio (v1.6.2).
+/// Central singleton managing network connectivity state for AutoRoomzio.
 /// Follows Requirements R1 & R2:
 /// - Starts by default in online mode (`isOffline == false`).
 /// - Unconditionally allows all outgoing requests to proceed without blocking,
@@ -16,6 +15,17 @@ class OfflineStateManager {
 
   /// Factory constructor returning the singleton instance.
   factory OfflineStateManager() => instance;
+
+  static const Set<String> _connectivityRuntimeTypes = <String>{
+    'SocketException',
+    '_ClientSocketException',
+    'HandshakeException',
+    'TlsException',
+    'CertificateException',
+    'HttpException',
+    '_HttpException',
+    'WebSocketException',
+  };
 
   /// Reactive notifier for widget tree subscription.
   final ValueNotifier<bool> isOfflineNotifier = ValueNotifier<bool>(false);
@@ -51,43 +61,40 @@ class OfflineStateManager {
 
   /// Evaluates whether an error/exception represents a network connectivity failure.
   bool isConnectivityError(Object error) {
-    if (error is SocketException ||
-        error is http.ClientException ||
-        error is TimeoutException) {
+    final runtimeTypeName = error.runtimeType.toString();
+    if (error is http.ClientException ||
+        error is TimeoutException ||
+        _connectivityRuntimeTypes.contains(runtimeTypeName)) {
       return true;
     }
     final str = error.toString().toLowerCase();
     return str.contains('socketexception') ||
-           str.contains('clientexception') ||
-           str.contains('timeoutexception') ||
-           str.contains('httpexception') ||
-           str.contains('network is unreachable') ||
-           str.contains('network unreachable') ||
-           str.contains('connection refused') ||
-           str.contains('connection reset') ||
-           str.contains('failed host lookup') ||
-           str.contains('network error') ||
-           str.contains('software caused connection abort') ||
-           str.contains('connection closed before full header was received') ||
-           str.contains('connection closed') ||
-           str.contains('handshakeexception') ||
-           str.contains('tlsexception') ||
-           str.contains('connection timed out') ||
-           str.contains('broken pipe');
+        str.contains('clientexception') ||
+        str.contains('timeoutexception') ||
+        str.contains('httpexception') ||
+        str.contains('xmlhttprequest') ||
+        str.contains('network is unreachable') ||
+        str.contains('network unreachable') ||
+        str.contains('connection refused') ||
+        str.contains('connection reset') ||
+        str.contains('failed host lookup') ||
+        str.contains('network error') ||
+        str.contains('software caused connection abort') ||
+        str.contains('connection closed before full header was received') ||
+        str.contains('connection closed') ||
+        str.contains('handshakeexception') ||
+        str.contains('tlsexception') ||
+        str.contains('connection timed out') ||
+        str.contains('broken pipe');
   }
 
   /// Static helper for connectivity error detection.
-  static bool checkConnectivityError(Object error) => instance.isConnectivityError(error);
+  static bool checkConnectivityError(Object error) =>
+      instance.isConnectivityError(error);
 }
 
 /// An [http.BaseClient] decorator that wraps an inner client and intercepts
-/// responses and errors to update [OfflineStateManager].
-///
-/// Follows Requirements R1 & R2:
-/// - Never blocks, throttles, or short-circuits outgoing requests.
-/// - Always forwards requests directly to the wrapped client.
-/// - On receiving any HTTP response (2xx, 4xx, 5xx), calls `markOnline()`.
-/// - On catching a connectivity error, calls `markOffline()`, and rethrows.
+/// responses, body streams, and errors to update [OfflineStateManager].
 class OfflineAwareHttpClient extends http.BaseClient {
   final http.Client _inner;
   final OfflineStateManager _stateManager;
@@ -109,7 +116,19 @@ class OfflineAwareHttpClient extends http.BaseClient {
       final response = await _inner.send(request).timeout(_timeout);
       // Any response from the server (2xx, 4xx, 5xx) proves network connectivity.
       _stateManager.markOnline();
-      return response;
+
+      final Stream<List<int>> guardedStream = _guardBodyStream(response.stream);
+
+      return http.StreamedResponse(
+        guardedStream,
+        response.statusCode,
+        contentLength: response.contentLength,
+        request: response.request,
+        headers: response.headers,
+        isRedirect: response.isRedirect,
+        persistentConnection: response.persistentConnection,
+        reasonPhrase: response.reasonPhrase,
+      );
     } on TimeoutException {
       _stateManager.markOffline();
       rethrow;
@@ -119,6 +138,68 @@ class OfflineAwareHttpClient extends http.BaseClient {
       }
       rethrow;
     }
+  }
+
+  /// Wraps a response body stream with an idle timeout (reset on every chunk)
+  /// and connectivity error reporting. Errors are always forwarded to the
+  /// consumer (never swallowed). Implemented with an explicit [Timer] instead
+  /// of [Stream.timeout] so it also behaves deterministically under FakeAsync.
+  Stream<List<int>> _guardBodyStream(Stream<List<int>> source) {
+    late final StreamController<List<int>> controller;
+    StreamSubscription<List<int>>? subscription;
+    Timer? idleTimer;
+
+    void cancelTimer() {
+      idleTimer?.cancel();
+      idleTimer = null;
+    }
+
+    void armTimer() {
+      cancelTimer();
+      idleTimer = Timer(_timeout, () {
+        _stateManager.markOffline();
+        if (!controller.isClosed) {
+          controller.addError(
+            TimeoutException('Response stream timed out', _timeout),
+          );
+          unawaited(controller.close());
+        }
+        unawaited(subscription?.cancel());
+        subscription = null;
+      });
+    }
+
+    controller = StreamController<List<int>>(
+      sync: true,
+      onListen: () {
+        armTimer();
+        subscription = source.listen(
+          (List<int> chunk) {
+            armTimer();
+            controller.add(chunk);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            cancelTimer();
+            if (_stateManager.isConnectivityError(error)) {
+              _stateManager.markOffline();
+            }
+            controller.addError(error, stackTrace);
+          },
+          onDone: () {
+            cancelTimer();
+            subscription = null;
+            unawaited(controller.close());
+          },
+        );
+      },
+      onCancel: () {
+        cancelTimer();
+        final pending = subscription?.cancel();
+        subscription = null;
+        return pending;
+      },
+    );
+    return controller.stream;
   }
 
   @override

@@ -1,12 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'models/colleague.dart';
 import 'models/booking_result.dart';
+import 'models/colleague.dart';
 import 'models/desk_occupant.dart';
-import 'storage_service.dart';
 import 'offline_state_manager.dart';
+import 'storage_service.dart';
 import 'token_crypto.dart';
 import 'utils/date_helpers.dart';
 import 'utils/delegation_display_helper.dart';
@@ -14,27 +14,63 @@ import 'utils/workspace_helpers.dart';
 
 class RoomzApiService {
   final StorageService _storage;
-  final http.Client _client;
+  http.Client _client;
+  final bool _ownsClient;
+  bool _isClosed = false;
 
   RoomzApiService({StorageService? storage, http.Client? client})
       : _storage = storage ?? StorageService(),
+        _ownsClient = client == null,
         _client = client != null
-            ? (client is OfflineAwareHttpClient ? client : OfflineAwareHttpClient(client))
+            ? (client is OfflineAwareHttpClient
+                ? client
+                : OfflineAwareHttpClient(client))
             : OfflineAwareHttpClient();
 
-  static String get _loginUrl => kIsWeb ? "https://roomzioproxy.krisdhim2.workers.dev/https://login.roomz.io/connect/token" : "https://login.roomz.io/connect/token";
-  static String get _apiBase => kIsWeb ? "https://roomzioproxy.krisdhim2.workers.dev/https://api.my.roomz.io" : "https://api.my.roomz.io";
+  http.Client get _httpClient {
+    if (_isClosed && _ownsClient) {
+      _client = OfflineAwareHttpClient();
+      _isClosed = false;
+    }
+    return _client;
+  }
+
+  /// Closes the underlying HTTP client only if owned by this [RoomzApiService] instance.
+  /// Subsequent calls safely recreate a fresh [OfflineAwareHttpClient] if needed.
+  void close() {
+    if (_ownsClient && !_isClosed) {
+      _isClosed = true;
+      _client.close();
+    }
+  }
+
+  static String get _loginUrl => kIsWeb
+      ? "https://roomzioproxy.krisdhim2.workers.dev/https://login.roomz.io/connect/token"
+      : "https://login.roomz.io/connect/token";
+  static String get _apiBase => kIsWeb
+      ? "https://roomzioproxy.krisdhim2.workers.dev/https://api.my.roomz.io"
+      : "https://api.my.roomz.io";
   static const String _clientId = "my-roomz";
   static const String _scope =
       "openid profile email identityServer-api my-roomz-api offline_access";
 
-  /// Callback invoked when a session expires (HTTP 401).
+  /// Callback invoked when a session expires.
   static VoidCallback? onSessionExpired;
 
-  String? _cachedAccessToken;
-  Future<String?>? _inFlightTokenRefresh;
+  /// Shared static OAuth rotation mutex across all [RoomzApiService] instances
+  /// (`HomeScreen`, `TeamMapScreen`, `AutomationEngine`) to prevent concurrent
+  /// `400 invalid_grant` token rotation collisions.
+  static Future<String?>? _inFlightTokenRefresh;
 
-  /// Central handler when an HTTP 401 or token refresh failure is encountered.
+  @visibleForTesting
+  static void resetTokenRefreshStateForTesting() {
+    _inFlightTokenRefresh = null;
+  }
+
+  String? _cachedAccessToken;
+  int _silent401RetryDepth = 0;
+
+  /// Central handler when an unrecoverable token refresh failure is encountered.
   Future<void> handleSessionExpired() async {
     _cachedAccessToken = null;
     try {
@@ -49,70 +85,211 @@ class RoomzApiService {
     }
   }
 
+  /// Checks whether a JWT [token] carries a numeric `exp` claim that is already
+  /// expired or expiring within [leewaySeconds] (default 60s).
+  /// Non-JWT or `exp`-less tokens return `false`.
+  static bool isJwtExpiredOrExpiringSoon(
+    String token, {
+    int leewaySeconds = 60,
+    DateTime? now,
+  }) {
+    try {
+      final parts = token.split('.');
+      if (parts.length < 2) return false;
+      final normalized = base64Url.normalize(parts[1]);
+      final payloadStr = utf8.decode(base64Url.decode(normalized));
+      final Object? decoded = jsonDecode(payloadStr);
+      if (decoded is Map<Object?, Object?>) {
+        final Object? expRaw = decoded['exp'];
+        final int? expSeconds = expRaw is num
+            ? expRaw.toInt()
+            : (expRaw is String ? int.tryParse(expRaw) : null);
+        if (expSeconds != null) {
+          final int nowSeconds =
+              (now ?? DateTime.now()).millisecondsSinceEpoch ~/ 1000;
+          return nowSeconds >= (expSeconds - leewaySeconds);
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  static Map<String, dynamic>? _asStringMap(Object? value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map<Object?, Object?>) {
+      return value.map<String, dynamic>(
+        (k, v) => MapEntry<String, dynamic>(k.toString(), v),
+      );
+    }
+    return null;
+  }
+
+  static List<Map<String, dynamic>> _extractMapList(Object? value) {
+    if (value is List<Object?>) {
+      return value
+          .whereType<Map<Object?, Object?>>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    return <Map<String, dynamic>>[];
+  }
+
+  Future<String?> _refreshFor401Retry() async {
+    _silent401RetryDepth++;
+    try {
+      return await refreshMyToken(force: true);
+    } finally {
+      _silent401RetryDepth--;
+    }
+  }
+
+  /// Executes an authenticated request and, on HTTP 401, invalidates the stale
+  /// access token, refreshes once via [refreshMyToken], and replays the request once.
+  /// Never falls back to sending `refresh_token` in the `Authorization: Bearer` header.
+  Future<({http.Response response, String token})> _sendWithAuthRetry(
+    String initialToken,
+    Future<http.Response> Function(String activeToken) sendRequest,
+  ) async {
+    String activeToken = initialToken;
+    if (activeToken.isEmpty) {
+      final refreshed = await refreshMyToken();
+      if (refreshed != null && refreshed.isNotEmpty) {
+        activeToken = refreshed;
+      }
+    }
+
+    http.Response response = await sendRequest(activeToken);
+    if (response.statusCode == 401) {
+      _cachedAccessToken = null;
+      final refreshed = await _refreshFor401Retry();
+      if (refreshed != null && refreshed.isNotEmpty) {
+        activeToken = refreshed;
+        response = await sendRequest(activeToken);
+      }
+    }
+    _checkAuthResponse(response);
+    return (response: response, token: activeToken);
+  }
+
   // ── Authentication ──────────────────────────────────────────────────────
 
-  static const String defaultAuthWorkerUrl = "https://roomzauth.krisdhim2.workers.dev";
+  static const String defaultAuthWorkerUrl =
+      "https://roomzauth.krisdhim2.workers.dev";
+
+  static bool _isValidWorkerUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || uri.host.trim().isEmpty) {
+      return false;
+    }
+    final scheme = uri.scheme.toLowerCase();
+    final host = uri.host.toLowerCase();
+    if (scheme == 'https') {
+      return true;
+    }
+    if (scheme == 'http' && (host == 'localhost' || host == '127.0.0.1')) {
+      return true;
+    }
+    return false;
+  }
 
   /// Initial login with email + password via Cloudflare PKCE Worker (AES-256 encrypted payload).
-  /// Returns access token or null.
-  Future<String?> login(String email, String password, {String? workerUrl}) async {
+  /// Validates that [workerUrl] (when provided) is a valid `https` URL (or `http` localhost for tests).
+  Future<String?> login(
+    String email,
+    String password, {
+    String? workerUrl,
+  }) async {
     final targetUrl = (workerUrl != null && workerUrl.trim().isNotEmpty)
         ? workerUrl.trim()
         : defaultAuthWorkerUrl;
 
-    final rawJson = jsonEncode({
+    if (!_isValidWorkerUrl(targetUrl)) {
+      throw ArgumentError.value(
+        workerUrl,
+        'workerUrl',
+        'workerUrl must be a valid HTTPS URL (or HTTP on localhost / 127.0.0.1 for testing).',
+      );
+    }
+
+    final rawJson = jsonEncode(<String, Object>{
       "email": email.trim(),
       "password": password,
       "ts": DateTime.now().millisecondsSinceEpoch,
     });
     final encryptedPayload = TokenCryptoService.encryptToken(rawJson);
 
-    final response = await _client.post(
+    final response = await _httpClient.post(
       Uri.parse(targetUrl),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({
+      headers: const <String, String>{"Content-Type": "application/json"},
+      body: jsonEncode(<String, String>{
         "payload": encryptedPayload,
       }),
     );
 
     if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      if (data['refresh_token'] != null) {
-        await _storage.saveRefreshToken(data['refresh_token'].toString());
+      final Object? decoded = jsonDecode(response.body);
+      final data = _asStringMap(decoded);
+      if (data != null) {
+        final rawRefresh = data['refresh_token']?.toString();
+        if (rawRefresh != null && rawRefresh.isNotEmpty) {
+          await _storage.saveRefreshToken(rawRefresh);
+        }
+        final token = data['access_token']?.toString();
+        _cachedAccessToken = token;
+        return token;
       }
-      final token = data['access_token']?.toString();
-      _cachedAccessToken = token;
-      return token;
-    } else {
-      debugPrint("❌ Login failed ${response.statusCode}");
-      return null;
     }
+    debugPrint("❌ Login failed ${response.statusCode}");
+    return null;
   }
 
-  /// Refresh access token using stored refresh token with mutex and caching.
+  /// Refresh access token using stored refresh token with shared static mutex and JWT `exp` check.
   Future<String?> refreshMyToken({bool force = false}) async {
-    if (!force && _cachedAccessToken != null && _cachedAccessToken!.isNotEmpty) {
-      return _cachedAccessToken;
+    if (!force &&
+        _cachedAccessToken != null &&
+        _cachedAccessToken!.isNotEmpty) {
+      if (!isJwtExpiredOrExpiringSoon(_cachedAccessToken!)) {
+        return _cachedAccessToken;
+      }
+      _cachedAccessToken = null;
+    } else if (force) {
+      _cachedAccessToken = null;
     }
-    if (_inFlightTokenRefresh != null) {
-      return _inFlightTokenRefresh;
+
+    final existingRefresh = _inFlightTokenRefresh;
+    if (existingRefresh != null) {
+      final sharedToken = await existingRefresh;
+      if (sharedToken != null && sharedToken.isNotEmpty) {
+        _cachedAccessToken = sharedToken;
+      }
+      return sharedToken;
     }
-    _inFlightTokenRefresh = _performRefreshMyToken();
+
+    final Future<String?> refreshFuture = _performRefreshMyToken();
+    _inFlightTokenRefresh = refreshFuture;
     try {
-      return await _inFlightTokenRefresh;
+      final refreshedToken = await refreshFuture;
+      if (refreshedToken != null && refreshedToken.isNotEmpty) {
+        _cachedAccessToken = refreshedToken;
+      }
+      return refreshedToken;
     } finally {
-      _inFlightTokenRefresh = null;
+      if (identical(_inFlightTokenRefresh, refreshFuture)) {
+        _inFlightTokenRefresh = null;
+      }
     }
   }
 
-  Future<String?> _performRefreshMyToken() async {
+  Future<String?> _performRefreshMyToken({
+    bool allowRetryOnChangedToken = true,
+  }) async {
     try {
       final oldRefreshToken = await _storage.getRefreshToken();
       if (oldRefreshToken == null || oldRefreshToken.isEmpty) return null;
 
-      final response = await _client.post(
+      final response = await _httpClient.post(
         Uri.parse(_loginUrl),
-        body: {
+        body: <String, String>{
           "grant_type": "refresh_token",
           "refresh_token": oldRefreshToken,
           "client_id": _clientId,
@@ -121,10 +298,12 @@ class RoomzApiService {
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is Map<String, dynamic>) {
-          if (data['refresh_token'] != null) {
-            await _storage.saveRefreshToken(data['refresh_token']);
+        final Object? decoded = jsonDecode(response.body);
+        final data = _asStringMap(decoded);
+        if (data != null) {
+          final newRefreshToken = data['refresh_token']?.toString();
+          if (newRefreshToken != null && newRefreshToken.isNotEmpty) {
+            await _storage.saveRefreshToken(newRefreshToken);
           }
           final newAccessToken = data['access_token']?.toString();
           _cachedAccessToken = newAccessToken;
@@ -132,12 +311,42 @@ class RoomzApiService {
         }
       } else {
         debugPrint("❌ Token refresh failed ${response.statusCode}");
-        if (response.statusCode == 401 || response.statusCode == 400 || response.statusCode == 403) {
+        if (response.statusCode == 401 ||
+            response.statusCode == 400 ||
+            response.statusCode == 403) {
+          // Guard against false concurrent `invalid_grant`:
+          // 1) Check if a valid non-expired access token was just cached concurrently.
+          final currentAccess = _cachedAccessToken;
+          if (currentAccess != null &&
+              currentAccess.isNotEmpty &&
+              !isJwtExpiredOrExpiringSoon(currentAccess)) {
+            return currentAccess;
+          }
+
+          // 2) Check if stored refresh_token changed while this request was in flight.
+          final currentRefresh = await _storage.getRefreshToken();
+          if (currentRefresh != null &&
+              currentRefresh.isNotEmpty &&
+              currentRefresh != oldRefreshToken) {
+            if (allowRetryOnChangedToken) {
+              return await _performRefreshMyToken(
+                allowRetryOnChangedToken: false,
+              );
+            }
+            return null;
+          }
+
           _cachedAccessToken = null;
-          await handleSessionExpired();
+          final bodyLower = response.body.toLowerCase();
+          final isExplicitInvalidGrant = bodyLower.contains('invalid_grant') ||
+              bodyLower.contains('invalid_token');
+          if (_silent401RetryDepth == 0 || isExplicitInvalidGrant) {
+            await handleSessionExpired();
+          }
         }
       }
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("❌ Exception in refreshMyToken: $e");
     }
     return null;
@@ -147,162 +356,198 @@ class RoomzApiService {
 
   /// Fetch the list of buildings (sites).
   Future<List<Map<String, dynamic>>> getSites(String token) async {
-    final response = await _client.get(
-      Uri.parse("$_apiBase/buildings"),
-      headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+    final result = await _sendWithAuthRetry(
+      token,
+      (activeToken) => _httpClient.get(
+        Uri.parse("$_apiBase/buildings"),
+        headers: _authHeaders(activeToken)
+          ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+      ),
     );
-    _checkAuthResponse(response);
+    final response = result.response;
     if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      if (data is List) {
-        return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-      } else if (data is Map && data['data'] is List) {
-        return (data['data'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      final Object? data = jsonDecode(response.body);
+      if (data is List<Object?>) {
+        return _extractMapList(data);
+      } else if (data is Map<Object?, Object?>) {
+        return _extractMapList(data['data']);
       }
     }
     debugPrint("❌ getSites ${response.statusCode}");
-    return [];
+    return <Map<String, dynamic>>[];
   }
 
   /// Fetch floors for a given building.
-  Future<List<Map<String, dynamic>>> getFloors(String token, String siteId) async {
-    final response = await _client.get(
-      Uri.parse("$_apiBase/buildings/$siteId/floors"),
-      headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+  Future<List<Map<String, dynamic>>> getFloors(
+    String token,
+    String siteId,
+  ) async {
+    final result = await _sendWithAuthRetry(
+      token,
+      (activeToken) => _httpClient.get(
+        Uri.parse("$_apiBase/buildings/$siteId/floors"),
+        headers: _authHeaders(activeToken)
+          ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+      ),
     );
-    _checkAuthResponse(response);
+    final response = result.response;
     if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      if (data is List) {
-        return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-      } else if (data is Map && data['data'] is List) {
-        return (data['data'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      final Object? data = jsonDecode(response.body);
+      if (data is List<Object?>) {
+        return _extractMapList(data);
+      } else if (data is Map<Object?, Object?>) {
+        return _extractMapList(data['data']);
       }
     }
     debugPrint("❌ getFloors ${response.statusCode}");
-    return [];
+    return <Map<String, dynamic>>[];
   }
 
   // Debug variable to store API keys
   static String lastApiKeys = "";
 
   /// Fetch ALL workspaces on a given floor (unfiltered).
-  Future<List<Map<String, dynamic>>> getAllWorkspaces(String token, String siteId, String floorId) async {
-    final List<Map<String, dynamic>> allWorkspaces = [];
+  Future<List<Map<String, dynamic>>> getAllWorkspaces(
+    String token,
+    String siteId,
+    String floorId,
+  ) async {
+    final List<Map<String, dynamic>> allWorkspaces = <Map<String, dynamic>>[];
     int offset = 0;
-    final int limit = 100;
-    
+    const int limit = 100;
+    const int maxPages = 20;
+    String currentToken = token;
+
     try {
-      while (true) {
-        final url = "$_apiBase/floors/$floorId/workspaces/all?length=$limit&offset=$offset";
-        final response = await _client.get(
-          Uri.parse(url),
-          headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      for (int page = 0; page < maxPages; page++) {
+        final url =
+            "$_apiBase/floors/$floorId/workspaces/all?length=$limit&offset=$offset";
+        final result = await _sendWithAuthRetry(
+          currentToken,
+          (activeToken) => _httpClient.get(
+            Uri.parse(url),
+            headers: _authHeaders(activeToken)
+              ..addAll(
+                const <String, String>{"roomz-source-type": "MyRoomzWeb"},
+              ),
+          ),
         );
-        _checkAuthResponse(response);
-        
+        currentToken = result.token;
+        final response = result.response;
+
         if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
+          final Object? data = jsonDecode(response.body);
           lastApiKeys = "GET 200 /workspaces/all";
-          
-          final List rawList = data is List
-              ? data
-              : (data is Map
-                  ? (data['data'] as List? ??
-                      data['workspaces'] as List? ??
-                      data['items'] as List? ??
-                      data['results'] as List? ??
-                      data['value'] as List? ??
-                      [])
-                  : []);
-                  
-          final list = rawList
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-                  
+
+          List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
+          if (data is List<Object?>) {
+            list = _extractMapList(data);
+          } else if (data is Map<Object?, Object?>) {
+            final Object? raw = data['data'] ??
+                data['workspaces'] ??
+                data['items'] ??
+                data['results'] ??
+                data['value'];
+            list = _extractMapList(raw);
+          }
+
           allWorkspaces.addAll(list);
-          
-          if (list.length < limit) break; // Reached the end
+
+          if (list.length < limit) break;
           offset += limit;
         } else {
           debugPrint("❌ GET /workspaces/all failed: ${response.statusCode}");
-          break; // Stop on error
+          break;
         }
       }
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("❌ Exception fetching /workspaces/all: $e");
     }
 
     if (allWorkspaces.isNotEmpty) {
-      // Normalize schema
-      for (var ws in allWorkspaces) {
+      for (final ws in allWorkspaces) {
         ws['id'] = ws['workspaceId'] ?? ws['id'];
-        ws['name'] = ws['name'] ?? ws['title'] ?? ws['label'] ?? ws['workspaceName'] ?? ws['id'];
+        ws['name'] = ws['name'] ??
+            ws['title'] ??
+            ws['label'] ??
+            ws['workspaceName'] ??
+            ws['id'];
         ws['type'] = ws['workspaceType'] ?? ws['type'] ?? "Desk";
       }
       return allWorkspaces;
     }
 
     lastApiKeys = "ERR: 404 everywhere";
-    return [];
+    return <Map<String, dynamic>>[];
   }
 
   /// Fetch only bookable (desk) workspaces — filters from getAllWorkspaces.
-  Future<List<Map<String, dynamic>>> getWorkspaces(String token, String siteId, String floorId) async {
+  Future<List<Map<String, dynamic>>> getWorkspaces(
+    String token,
+    String siteId,
+    String floorId,
+  ) async {
     final all = await getAllWorkspaces(token, siteId, floorId);
     return all.where(isBookableWorkspace).toList();
   }
 
   /// Fetch floor plan GeoJSON data for 2D map.
-  Future<List<Map<String, dynamic>>> getFloorPlanData(String token, String siteId, String floorId) async {
+  Future<List<Map<String, dynamic>>> getFloorPlanData(
+    String token,
+    String siteId,
+    String floorId,
+  ) async {
     try {
-      final response = await _client.get(
-        Uri.parse("$_apiBase/buildings/$siteId/floors/$floorId/data"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      final result = await _sendWithAuthRetry(
+        token,
+        (activeToken) => _httpClient.get(
+          Uri.parse("$_apiBase/buildings/$siteId/floors/$floorId/data"),
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
       );
-      _checkAuthResponse(response);
+      final response = result.response;
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is Map && data['features'] is List) {
-          return (data['features'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        } else if (data is List) {
-          return data
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
+        final Object? data = jsonDecode(response.body);
+        if (data is Map<Object?, Object?> && data['features'] is List<Object?>) {
+          return _extractMapList(data['features']);
+        } else if (data is List<Object?>) {
+          return _extractMapList(data);
         }
       }
       debugPrint("❌ getFloorPlanData ${response.statusCode}");
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("❌ Exception getFloorPlanData: $e");
     }
-    return [];
+    return <Map<String, dynamic>>[];
   }
 
   // ── Reservations ─────────────────────────────────────────────────────────
 
-
-
   Future<bool> reserveWorkspace(
-      String date, String token, String workspaceId) async {
-    final response = await _client.post(
-      Uri.parse("$_apiBase/bookings"),
-      headers: {
-        ..._authHeaders(token),
-        "roomz-source-type": "1",
-        "x-roomz-source-type": "1",
-      },
-      body: jsonEncode({
-        "workspaceId": workspaceId,
-        "localDate": date,
-        "timeSlot": "FullDay",
-      }),
+    String date,
+    String token,
+    String workspaceId,
+  ) async {
+    final result = await _sendWithAuthRetry(
+      token,
+      (activeToken) => _httpClient.post(
+        Uri.parse("$_apiBase/bookings"),
+        headers: <String, String>{
+          ..._authHeaders(activeToken),
+          "roomz-source-type": "1",
+          "x-roomz-source-type": "1",
+        },
+        body: jsonEncode(<String, String>{
+          "workspaceId": workspaceId,
+          "localDate": date,
+          "timeSlot": "FullDay",
+        }),
+      ),
     );
-    _checkAuthResponse(response);
+    final response = result.response;
     if (response.statusCode == 200 || response.statusCode == 201) {
       debugPrint("✅ Booked $date");
       return true;
@@ -310,7 +555,9 @@ class RoomzApiService {
       debugPrint("⚠️ Conflict (Already booked by someone else) $date");
       return false;
     } else if (response.statusCode == 400) {
-      debugPrint("⚠️ Not available (already booked elsewhere or unavailable) $date");
+      debugPrint(
+        "⚠️ Not available (already booked elsewhere or unavailable) $date",
+      );
       return false;
     } else {
       debugPrint("❌ reserveWorkspace ${response.statusCode} $date");
@@ -319,178 +566,218 @@ class RoomzApiService {
   }
 
   /// Fetch the user's own bookings.
-  /// Returns a record with:
-  ///   - `here`: dates booked at the given workspaceId
-  ///   - `elsewhere`: dates booked at ANY other workspace (same user, different desk)
-  ///   - `delegated`: map of delegated reservations
-  ///   - `myUserId`: current user ID
-  ///   - `allReservations`: map of all personal reservations with desk details: { date: { workspaceId: ..., workspaceName: ... } }
-  Future<({
-    Set<String> here,
-    Map<String, String> elsewhere,
-    Map<String, String> delegated,
-    String? myUserId,
-    Map<String, Map<String, String>> allReservations,
-  })> getMyReservations(
-        String token, String workspaceId) async {
-      try {
-        final response = await _client.get(
+  Future<
+      ({
+        Set<String> here,
+        Map<String, String> elsewhere,
+        Map<String, String> delegated,
+        String? myUserId,
+        Map<String, Map<String, String>> allReservations,
+      })> getMyReservations(String token, String workspaceId) async {
+    try {
+      final result = await _sendWithAuthRetry(
+        token,
+        (activeToken) => _httpClient.get(
           Uri.parse("$_apiBase/users/current/bookings"),
-          headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
-        );
-        _checkAuthResponse(response);
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final List bookings = data is List
-              ? data
-              : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
-          final Set<String> here = {};
-          final Map<String, String> elsewhere = {};
-          final Map<String, String> delegated = {};
-          final Map<String, Map<String, String>> allReservations = {};
-          
-          String? foundUserId;
-            for (final b in bookings) {
-              if (foundUserId == null && b['creator'] != null && b['creator']['id'] != null) {
-                foundUserId = b['creator']['id']?.toString();
-              }
-            if (b['type'] != 'Reserved') continue;
-            final dateStr = b['eventDate']?.toString().split('T').first;
-            if (dateStr == null) continue;
-            
-            // Check if it's delegated
-            bool isDelegated = false;
-            final creator = b['creator'] ?? b['bookedBy'];
-            final organizer = b['organizer'];
-            final bookedFor = b['bookedFor'] ?? b['user'];
-            String targetName = "Quelqu'un";
-            String? creatorDisplayName;
-            if (creator is Map) {
-              creatorDisplayName = creator['name']?.toString() ?? creator['displayName']?.toString();
-            } else if (creator is String) {
-              creatorDisplayName = creator;
-            }
-            
-            if (bookedFor != null) {
-              isDelegated = true;
-              if (bookedFor is Map) {
-                targetName = bookedFor['name'] ?? bookedFor['displayName'] ?? targetName;
-              } else if (bookedFor is String) {
-                targetName = bookedFor;
-              }
-            } else if (creator != null && organizer != null) {
-               final creatorId = creator['id'];
-               final orgId = organizer['id'];
-               final creatorEmail = creator['email']?.toString().toLowerCase();
-               final orgEmail = organizer['email']?.toString().toLowerCase();
-               final creatorName = creator['name'];
-               final orgName = organizer['name'] ?? organizer['displayName'];
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
+      );
+      final response = result.response;
+      if (response.statusCode == 200) {
+        final Object? data = jsonDecode(response.body);
+        final List<Map<String, dynamic>> bookings = data is List<Object?>
+            ? _extractMapList(data)
+            : (data is Map<Object?, Object?>
+                ? _extractMapList(data['bookings'] ?? data['data'])
+                : <Map<String, dynamic>>[]);
 
-               if (creatorId != null && orgId != null && creatorId != orgId) {
-                  isDelegated = true;
-                  targetName = orgName ?? targetName;
-               } else if (creatorEmail != null && orgEmail != null && creatorEmail != orgEmail) {
-                  isDelegated = true;
-                  targetName = orgName ?? organizer['email'] ?? targetName;
-               } else if (creatorName != null && orgName != null && creatorName != orgName) {
-                  isDelegated = true;
-                  targetName = orgName;
-               }
+        final Set<String> here = <String>{};
+        final Map<String, String> elsewhere = <String, String>{};
+        final Map<String, String> delegated = <String, String>{};
+        final Map<String, Map<String, String>> allReservations =
+            <String, Map<String, String>>{};
+
+        String? foundUserId;
+        for (final b in bookings) {
+          final creatorMap = _asStringMap(b['creator']);
+          if (foundUserId == null &&
+              creatorMap != null &&
+              creatorMap['id'] != null) {
+            foundUserId = creatorMap['id']?.toString();
+          }
+          if (b['type'] != 'Reserved') continue;
+          final dateStr = b['eventDate']?.toString().split('T').first;
+          if (dateStr == null || dateStr.isEmpty) continue;
+
+          bool isDelegated = false;
+          final Object? creatorRaw = b['creator'] ?? b['bookedBy'];
+          final creatorObj = _asStringMap(creatorRaw);
+          final organizerObj = _asStringMap(b['organizer']);
+          final Object? bookedForRaw = b['bookedFor'] ?? b['user'];
+          final bookedForObj = _asStringMap(bookedForRaw);
+
+          String targetName = "Quelqu'un";
+          String? creatorDisplayName;
+          if (creatorObj != null) {
+            creatorDisplayName = creatorObj['name']?.toString() ??
+                creatorObj['displayName']?.toString();
+          } else if (creatorRaw is String) {
+            creatorDisplayName = creatorRaw;
+          }
+
+          if (bookedForRaw != null) {
+            isDelegated = true;
+            if (bookedForObj != null) {
+              targetName = bookedForObj['name']?.toString() ??
+                  bookedForObj['displayName']?.toString() ??
+                  targetName;
+            } else if (bookedForRaw is String) {
+              targetName = bookedForRaw;
             }
-            
-            final wsId = b['workspaceId']?.toString() ?? '';
-            final rawWsName = b['workspaceName']?.toString() ?? b['workspaceTitle']?.toString() ?? b['workspace']?['name']?.toString();
-            final wsName = (rawWsName != null && rawWsName.isNotEmpty)
-                ? rawWsName
-                : (wsId.isNotEmpty && wsId.toLowerCase() == workspaceId.toLowerCase() ? "Mon bureau" : "Ailleurs");
-            
-            if (isDelegated) {
-               final location = wsName;
-               // eventId in API has format "workspaceId/eventUUID" — extract just the UUID part
-               final rawEventId = b['eventId']?.toString() ?? '';
-               final evId = rawEventId.contains('/') ? rawEventId.split('/')[1] : rawEventId;
-               final orgId = organizer?['id']?.toString() ?? organizer?['email']?.toString() ?? '';
-               final cName = creatorDisplayName ?? '';
-               final entryVal = '$wsId|$targetName|$location|$evId|$orgId|$cName';
-               // If multiple delegated reservations exist for this day, prioritize matching current workspaceId
-               if (!delegated.containsKey(dateStr) || wsId.toLowerCase() == workspaceId.toLowerCase()) {
-                 delegated[dateStr] = entryVal;
-               }
-            } else {
-              allReservations[dateStr] = {
-                'workspaceId': wsId,
-                'workspaceName': wsName,
-              };
-              if (wsId.isNotEmpty && wsId.toLowerCase() == workspaceId.toLowerCase()) {
-                here.add(dateStr);
-              } else {
-                elsewhere[dateStr] = wsName;
-              }
+          } else if (creatorObj != null && organizerObj != null) {
+            final creatorId = creatorObj['id']?.toString();
+            final orgId = organizerObj['id']?.toString();
+            final creatorEmail = creatorObj['email']?.toString().toLowerCase();
+            final orgEmail = organizerObj['email']?.toString().toLowerCase();
+            final creatorName = creatorObj['name']?.toString();
+            final orgName = organizerObj['name']?.toString() ??
+                organizerObj['displayName']?.toString();
+
+            if (creatorId != null && orgId != null && creatorId != orgId) {
+              isDelegated = true;
+              targetName = orgName ?? targetName;
+            } else if (creatorEmail != null &&
+                orgEmail != null &&
+                creatorEmail != orgEmail) {
+              isDelegated = true;
+              targetName =
+                  orgName ?? organizerObj['email']?.toString() ?? targetName;
+            } else if (creatorName != null &&
+                orgName != null &&
+                creatorName != orgName) {
+              isDelegated = true;
+              targetName = orgName;
             }
           }
-          return (
-            here: here,
-            elsewhere: elsewhere,
-            delegated: delegated,
-            myUserId: foundUserId,
-            allReservations: allReservations,
-          );
+
+          final wsId = b['workspaceId']?.toString() ?? '';
+          final wsNested = _asStringMap(b['workspace']);
+          final rawWsName = b['workspaceName']?.toString() ??
+              b['workspaceTitle']?.toString() ??
+              wsNested?['name']?.toString();
+          final wsName = (rawWsName != null && rawWsName.isNotEmpty)
+              ? rawWsName
+              : (wsId.isNotEmpty &&
+                      wsId.toLowerCase() == workspaceId.toLowerCase()
+                  ? "Mon bureau"
+                  : "Ailleurs");
+
+          if (isDelegated) {
+            final location = wsName;
+            final rawEventId = b['eventId']?.toString() ?? '';
+            final evId = rawEventId.contains('/')
+                ? rawEventId.split('/')[1]
+                : rawEventId;
+            final orgId = organizerObj?['id']?.toString() ??
+                organizerObj?['email']?.toString() ??
+                '';
+            final cName = creatorDisplayName ?? '';
+            final entryVal = '$wsId|$targetName|$location|$evId|$orgId|$cName';
+            if (!delegated.containsKey(dateStr) ||
+                wsId.toLowerCase() == workspaceId.toLowerCase()) {
+              delegated[dateStr] = entryVal;
+            }
+          } else {
+            allReservations[dateStr] = <String, String>{
+              'workspaceId': wsId,
+              'workspaceName': wsName,
+            };
+            if (wsId.isNotEmpty &&
+                wsId.toLowerCase() == workspaceId.toLowerCase()) {
+              here.add(dateStr);
+            } else {
+              elsewhere[dateStr] = wsName;
+            }
+          }
         }
-        debugPrint("❌ getMyReservations ${response.statusCode}");
-      } catch (e) {
-        OfflineStateManager.instance.reportException(e);
-        debugPrint("❌ Exception getMyReservations: $e");
+        return (
+          here: here,
+          elsewhere: elsewhere,
+          delegated: delegated,
+          myUserId: foundUserId,
+          allReservations: allReservations,
+        );
       }
-      return (
-        here: <String>{},
-        elsewhere: <String, String>{},
-        delegated: <String, String>{},
-        myUserId: null,
-        allReservations: <String, Map<String, String>>{},
-      );
+      debugPrint("❌ getMyReservations ${response.statusCode}");
+    } catch (e) {
+      OfflineStateManager.instance.reportException(e);
+      debugPrint("❌ Exception getMyReservations: $e");
     }
+    return (
+      here: <String>{},
+      elsewhere: <String, String>{},
+      delegated: <String, String>{},
+      myUserId: null,
+      allReservations: <String, Map<String, String>>{},
+    );
+  }
 
   /// Finds a booking on a specific date (any workspace) and cancels it.
-  /// Optionally targets a specific [workspaceId], [forUserId], or [eventId] so other
-  /// bookings on the same date (e.g. multi-delegation) are never mistakenly deleted.
-  Future<bool> cancelBookingByDate(String token, String dateStr, {String? workspaceId, String? forUserId, String? eventId}) async {
+  Future<bool> cancelBookingByDate(
+    String token,
+    String dateStr, {
+    String? workspaceId,
+    String? forUserId,
+    String? eventId,
+  }) async {
     try {
-      final response = await _client.get(
-        Uri.parse("$_apiBase/users/current/bookings"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      final reqResult = await _sendWithAuthRetry(
+        token,
+        (activeToken) => _httpClient.get(
+          Uri.parse("$_apiBase/users/current/bookings"),
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
       );
-      _checkAuthResponse(response);
+      final currentToken = reqResult.token;
+      final response = reqResult.response;
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List bookings = data is List
-            ? data
-            : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
+        final Object? data = jsonDecode(response.body);
+        final List<Map<String, dynamic>> bookings = data is List<Object?>
+            ? _extractMapList(data)
+            : (data is Map<Object?, Object?>
+                ? _extractMapList(data['bookings'] ?? data['data'])
+                : <Map<String, dynamic>>[]);
+
         for (final b in bookings) {
           if (b['type'] != 'Reserved') continue;
           final bDate = b['eventDate']?.toString().split('T').first;
           if (bDate != dateStr) continue;
 
+          final wsNested = _asStringMap(b['workspace']);
           final bWsId = b['workspaceId']?.toString() ??
-              b['workspace']?['id']?.toString() ??
-              b['workspace']?['workspaceId']?.toString();
+              wsNested?['id']?.toString() ??
+              wsNested?['workspaceId']?.toString();
 
-          // Target strictly the requested workspace if provided
           if (workspaceId != null && workspaceId.isNotEmpty) {
-            if (bWsId != null && bWsId.toLowerCase() != workspaceId.toLowerCase()) {
+            if (bWsId != null &&
+                bWsId.toLowerCase() != workspaceId.toLowerCase()) {
               continue;
             }
           }
 
-          final bCreator = b['creator'];
-          final bOrganizer = b['organizer'];
-          final bBookedFor = b['bookedFor'];
+          final bCreator = _asStringMap(b['creator']);
+          final bOrganizer = _asStringMap(b['organizer']);
+          final Object? bBookedFor = b['bookedFor'];
           bool isDelegatedBooking = false;
           if (bBookedFor != null) {
             isDelegatedBooking = true;
           } else if (bCreator != null && bOrganizer != null) {
             if (bCreator['id'] != null && bOrganizer['id'] != null) {
               isDelegatedBooking = bCreator['id'] != bOrganizer['id'];
-            } else if (bCreator['email'] != null && bOrganizer['email'] != null) {
+            } else if (bCreator['email'] != null &&
+                bOrganizer['email'] != null) {
               isDelegatedBooking = bCreator['email'] != bOrganizer['email'];
             } else if (bCreator['name'] != null && bOrganizer['name'] != null) {
               isDelegatedBooking = bCreator['name'] != bOrganizer['name'];
@@ -500,150 +787,258 @@ class RoomzApiService {
           if (forUserId != null && forUserId.isNotEmpty) {
             if (!isDelegatedBooking) continue;
             final orgId = bOrganizer?['id']?.toString();
-            final orgEmail = bOrganizer?['email']?.toString() ?? bOrganizer?['mail']?.toString();
-            final orgName = bOrganizer?['name']?.toString() ?? bOrganizer?['displayName']?.toString();
+            final orgEmail = bOrganizer?['email']?.toString() ??
+                bOrganizer?['mail']?.toString();
+            final orgName = bOrganizer?['name']?.toString() ??
+                bOrganizer?['displayName']?.toString();
             final targetUserId = forUserId.toLowerCase();
-            final matchesDelegate = (orgId != null && orgId.toLowerCase() == targetUserId) ||
-                (orgEmail != null && orgEmail.toLowerCase() == targetUserId) ||
-                (orgName != null && orgName.toLowerCase() == targetUserId);
-            if ((orgId != null || orgEmail != null || orgName != null) && !matchesDelegate) {
+            final matchesDelegate =
+                (orgId != null && orgId.toLowerCase() == targetUserId) ||
+                    (orgEmail != null &&
+                        orgEmail.toLowerCase() == targetUserId) ||
+                    (orgName != null && orgName.toLowerCase() == targetUserId);
+            if ((orgId != null || orgEmail != null || orgName != null) &&
+                !matchesDelegate) {
               continue;
             }
           } else if (workspaceId == null || workspaceId.isEmpty) {
-            if (isDelegatedBooking) continue; // Skip delegation, we want to cancel personal booking
+            if (isDelegatedBooking) continue;
           }
 
           final targetWsId = bWsId ?? workspaceId;
-          final bEventId = eventId ?? b['eventId']?.toString() ?? b['id']?.toString();
+          final bEventId =
+              eventId ?? b['eventId']?.toString() ?? b['id']?.toString();
           if (targetWsId != null && targetWsId.isNotEmpty) {
-            return await cancelReservation(dateStr, token, targetWsId, eventId: bEventId, forUserId: forUserId);
+            return await cancelReservation(
+              dateStr,
+              currentToken,
+              targetWsId,
+              eventId: bEventId,
+              forUserId: forUserId,
+            );
           }
         }
       }
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("❌ Exception cancelBookingByDate: $e");
     }
     return false;
   }
 
   /// Fetch dates where the workspace is booked by someone ELSE.
-  /// Uses the POST /floors/{floorId}/workspaces/calendars endpoint for each date.
-  Future<({Map<String, String> occupiedByOthers, Map<String, String> delegatedBookings, Set<String> delegatedHere, Set<String> delegatedElsewhere})> getWorkspaceOccupancy(String token, String workspaceId, String floorId, List<String> dates, String? myUserId, Map<String, String> elsewhereMap) async {
-    final Map<String, String> occupied = {};
-    final Map<String, String> delegated = {};
-    final Set<String> delegatedHere = {};
-    final Set<String> delegatedElsewhere = {};
-    // Execute in parallel chunks of 15 to avoid overwhelming the server
+  /// Paginates by `length=100` (`offset = 0, 100, 200...` up to 10 pages = 1000 desks)
+  /// to support large floors with >100 desks.
+  Future<
+      ({
+        Map<String, String> occupiedByOthers,
+        Map<String, String> delegatedBookings,
+        Set<String> delegatedHere,
+        Set<String> delegatedElsewhere,
+      })> getWorkspaceOccupancy(
+    String token,
+    String workspaceId,
+    String floorId,
+    List<String> dates,
+    String? myUserId,
+    Map<String, String> elsewhereMap,
+  ) async {
+    final Map<String, String> occupied = <String, String>{};
+    final Map<String, String> delegated = <String, String>{};
+    final Set<String> delegatedHere = <String>{};
+    final Set<String> delegatedElsewhere = <String>{};
+
+    const int pageSize = 100;
+    const int maxPages = 10;
+
+    // Execute in parallel chunks of 15 dates to avoid overwhelming the server
     for (int i = 0; i < dates.length; i += 15) {
       final chunk = dates.skip(i).take(15);
-      await Future.wait(chunk.map((date) async {
-        try {
-          final payload = {
-            "availableWorkspaceOnly": false,
-            "date": date,
-            "timeSlot": "FullDay",
-            "tagIds": [],
-            "workspaceType": "Desk"
-          };
-          final response = await _client.post(
-            Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=100&offset=0"),
-            headers: _authHeaders(token)..addAll({
-              "roomz-source-type": "MyRoomzWeb",
-              "Content-Type": "application/json"
-            }),
-            body: jsonEncode(payload)
-          );
-          _checkAuthResponse(response);
-          if (response.statusCode == 200) {
-            final data = jsonDecode(response.body);
-            final items = data is List
-                ? data
-                : (data is Map
-                    ? (data['data'] ?? data['items'] ?? data['workspaces'])
-                    : null);
-            if (items is List) {
+      await Future.wait(
+        chunk.map((String date) async {
+          try {
+            String currentToken = token;
+            final payload = <String, Object>{
+              "availableWorkspaceOnly": false,
+              "date": date,
+              "timeSlot": "FullDay",
+              "tagIds": const <String>[],
+              "workspaceType": "Desk",
+            };
+
+            for (int page = 0; page < maxPages; page++) {
+              final int offset = page * pageSize;
+              final reqResult = await _sendWithAuthRetry(
+                currentToken,
+                (activeToken) => _httpClient.post(
+                  Uri.parse(
+                    "$_apiBase/floors/$floorId/workspaces/calendars?length=$pageSize&offset=$offset",
+                  ),
+                  headers: _authHeaders(activeToken)
+                    ..addAll(const <String, String>{
+                      "roomz-source-type": "MyRoomzWeb",
+                      "Content-Type": "application/json",
+                    }),
+                  body: jsonEncode(payload),
+                ),
+              );
+              currentToken = reqResult.token;
+              final response = reqResult.response;
+              if (response.statusCode != 200) break;
+
+              final Object? data = jsonDecode(response.body);
+              final List<Map<String, dynamic>> items = data is List<Object?>
+                  ? _extractMapList(data)
+                  : (data is Map<Object?, Object?>
+                      ? _extractMapList(
+                          data['data'] ?? data['items'] ?? data['workspaces'],
+                        )
+                      : <Map<String, dynamic>>[]);
+
+              if (items.isEmpty) break;
+
               for (final item in items) {
-                  final isMyDesk = (item['workspaceId'] == workspaceId || item['id'] == workspaceId);
-                  
-                  if (item['status'] == 'Reserved') {
-                    final bookedTimeSlot = item['bookedTimeSlot'];
-                    if (bookedTimeSlot != null) {
-                      final creator = bookedTimeSlot['creator'] ?? bookedTimeSlot['bookedBy'];
-                      final organizer = bookedTimeSlot['organizer'];
-                      final bookedFor = bookedTimeSlot['bookedFor'] ?? bookedTimeSlot['user'] ?? bookedTimeSlot['owner'];
-                      
-                      bool isDelegated = false;
-                      String delegateName = "Quelqu'un";
-                      
-                      final creatorId = creator?['id']?.toString() ?? creator?['userId']?.toString();
-                      final creatorName = creator?['name']?.toString() ?? creator?['displayName']?.toString() ?? (creator is String ? creator : null);
-                      final creatorEmail = creator?['email']?.toString().toLowerCase();
-                      
-                      final organizerId = organizer?['id']?.toString() ?? organizer?['userId']?.toString();
-                      final organizerName = organizer?['name']?.toString() ?? organizer?['displayName']?.toString() ?? (organizer is String ? organizer : null) ?? organizer?['email']?.toString();
-                      final organizerEmail = organizer?['email']?.toString().toLowerCase();
-                      
-                      final bool isCreatorMe = myUserId != null && creatorId != null && creatorId == myUserId;
-                      
-                      if (isCreatorMe) {
-                        if (bookedFor != null) {
+                final isMyDesk =
+                    item['workspaceId'] == workspaceId || item['id'] == workspaceId;
+
+                if (item['status'] == 'Reserved') {
+                  final bookedTimeSlot = _asStringMap(item['bookedTimeSlot']);
+                  if (bookedTimeSlot != null) {
+                    final Object? creatorRaw =
+                        bookedTimeSlot['creator'] ?? bookedTimeSlot['bookedBy'];
+                    final creatorObj = _asStringMap(creatorRaw);
+                    final Object? organizerRaw = bookedTimeSlot['organizer'];
+                    final organizerObj = _asStringMap(organizerRaw);
+                    final Object? bookedForRaw = bookedTimeSlot['bookedFor'] ??
+                        bookedTimeSlot['user'] ??
+                        bookedTimeSlot['owner'];
+                    final bookedForObj = _asStringMap(bookedForRaw);
+
+                    bool isDelegated = false;
+                    String delegateName = "Quelqu'un";
+
+                    final creatorId = creatorObj?['id']?.toString() ??
+                        creatorObj?['userId']?.toString();
+                    final creatorName = creatorObj?['name']?.toString() ??
+                        creatorObj?['displayName']?.toString() ??
+                        (creatorRaw is String ? creatorRaw : null);
+                    final creatorEmail =
+                        creatorObj?['email']?.toString().toLowerCase();
+
+                    final organizerId = organizerObj?['id']?.toString() ??
+                        organizerObj?['userId']?.toString();
+                    final organizerName = organizerObj?['name']?.toString() ??
+                        organizerObj?['displayName']?.toString() ??
+                        (organizerRaw is String ? organizerRaw : null) ??
+                        organizerObj?['email']?.toString();
+                    final organizerEmail =
+                        organizerObj?['email']?.toString().toLowerCase();
+
+                    final bool isCreatorMe = myUserId != null &&
+                        creatorId != null &&
+                        creatorId == myUserId;
+
+                    if (isCreatorMe) {
+                      if (bookedForRaw != null) {
+                        isDelegated = true;
+                        final targetName = bookedForObj != null
+                            ? (bookedForObj['name']?.toString() ??
+                                bookedForObj['displayName']?.toString() ??
+                                'Collègue')
+                            : bookedForRaw.toString();
+                        final wsId = item['workspaceId']?.toString() ??
+                            item['id']?.toString() ??
+                            workspaceId;
+                        final location = isMyDesk
+                            ? 'Mon bureau'
+                            : (elsewhereMap[date] ??
+                                item['workspaceName']?.toString() ??
+                                item['name']?.toString() ??
+                                'Autre bureau');
+                        final evId = bookedTimeSlot['eventId']?.toString() ??
+                            bookedTimeSlot['id']?.toString() ??
+                            '';
+                        final orgId = bookedForObj?['id']?.toString() ?? "";
+                        final cName = creatorName ?? 'vous';
+                        delegateName =
+                            "$wsId|$targetName|$location|$evId|$orgId|$cName";
+                      } else if (organizerRaw != null) {
+                        final bool diff =
+                            (organizerId != null && creatorId != organizerId) ||
+                                (organizerEmail != null &&
+                                    creatorEmail != null &&
+                                    organizerEmail != creatorEmail) ||
+                                (organizerName != null &&
+                                    creatorName != null &&
+                                    organizerName.toLowerCase() !=
+                                        creatorName.toLowerCase());
+                        if (diff) {
                           isDelegated = true;
-                          final targetName = bookedFor is Map ? (bookedFor['name'] ?? bookedFor['displayName'] ?? 'Collègue') : bookedFor.toString();
-                          final wsId = item['workspaceId']?.toString() ?? item['id']?.toString() ?? workspaceId;
-                          final location = isMyDesk ? 'Mon bureau' : (elsewhereMap[date] ?? item['workspaceName']?.toString() ?? item['name']?.toString() ?? 'Autre bureau');
-                          final evId = bookedTimeSlot['eventId']?.toString() ?? bookedTimeSlot['id']?.toString() ?? '';
-                          final orgId = (bookedFor is Map ? bookedFor['id']?.toString() : null) ?? "";
+                          final wsId = item['workspaceId']?.toString() ??
+                              item['id']?.toString() ??
+                              workspaceId;
+                          final location = isMyDesk
+                              ? 'Mon bureau'
+                              : (elsewhereMap[date] ??
+                                  item['workspaceName']?.toString() ??
+                                  item['name']?.toString() ??
+                                  'Autre bureau');
+                          final evId = bookedTimeSlot['eventId']?.toString() ??
+                              bookedTimeSlot['id']?.toString() ??
+                              '';
+                          final orgId = organizerId ?? organizerEmail ?? "";
                           final cName = creatorName ?? 'vous';
-                          delegateName = "$wsId|$targetName|$location|$evId|$orgId|$cName";
-                        } else if (organizer != null) {
-                          final bool diff = (organizerId != null && creatorId != organizerId) ||
-                              (organizerEmail != null && creatorEmail != null && organizerEmail != creatorEmail) ||
-                              (organizerName != null && creatorName != null && organizerName.toLowerCase() != creatorName.toLowerCase());
-                          if (diff) {
-                            isDelegated = true;
-                            final wsId = item['workspaceId']?.toString() ?? item['id']?.toString() ?? workspaceId;
-                            final location = isMyDesk ? 'Mon bureau' : (elsewhereMap[date] ?? item['workspaceName']?.toString() ?? item['name']?.toString() ?? 'Autre bureau');
-                            final evId = bookedTimeSlot['eventId']?.toString() ?? bookedTimeSlot['id']?.toString() ?? '';
-                            final orgId = organizerId ?? organizerEmail ?? "";
-                            final cName = creatorName ?? 'vous';
-                            delegateName = "$wsId|${organizerName ?? 'Quelqu\'un'}|$location|$evId|$orgId|$cName";
-                          }
+                          delegateName =
+                              "$wsId|${organizerName ?? 'Quelqu\'un'}|$location|$evId|$orgId|$cName";
                         }
                       }
-                      
-                      if (isDelegated) {
-                         if (!delegated.containsKey(date) || isMyDesk) {
-                           delegated[date] = delegateName;
-                         }
-                         if (isMyDesk) {
-                           delegatedHere.add(date);
-                         } else {
-                           delegatedElsewhere.add(date);
-                         }
-                      } else if (isMyDesk) {
-                         // Don't mark as occupied by others if it's actually booked by US
-                         if (creator == null || creatorId != myUserId) {
-                           final occupantLabel = DelegationDisplayHelper.extractReservationOccupant(
-                             Map<String, dynamic>.from(bookedTimeSlot),
-                             myUserId: myUserId,
-                           );
-                           occupied[date] = occupantLabel;
-                         }
+                    }
+
+                    if (isDelegated) {
+                      if (!delegated.containsKey(date) || isMyDesk) {
+                        delegated[date] = delegateName;
+                      }
+                      if (isMyDesk) {
+                        delegatedHere.add(date);
+                      } else {
+                        delegatedElsewhere.add(date);
+                      }
+                    } else if (isMyDesk) {
+                      if (creatorRaw == null || creatorId != myUserId) {
+                        final occupantLabel =
+                            DelegationDisplayHelper.extractReservationOccupant(
+                          bookedTimeSlot,
+                          myUserId: myUserId,
+                        );
+                        occupied[date] = occupantLabel;
                       }
                     }
                   }
                 }
+              }
+
+              if (items.length < pageSize) break;
             }
-          }
-        } catch (_) {}
-      }));
+          } catch (_) {}
+        }),
+      );
     }
-    return (occupiedByOthers: occupied, delegatedBookings: delegated, delegatedHere: delegatedHere, delegatedElsewhere: delegatedElsewhere);
+
+    return (
+      occupiedByOthers: occupied,
+      delegatedBookings: delegated,
+      delegatedHere: delegatedHere,
+      delegatedElsewhere: delegatedElsewhere,
+    );
   }
 
   Future<bool> cancelReservation(
-      String date, String token, String workspaceId, {String? eventId, String? forUserId}) async {
-    // In case caller passes workspaceId and date swapped
+    String date,
+    String token,
+    String workspaceId, {
+    String? eventId,
+    String? forUserId,
+  }) async {
     String effectiveDate = date;
     String effectiveWorkspaceId = workspaceId;
     final dateRegex = RegExp(r'^\d{4}-\d{2}-\d{2}$');
@@ -652,16 +1047,23 @@ class RoomzApiService {
       effectiveWorkspaceId = date;
     }
 
+    String currentToken = token;
     String? foundBookingId;
-    // If we already have the exact eventId from the calendar, use it!
+
     if (eventId != null && eventId.isNotEmpty) {
-      final cleanEventId = eventId.contains('/') ? eventId.split('/')[1] : eventId;
+      final cleanEventId =
+          eventId.contains('/') ? eventId.split('/')[1] : eventId;
       debugPrint("⚠️ Try 0: DELETE /bookings/$cleanEventId");
-      final delResp = await _client.delete(
-        Uri.parse("$_apiBase/bookings/$cleanEventId"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      final delResult = await _sendWithAuthRetry(
+        currentToken,
+        (activeToken) => _httpClient.delete(
+          Uri.parse("$_apiBase/bookings/$cleanEventId"),
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
       );
-      _checkAuthResponse(delResp);
+      currentToken = delResult.token;
+      final delResp = delResult.response;
       if (delResp.statusCode == 200 || delResp.statusCode == 204) {
         debugPrint("✅ Cancelled by eventId: $cleanEventId");
         return true;
@@ -670,101 +1072,132 @@ class RoomzApiService {
       foundBookingId = cleanEventId;
     }
 
-    // First, try to find the exact booking ID from /users/current/bookings
     try {
-      final getResp = await _client.get(
-        Uri.parse("$_apiBase/users/current/bookings"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      final getResult = await _sendWithAuthRetry(
+        currentToken,
+        (activeToken) => _httpClient.get(
+          Uri.parse("$_apiBase/users/current/bookings"),
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
       );
-      _checkAuthResponse(getResp);
+      currentToken = getResult.token;
+      final getResp = getResult.response;
       if (getResp.statusCode == 200) {
-        final data = jsonDecode(getResp.body);
-        final List bookings = data is List
-            ? data
-            : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
+        final Object? data = jsonDecode(getResp.body);
+        final List<Map<String, dynamic>> bookings = data is List<Object?>
+            ? _extractMapList(data)
+            : (data is Map<Object?, Object?>
+                ? _extractMapList(data['bookings'] ?? data['data'])
+                : <Map<String, dynamic>>[]);
+
         for (final b in bookings) {
           if (b['type'] != 'Reserved') continue;
           final bDate = b['eventDate']?.toString().split('T').first;
           if (bDate != effectiveDate) continue;
 
+          final wsNested = _asStringMap(b['workspace']);
           final bWsId = b['workspaceId']?.toString() ??
-              b['workspace']?['id']?.toString() ??
-              b['workspace']?['workspaceId']?.toString() ??
+              wsNested?['id']?.toString() ??
+              wsNested?['workspaceId']?.toString() ??
               b['id']?.toString();
 
-          // CRITICAL: Strictly target the matching workspace ID (case-insensitive)
-          if (effectiveWorkspaceId.isNotEmpty && bWsId != null &&
+          if (effectiveWorkspaceId.isNotEmpty &&
+              bWsId != null &&
               bWsId.toLowerCase() != effectiveWorkspaceId.toLowerCase()) {
             continue;
           }
 
-          // Determine if this is a delegated booking (organizer != creator or bookedFor present)
-          // NOTE: organizer may have no 'id' field (external/guest accounts) — fall back to email/name comparison
-          final bCreator = b['creator'];
-          final bOrganizer = b['organizer'];
-          final bBookedFor = b['bookedFor'];
+          final bCreator = _asStringMap(b['creator']);
+          final bOrganizer = _asStringMap(b['organizer']);
+          final Object? bBookedFor = b['bookedFor'];
+          final bBookedForMap = _asStringMap(bBookedFor);
           bool isDelegatedBooking = false;
           if (bBookedFor != null) {
             isDelegatedBooking = true;
           } else if (bCreator != null && bOrganizer != null) {
             if (bCreator['id'] != null && bOrganizer['id'] != null) {
               isDelegatedBooking = bCreator['id'] != bOrganizer['id'];
-            } else if (bCreator['email'] != null && bOrganizer['email'] != null) {
+            } else if (bCreator['email'] != null &&
+                bOrganizer['email'] != null) {
               isDelegatedBooking = bCreator['email'] != bOrganizer['email'];
             } else if (bCreator['name'] != null && bOrganizer['name'] != null) {
               isDelegatedBooking = bCreator['name'] != bOrganizer['name'];
             }
           }
 
-          // If forUserId is set → we want to cancel a delegation → skip personal bookings
-          // If forUserId is NOT set → we want to cancel a personal booking → skip delegations
           if (forUserId != null && forUserId.isNotEmpty) {
-            if (!isDelegatedBooking) continue; // skip personal, we want delegation
+            if (!isDelegatedBooking) continue;
             final orgId = bOrganizer?['id']?.toString();
-            final orgEmail = bOrganizer?['email']?.toString() ?? bOrganizer?['mail']?.toString();
-            final orgName = bOrganizer?['name']?.toString() ?? bOrganizer?['displayName']?.toString();
-            final bookedForId = bBookedFor is Map ? bBookedFor['id']?.toString() : null;
-            final bookedForEmail = bBookedFor is Map ? (bBookedFor['email']?.toString() ?? bBookedFor['mail']?.toString()) : null;
-            final bookedForName = bBookedFor is Map ? bBookedFor['name']?.toString() : (bBookedFor is String ? bBookedFor : null);
+            final orgEmail = bOrganizer?['email']?.toString() ??
+                bOrganizer?['mail']?.toString();
+            final orgName = bOrganizer?['name']?.toString() ??
+                bOrganizer?['displayName']?.toString();
+            final bookedForId = bBookedForMap?['id']?.toString();
+            final bookedForEmail = bBookedForMap?['email']?.toString() ??
+                bBookedForMap?['mail']?.toString();
+            final bookedForName = bBookedForMap?['name']?.toString() ??
+                (bBookedFor is String ? bBookedFor : null);
 
             final targetUserId = forUserId.toLowerCase();
-            final matchesDelegate = (orgId != null && orgId.toLowerCase() == targetUserId) ||
-                (orgEmail != null && orgEmail.toLowerCase() == targetUserId) ||
-                (orgName != null && orgName.toLowerCase() == targetUserId) ||
-                (bookedForId != null && bookedForId.toLowerCase() == targetUserId) ||
-                (bookedForEmail != null && bookedForEmail.toLowerCase() == targetUserId) ||
-                (bookedForName != null && bookedForName.toString().toLowerCase() == targetUserId);
+            final matchesDelegate =
+                (orgId != null && orgId.toLowerCase() == targetUserId) ||
+                    (orgEmail != null &&
+                        orgEmail.toLowerCase() == targetUserId) ||
+                    (orgName != null && orgName.toLowerCase() == targetUserId) ||
+                    (bookedForId != null &&
+                        bookedForId.toLowerCase() == targetUserId) ||
+                    (bookedForEmail != null &&
+                        bookedForEmail.toLowerCase() == targetUserId) ||
+                    (bookedForName != null &&
+                        bookedForName.toLowerCase() == targetUserId);
 
-            if ((orgId != null || orgEmail != null || orgName != null || bookedForId != null || bookedForEmail != null) && !matchesDelegate) {
+            if ((orgId != null ||
+                    orgEmail != null ||
+                    orgName != null ||
+                    bookedForId != null ||
+                    bookedForEmail != null) &&
+                !matchesDelegate) {
               continue;
             }
           } else {
-            if (isDelegatedBooking) continue; // skip delegation, we want personal
+            if (isDelegatedBooking) continue;
           }
 
-          foundBookingId = b['eventId']?.toString() ?? b['id']?.toString() ?? b['bookingId']?.toString();
+          foundBookingId = b['eventId']?.toString() ??
+              b['id']?.toString() ??
+              b['bookingId']?.toString();
           if (foundBookingId != null && foundBookingId.contains('/')) {
             foundBookingId = foundBookingId.split('/')[1];
           }
           if (foundBookingId != null) {
-            debugPrint("⚠️ Try 1: DELETE /bookings/$foundBookingId (delegated=$isDelegatedBooking, ws=$bWsId)");
-            final delResp = await _client.delete(
-              Uri.parse("$_apiBase/bookings/$foundBookingId"),
-              headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+            final targetBookingId = foundBookingId;
+            debugPrint(
+              "⚠️ Try 1: DELETE /bookings/$targetBookingId (delegated=$isDelegatedBooking, ws=$bWsId)",
             );
-            _checkAuthResponse(delResp);
+            final delResult = await _sendWithAuthRetry(
+              currentToken,
+              (activeToken) => _httpClient.delete(
+                Uri.parse("$_apiBase/bookings/$targetBookingId"),
+                headers: _authHeaders(activeToken)
+                  ..addAll(
+                    const <String, String>{"roomz-source-type": "MyRoomzWeb"},
+                  ),
+              ),
+            );
+            currentToken = delResult.token;
+            final delResp = delResult.response;
             if (delResp.statusCode == 200 || delResp.statusCode == 204) {
-              debugPrint("✅ Cancelled by URL ID: $foundBookingId");
+              debugPrint("✅ Cancelled by URL ID: $targetBookingId");
               return true;
             }
             debugPrint("❌ Try 1 FAILED: ${delResp.statusCode}");
-            break; // Targeted the specific booking, do not loop to other bookings!
+            break;
           }
         }
       }
     } catch (_) {}
-    
-    // Fallback to body-based DELETE, injecting the ID if found
+
     final payload = <String, dynamic>{
       "workspaceId": effectiveWorkspaceId,
       "localDate": effectiveDate,
@@ -777,41 +1210,50 @@ class RoomzApiService {
     if (forUserId != null && forUserId.isNotEmpty) {
       payload["forUserId"] = forUserId;
     }
-    
+
     debugPrint("⚠️ Falling back to body DELETE for $effectiveDate");
-    
-    var response = await _client.delete(
-      Uri.parse("$_apiBase/bookings"),
-      headers: {
-        ..._authHeaders(token),
-        "roomz-source-type": "MyRoomzWeb",
-      },
-      body: jsonEncode(payload),
+
+    final fallbackResult = await _sendWithAuthRetry(
+      currentToken,
+      (activeToken) => _httpClient.delete(
+        Uri.parse("$_apiBase/bookings"),
+        headers: <String, String>{
+          ..._authHeaders(activeToken),
+          "roomz-source-type": "MyRoomzWeb",
+        },
+        body: jsonEncode(payload),
+      ),
     );
-    _checkAuthResponse(response);
-    
+    currentToken = fallbackResult.token;
+    final response = fallbackResult.response;
+
     if (response.statusCode == 200 || response.statusCode == 204) {
       return true;
     }
-    
-    // If it still fails, try one more endpoint format that some versions of the API use
+
     if (foundBookingId != null) {
-       debugPrint("⚠️ Try 3: DELETE /users/current/bookings/$foundBookingId");
-       final altResponse = await _client.delete(
-         Uri.parse("$_apiBase/users/current/bookings/$foundBookingId"),
-         headers: {
-           ..._authHeaders(token),
-           "roomz-source-type": "MyRoomzWeb",
-         },
-       );
-       _checkAuthResponse(altResponse);
-       if (altResponse.statusCode == 200 || altResponse.statusCode == 204) {
-         return true;
-       }
-       debugPrint("❌ Try 3 FAILED: ${altResponse.statusCode}");
+      final targetBookingId = foundBookingId;
+      debugPrint("⚠️ Try 3: DELETE /users/current/bookings/$targetBookingId");
+      final altResult = await _sendWithAuthRetry(
+        currentToken,
+        (activeToken) => _httpClient.delete(
+          Uri.parse("$_apiBase/users/current/bookings/$targetBookingId"),
+          headers: <String, String>{
+            ..._authHeaders(activeToken),
+            "roomz-source-type": "MyRoomzWeb",
+          },
+        ),
+      );
+      final altResponse = altResult.response;
+      if (altResponse.statusCode == 200 || altResponse.statusCode == 204) {
+        return true;
+      }
+      debugPrint("❌ Try 3 FAILED: ${altResponse.statusCode}");
     }
 
-    debugPrint("❌ cancelReservation FAILED (Fallback body): ${response.statusCode}");
+    debugPrint(
+      "❌ cancelReservation FAILED (Fallback body): ${response.statusCode}",
+    );
     return false;
   }
 
@@ -821,14 +1263,18 @@ class RoomzApiService {
     final fromJwt = getUserIdFromToken(token);
     if (fromJwt != null && fromJwt.isNotEmpty) return fromJwt;
     try {
-      final response = await _client.get(
-        Uri.parse("$_apiBase/users/current"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      final result = await _sendWithAuthRetry(
+        token,
+        (activeToken) => _httpClient.get(
+          Uri.parse("$_apiBase/users/current"),
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
       );
-      _checkAuthResponse(response);
+      final response = result.response;
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is Map) {
+        final Object? data = jsonDecode(response.body);
+        if (data is Map<Object?, Object?>) {
           return data['id']?.toString() ?? data['userId']?.toString();
         }
       }
@@ -840,14 +1286,18 @@ class RoomzApiService {
     final fromJwt = getUserEmailFromToken(token);
     if (fromJwt != null && fromJwt.isNotEmpty) return fromJwt;
     try {
-      final response = await _client.get(
-        Uri.parse("$_apiBase/users/current"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      final result = await _sendWithAuthRetry(
+        token,
+        (activeToken) => _httpClient.get(
+          Uri.parse("$_apiBase/users/current"),
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
       );
-      _checkAuthResponse(response);
+      final response = result.response;
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is Map) {
+        final Object? data = jsonDecode(response.body);
+        if (data is Map<Object?, Object?>) {
           return data['email']?.toString() ?? data['mail']?.toString();
         }
       }
@@ -855,7 +1305,7 @@ class RoomzApiService {
     return null;
   }
 
-  Map<String, String> _authHeaders(String token) => {
+  Map<String, String> _authHeaders(String token) => <String, String>{
         "Authorization": "Bearer $token",
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -865,9 +1315,7 @@ class RoomzApiService {
 
   // ── Colleague Reservation Flow (Milestone M2 - Requirement R2) ───────────
 
-  /// Reserves a workspace for a colleague using `forUserId`.
-  /// Returns a typed [BookingResult] with the extracted event UUID,
-  /// or specialized conflict/error statuses and user-friendly messages.
+  /// Reserves a workspace for a colleague using `bookAsUserId` or `bookAsExternalOrganizer`.
   Future<BookingResult> reserveWorkspaceForColleague({
     required String date,
     required String token,
@@ -877,23 +1325,26 @@ class RoomzApiService {
     String? colleagueEmail,
   }) async {
     try {
+      String currentToken = token;
+      String? resolvedEmail = colleagueEmail;
       String effectiveColleagueId = colleagueId;
       final bool isExplicitExternal = colleagueId.startsWith('ext_');
-      final bool hasValidUuid = RegExp(r'^[0-9a-fA-F-]{8,}$').hasMatch(effectiveColleagueId);
+      final bool hasValidUuid =
+          RegExp(r'^[0-9a-fA-F-]{8,}$').hasMatch(effectiveColleagueId);
 
-      // If not an explicit external guest and not yet a UUID, resolve from directory
       if (!hasValidUuid && !isExplicitExternal) {
-        final query = (colleagueEmail != null && colleagueEmail.isNotEmpty)
-            ? colleagueEmail
+        final query = (resolvedEmail != null && resolvedEmail.isNotEmpty)
+            ? resolvedEmail
             : colleagueName;
         if (query != null && query.isNotEmpty) {
           try {
-            final directoryUsers = await searchColleagues(token, query);
+            final directoryUsers = await searchColleagues(currentToken, query);
             for (final u in directoryUsers) {
-              if (u.id.isNotEmpty && RegExp(r'^[0-9a-fA-F-]{8,}$').hasMatch(u.id)) {
-                if (colleagueEmail != null &&
-                    colleagueEmail.isNotEmpty &&
-                    u.email.toLowerCase() == colleagueEmail.toLowerCase()) {
+              if (u.id.isNotEmpty &&
+                  RegExp(r'^[0-9a-fA-F-]{8,}$').hasMatch(u.id)) {
+                if (resolvedEmail != null &&
+                    resolvedEmail.isNotEmpty &&
+                    u.email.toLowerCase() == resolvedEmail.toLowerCase()) {
                   effectiveColleagueId = u.id;
                   break;
                 } else if (colleagueName != null &&
@@ -914,69 +1365,87 @@ class RoomzApiService {
         "timeSlot": "FullDay",
       };
 
-      if (isExplicitExternal && colleagueEmail != null && colleagueEmail.isNotEmpty) {
+      if (isExplicitExternal &&
+          resolvedEmail != null &&
+          resolvedEmail.isNotEmpty) {
         payload["bookAsExternalOrganizer"] = <String, dynamic>{
-          "email": colleagueEmail,
+          "email": resolvedEmail,
           if (colleagueName != null && colleagueName.isNotEmpty)
             "displayName": colleagueName,
         };
-      } else if (effectiveColleagueId.isNotEmpty && !effectiveColleagueId.startsWith('ext_')) {
+      } else if (effectiveColleagueId.isNotEmpty &&
+          !effectiveColleagueId.startsWith('ext_')) {
         payload["bookAsUserId"] = effectiveColleagueId;
-      } else if (colleagueEmail != null && colleagueEmail.isNotEmpty) {
+      } else if (resolvedEmail != null && resolvedEmail.isNotEmpty) {
         payload["bookAsExternalOrganizer"] = <String, dynamic>{
-          "email": colleagueEmail,
+          "email": resolvedEmail,
           if (colleagueName != null && colleagueName.isNotEmpty)
             "displayName": colleagueName,
         };
       }
 
-      var response = await _client.post(
-        Uri.parse("$_apiBase/bookings"),
-        headers: {
-          ..._authHeaders(token),
-          "roomz-source-type": "1",
-          "x-roomz-source-type": "1",
-        },
-        body: jsonEncode(payload),
+      final initialResult = await _sendWithAuthRetry(
+        currentToken,
+        (activeToken) => _httpClient.post(
+          Uri.parse("$_apiBase/bookings"),
+          headers: <String, String>{
+            ..._authHeaders(activeToken),
+            "roomz-source-type": "1",
+            "x-roomz-source-type": "1",
+          },
+          body: jsonEncode(payload),
+        ),
       );
+      currentToken = initialResult.token;
+      http.Response response = initialResult.response;
 
-      // If server returns 400 with "Organizer not found" and we used bookAsUserId,
-      // resolve email if missing and retry with bookAsExternalOrganizer
       final bool isOrganizerNotFound = response.statusCode == 400 &&
           payload.containsKey("bookAsUserId") &&
           (response.body.toLowerCase().contains("organizer") ||
-           response.body.toLowerCase().contains("organisateur") ||
-           response.body.toLowerCase().contains("not found"));
+              response.body.toLowerCase().contains("organisateur") ||
+              response.body.toLowerCase().contains("not found"));
 
       if (isOrganizerNotFound) {
-        debugPrint("🔄 Server returned 'Organizer not found' for bookAsUserId, resolving email & retrying with bookAsExternalOrganizer...");
-        if (colleagueEmail == null || colleagueEmail.isEmpty) {
+        debugPrint(
+          "🔄 Server returned 'Organizer not found' for bookAsUserId, resolving email & retrying with bookAsExternalOrganizer...",
+        );
+        if (resolvedEmail == null || resolvedEmail.isEmpty) {
           if (colleagueName != null && colleagueName.isNotEmpty) {
             try {
-              final directoryUsers = await searchColleagues(token, colleagueName);
+              final directoryUsers =
+                  await searchColleagues(currentToken, colleagueName);
               for (final u in directoryUsers) {
-                if (u.email.isNotEmpty && (u.id == colleagueId || u.name.toLowerCase() == colleagueName.toLowerCase())) {
-                  colleagueEmail = u.email;
+                if (u.email.isNotEmpty &&
+                    (u.id == colleagueId ||
+                        u.name.toLowerCase() == colleagueName.toLowerCase())) {
+                  resolvedEmail = u.email;
                   break;
                 }
               }
             } catch (_) {}
           }
-          if (colleagueEmail == null || colleagueEmail.isEmpty) {
-            final myEmail = getUserEmailFromToken(token);
-            if (myEmail != null && myEmail.contains('@') && colleagueName != null && colleagueName.isNotEmpty) {
+          if (resolvedEmail == null || resolvedEmail.isEmpty) {
+            final myEmail = getUserEmailFromToken(currentToken);
+            if (myEmail != null &&
+                myEmail.contains('@') &&
+                colleagueName != null &&
+                colleagueName.isNotEmpty) {
               final domain = myEmail.split('@').last;
-              final cleanName = colleagueName.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '.');
-              colleagueEmail = '$cleanName@$domain';
+              final cleanName = colleagueName
+                  .trim()
+                  .toLowerCase()
+                  .replaceAll(RegExp(r'\s+'), '.');
+              resolvedEmail = '$cleanName@$domain';
             }
           }
         }
 
-        final effectiveEmail = (colleagueEmail != null && colleagueEmail.isNotEmpty)
-            ? colleagueEmail
-            : (colleagueName != null && colleagueName.isNotEmpty
-                ? '${colleagueName.trim().toLowerCase().replaceAll(' ', '.')}@external.guest'
-                : 'colleague@external.guest');
+        final effectiveEmail =
+            (resolvedEmail != null && resolvedEmail.isNotEmpty)
+                ? resolvedEmail
+                : (colleagueName != null && colleagueName.isNotEmpty
+                    ? '${colleagueName.trim().toLowerCase().replaceAll(' ', '.')}@external.guest'
+                    : 'colleague@external.guest');
 
         final retryPayload = Map<String, dynamic>.from(payload);
         retryPayload.remove("bookAsUserId");
@@ -986,26 +1455,35 @@ class RoomzApiService {
             "displayName": colleagueName,
         };
 
-        response = await _client.post(
-          Uri.parse("$_apiBase/bookings"),
-          headers: {
-            ..._authHeaders(token),
-            "roomz-source-type": "1",
-            "x-roomz-source-type": "1",
-          },
-          body: jsonEncode(retryPayload),
-        );
-
-        if (response.statusCode != 200 && response.statusCode != 201) {
-          // Also try with MyRoomzWeb source type header
-          response = await _client.post(
+        final extResult = await _sendWithAuthRetry(
+          currentToken,
+          (activeToken) => _httpClient.post(
             Uri.parse("$_apiBase/bookings"),
-            headers: {
-              ..._authHeaders(token),
-              "roomz-source-type": "MyRoomzWeb",
+            headers: <String, String>{
+              ..._authHeaders(activeToken),
+              "roomz-source-type": "1",
+              "x-roomz-source-type": "1",
             },
             body: jsonEncode(retryPayload),
+          ),
+        );
+        currentToken = extResult.token;
+        response = extResult.response;
+
+        if (response.statusCode != 200 && response.statusCode != 201) {
+          final webResult = await _sendWithAuthRetry(
+            currentToken,
+            (activeToken) => _httpClient.post(
+              Uri.parse("$_apiBase/bookings"),
+              headers: <String, String>{
+                ..._authHeaders(activeToken),
+                "roomz-source-type": "MyRoomzWeb",
+              },
+              body: jsonEncode(retryPayload),
+            ),
           );
+          currentToken = webResult.token;
+          response = webResult.response;
         }
       }
 
@@ -1013,13 +1491,15 @@ class RoomzApiService {
         String? eventId;
         try {
           if (response.body.isNotEmpty) {
-            final data = jsonDecode(response.body);
-            if (data is Map<String, dynamic>) {
+            final Object? decoded = jsonDecode(response.body);
+            final data = _asStringMap(decoded);
+            if (data != null) {
+              final nestedData = _asStringMap(data['data']);
               final rawId = data['eventId']?.toString() ??
                   data['id']?.toString() ??
                   data['bookingId']?.toString() ??
-                  data['data']?['eventId']?.toString() ??
-                  data['data']?['id']?.toString();
+                  nestedData?['eventId']?.toString() ??
+                  nestedData?['id']?.toString();
               if (rawId != null && rawId.isNotEmpty) {
                 eventId = rawId.contains('/') ? rawId.split('/')[1] : rawId;
               }
@@ -1034,25 +1514,29 @@ class RoomzApiService {
           eventId: eventId,
           colleagueId: colleagueId,
           colleagueName: colleagueName,
-          colleagueEmail: colleagueEmail,
+          colleagueEmail: resolvedEmail,
           message: msg,
         );
       } else if (response.statusCode == 409) {
         final bodyLower = response.body.toLowerCase();
         final hasExplicitColleagueConflict =
             bodyLower.contains('already has a reservation') ||
-            bodyLower.contains('already has a booking') ||
-            bodyLower.contains('déjà une réservation') ||
-            bodyLower.contains('user_already_booked') ||
-            bodyLower.contains('colleague_already_booked') ||
-            (bodyLower.contains('colleague') && !bodyLower.contains('workspace') && !bodyLower.contains('desk'));
+                bodyLower.contains('already has a booking') ||
+                bodyLower.contains('déjà une réservation') ||
+                bodyLower.contains('user_already_booked') ||
+                bodyLower.contains('colleague_already_booked') ||
+                (bodyLower.contains('colleague') &&
+                    !bodyLower.contains('workspace') &&
+                    !bodyLower.contains('desk'));
 
         final isColleagueConflict = hasExplicitColleagueConflict ||
-            ((bodyLower.contains('user') || bodyLower.contains('person') || bodyLower.contains('utilisateur')) &&
-             !bodyLower.contains('workspace') &&
-             !bodyLower.contains('desk') &&
-             !bodyLower.contains('bureau') &&
-             !bodyLower.contains('seat'));
+            ((bodyLower.contains('user') ||
+                    bodyLower.contains('person') ||
+                    bodyLower.contains('utilisateur')) &&
+                !bodyLower.contains('workspace') &&
+                !bodyLower.contains('desk') &&
+                !bodyLower.contains('bureau') &&
+                !bodyLower.contains('seat'));
 
         if (isColleagueConflict) {
           final msg = colleagueName != null
@@ -1062,22 +1546,23 @@ class RoomzApiService {
             message: msg,
             colleagueId: colleagueId,
             colleagueName: colleagueName,
-            colleagueEmail: colleagueEmail,
+            colleagueEmail: resolvedEmail,
           );
         } else {
           return BookingResult.conflictDesk(
             message: 'Ce bureau est déjà réservé par quelqu\'un d\'autre.',
             colleagueId: colleagueId,
             colleagueName: colleagueName,
-            colleagueEmail: colleagueEmail,
+            colleagueEmail: resolvedEmail,
           );
         }
       } else if (response.statusCode == 400) {
         String? serverErrorMsg;
         try {
           if (response.body.isNotEmpty) {
-            final data = jsonDecode(response.body);
-            if (data is Map<String, dynamic>) {
+            final Object? decoded = jsonDecode(response.body);
+            final data = _asStringMap(decoded);
+            if (data != null) {
               serverErrorMsg = data['message']?.toString() ??
                   data['error_description']?.toString() ??
                   data['error']?.toString() ??
@@ -1097,33 +1582,37 @@ class RoomzApiService {
         if (isHorizonLimit) {
           return const BookingResult(
             status: BookingStatus.invalidDate,
-            message: "La réservation manuelle est limitée à 13 jours à l'avance.",
+            message:
+                "La réservation manuelle est limitée à 13 jours à l'avance.",
           );
         }
 
         if (bodyLower.contains('organizer not found')) {
           return BookingResult(
             status: BookingStatus.serverError,
-            message: serverErrorMsg ?? 'Organisateur introuvable pour ce collègue.',
+            message:
+                serverErrorMsg ?? 'Organisateur introuvable pour ce collègue.',
             colleagueId: colleagueId,
             colleagueName: colleagueName,
-            colleagueEmail: colleagueEmail,
+            colleagueEmail: resolvedEmail,
           );
         }
 
-        final bool isAlreadyBookedConflict = bodyLower.contains('already has a reservation') ||
-            bodyLower.contains('already has a booking') ||
-            bodyLower.contains('déjà une réservation') ||
-            bodyLower.contains('user_already_booked') ||
-            bodyLower.contains('conflict');
+        final bool isAlreadyBookedConflict =
+            bodyLower.contains('already has a reservation') ||
+                bodyLower.contains('already has a booking') ||
+                bodyLower.contains('déjà une réservation') ||
+                bodyLower.contains('user_already_booked') ||
+                bodyLower.contains('conflict');
 
         if (isAlreadyBookedConflict) {
           return BookingResult(
             status: BookingStatus.conflictColleague,
-            message: serverErrorMsg ?? "Conflit : Vous ou ce collègue avez déjà une réservation ce jour-là.",
+            message: serverErrorMsg ??
+                "Conflit : Vous ou ce collègue avez déjà une réservation ce jour-là.",
             colleagueId: colleagueId,
             colleagueName: colleagueName,
-            colleagueEmail: colleagueEmail,
+            colleagueEmail: resolvedEmail,
           );
         }
 
@@ -1134,7 +1623,7 @@ class RoomzApiService {
               : "Requête invalide (${response.statusCode}) : ${response.body}",
           colleagueId: colleagueId,
           colleagueName: colleagueName,
-          colleagueEmail: colleagueEmail,
+          colleagueEmail: resolvedEmail,
         );
       } else if (response.statusCode == 401) {
         _cachedAccessToken = null;
@@ -1155,15 +1644,19 @@ class RoomzApiService {
       } else {
         return BookingResult(
           status: BookingStatus.serverError,
-          message: 'Erreur inattendue (${response.statusCode}) : ${response.body}',
+          message:
+              'Erreur inattendue (${response.statusCode}) : ${response.body}',
         );
       }
-    } on SocketException catch (_) {
-      return const BookingResult(
-        status: BookingStatus.networkError,
-        message: 'Impossible de joindre les serveurs MyRoomz (réseau inaccessible).',
-      );
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
+      if (e.runtimeType.toString() == 'SocketException') {
+        return const BookingResult(
+          status: BookingStatus.networkError,
+          message:
+              'Impossible de joindre les serveurs MyRoomz (réseau inaccessible).',
+        );
+      }
       return BookingResult(
         status: BookingStatus.networkError,
         message: 'Erreur de connexion : $e',
@@ -1173,34 +1666,47 @@ class RoomzApiService {
 
   // ── Favorites & Colleague Directory (Milestone M2 - Requirement R2) ───────
 
-  List<Colleague> _cachedHarvestedColleagues = [];
+  List<Colleague> _cachedHarvestedColleagues = <Colleague>[];
 
   /// Harvests recent colleagues/occupants from bookings and floor data.
-  /// Ensures directory and favorites discovery even when /users or /favorites
-  /// endpoints are restricted or empty.
-  Future<List<Colleague>> harvestColleagues(String token, {String? floorId, String? date}) async {
-    final Map<String, Colleague> colleagueMap = {};
+  Future<List<Colleague>> harvestColleagues(
+    String token, {
+    String? floorId,
+    String? date,
+  }) async {
+    final Map<String, Colleague> colleagueMap = <String, Colleague>{};
     String? currentUserId;
+    String currentToken = token;
 
     // 1. Harvest from current user's bookings (/users/current/bookings)
     try {
-      final response = await _client.get(
-        Uri.parse("$_apiBase/users/current/bookings"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      final result = await _sendWithAuthRetry(
+        currentToken,
+        (activeToken) => _httpClient.get(
+          Uri.parse("$_apiBase/users/current/bookings"),
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
       );
-      _checkAuthResponse(response);
+      currentToken = result.token;
+      final response = result.response;
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List bookings = data is List
-            ? data
-            : (data is Map ? (data['bookings'] as List? ?? data['data'] as List? ?? []) : []);
+        final Object? data = jsonDecode(response.body);
+        final List<Map<String, dynamic>> bookings = data is List<Object?>
+            ? _extractMapList(data)
+            : (data is Map<Object?, Object?>
+                ? _extractMapList(data['bookings'] ?? data['data'])
+                : <Map<String, dynamic>>[]);
+
         for (final b in bookings) {
-          if (b is! Map) continue;
-          if (currentUserId == null && b['creator'] is Map && b['creator']['id'] != null) {
-            currentUserId = b['creator']['id']?.toString();
+          final creatorMap = _asStringMap(b['creator']);
+          if (currentUserId == null &&
+              creatorMap != null &&
+              creatorMap['id'] != null) {
+            currentUserId = creatorMap['id']?.toString();
           }
 
-          final candidates = [
+          final List<Object?> candidates = <Object?>[
             b['organizer'],
             b['bookedFor'],
             b['owner'],
@@ -1208,15 +1714,22 @@ class RoomzApiService {
             b['creator'],
           ];
 
-          for (final c in candidates) {
-            if (c != null && c is Map) {
+          for (final Object? cRaw in candidates) {
+            final c = _asStringMap(cRaw);
+            if (c != null) {
               final id = c['id']?.toString() ?? '';
-              final name = c['name']?.toString() ?? c['displayName']?.toString() ?? '';
-              final email = c['email']?.toString() ?? c['mail']?.toString() ?? '';
-              if (name.isNotEmpty && (currentUserId == null || id != currentUserId)) {
-                final key = id.isNotEmpty ? id : (email.isNotEmpty ? email : name);
+              final name =
+                  c['name']?.toString() ?? c['displayName']?.toString() ?? '';
+              final email =
+                  c['email']?.toString() ?? c['mail']?.toString() ?? '';
+              if (name.isNotEmpty &&
+                  (currentUserId == null || id != currentUserId)) {
+                final key =
+                    id.isNotEmpty ? id : (email.isNotEmpty ? email : name);
                 colleagueMap[key] = Colleague(
-                  id: id.isNotEmpty ? id : 'harv_${email.isNotEmpty ? email : name}',
+                  id: id.isNotEmpty
+                      ? id
+                      : 'harv_${email.isNotEmpty ? email : name}',
                   name: name,
                   email: email,
                   isFavorite: false,
@@ -1235,58 +1748,74 @@ class RoomzApiService {
       final effectiveFloorId = floorId ?? await _storage.getFloorId();
       if (effectiveFloorId != null && effectiveFloorId.isNotEmpty) {
         final effectiveDate = date ?? DateHelpers.formatIsoDate(DateTime.now());
-        final payload = {
+        final payload = <String, Object>{
           "availableWorkspaceOnly": false,
           "date": effectiveDate,
           "timeSlot": "FullDay",
-          "tagIds": [],
-          "workspaceType": "Desk"
+          "tagIds": const <String>[],
+          "workspaceType": "Desk",
         };
-        final response = await _client.post(
-          Uri.parse("$_apiBase/floors/$effectiveFloorId/workspaces/calendars?length=100&offset=0"),
-          headers: _authHeaders(token)..addAll({
-            "roomz-source-type": "MyRoomzWeb",
-            "Content-Type": "application/json"
-          }),
-          body: jsonEncode(payload),
+        final result = await _sendWithAuthRetry(
+          currentToken,
+          (activeToken) => _httpClient.post(
+            Uri.parse(
+              "$_apiBase/floors/$effectiveFloorId/workspaces/calendars?length=100&offset=0",
+            ),
+            headers: _authHeaders(activeToken)
+              ..addAll(const <String, String>{
+                "roomz-source-type": "MyRoomzWeb",
+                "Content-Type": "application/json",
+              }),
+            body: jsonEncode(payload),
+          ),
         );
-        _checkAuthResponse(response);
+        final response = result.response;
         if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final List items = data is List
-              ? data
-              : (data is Map
-                  ? (data['data'] as List? ?? data['items'] as List? ?? data['workspaces'] as List? ?? [])
-                  : []);
-          if (items.isNotEmpty) {
-            for (final item in items) {
-              if (item is! Map) continue;
-              final wsName = item['workspaceName']?.toString() ?? item['name']?.toString();
-              final bookedTimeSlot = item['bookedTimeSlot'];
-              if (bookedTimeSlot != null && bookedTimeSlot is Map) {
-                final candidates = [
-                  bookedTimeSlot['organizer'],
-                  bookedTimeSlot['bookedFor'],
-                  bookedTimeSlot['owner'],
-                  bookedTimeSlot['user'],
-                  bookedTimeSlot['creator'],
-                ];
-                for (final c in candidates) {
-                  if (c != null && c is Map) {
-                    final id = c['id']?.toString() ?? '';
-                    final name = c['name']?.toString() ?? c['displayName']?.toString() ?? '';
-                    final email = c['email']?.toString() ?? c['mail']?.toString() ?? '';
-                    if (name.isNotEmpty && (currentUserId == null || id != currentUserId)) {
-                      final key = id.isNotEmpty ? id : (email.isNotEmpty ? email : name);
-                      final existing = colleagueMap[key];
-                      colleagueMap[key] = Colleague(
-                        id: id.isNotEmpty ? id : (existing?.id ?? 'harv_${email.isNotEmpty ? email : name}'),
-                        name: name,
-                        email: email,
-                        deskName: wsName ?? existing?.deskName,
-                        isFavorite: false,
-                      );
-                    }
+          final Object? data = jsonDecode(response.body);
+          final List<Map<String, dynamic>> items = data is List<Object?>
+              ? _extractMapList(data)
+              : (data is Map<Object?, Object?>
+                  ? _extractMapList(
+                      data['data'] ?? data['items'] ?? data['workspaces'],
+                    )
+                  : <Map<String, dynamic>>[]);
+
+          for (final item in items) {
+            final wsName =
+                item['workspaceName']?.toString() ?? item['name']?.toString();
+            final bookedTimeSlot = _asStringMap(item['bookedTimeSlot']);
+            if (bookedTimeSlot != null) {
+              final List<Object?> candidates = <Object?>[
+                bookedTimeSlot['organizer'],
+                bookedTimeSlot['bookedFor'],
+                bookedTimeSlot['owner'],
+                bookedTimeSlot['user'],
+                bookedTimeSlot['creator'],
+              ];
+              for (final Object? cRaw in candidates) {
+                final c = _asStringMap(cRaw);
+                if (c != null) {
+                  final id = c['id']?.toString() ?? '';
+                  final name = c['name']?.toString() ??
+                      c['displayName']?.toString() ??
+                      '';
+                  final email =
+                      c['email']?.toString() ?? c['mail']?.toString() ?? '';
+                  if (name.isNotEmpty &&
+                      (currentUserId == null || id != currentUserId)) {
+                    final key =
+                        id.isNotEmpty ? id : (email.isNotEmpty ? email : name);
+                    final existing = colleagueMap[key];
+                    colleagueMap[key] = Colleague(
+                      id: id.isNotEmpty
+                          ? id
+                          : (existing?.id ??
+                              'harv_${email.isNotEmpty ? email : name}'),
+                      name: name,
+                      email: email,
+                      deskName: wsName ?? existing?.deskName,
+                      isFavorite: false,
+                    );
                   }
                 }
               }
@@ -1308,86 +1837,101 @@ class RoomzApiService {
   /// Fetches favorite colleagues from MyRoomz API (/favorites).
   Future<List<Colleague>> getFavorites(String token) async {
     try {
-      final response = await _client.get(
-        Uri.parse("$_apiBase/favorites"),
-        headers: _authHeaders(token)..addAll({"roomz-source-type": "MyRoomzWeb"}),
+      final result = await _sendWithAuthRetry(
+        token,
+        (activeToken) => _httpClient.get(
+          Uri.parse("$_apiBase/favorites"),
+          headers: _authHeaders(activeToken)
+            ..addAll(const <String, String>{"roomz-source-type": "MyRoomzWeb"}),
+        ),
       );
-      _checkAuthResponse(response);
+      final response = result.response;
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List rawList = data is List
-            ? data
-            : (data is Map
-                ? (data['favorites'] as List? ??
-                    data['data'] as List? ??
-                    data['users'] as List? ??
-                    data['items'] as List? ??
-                    [])
-                : []);
+        final Object? data = jsonDecode(response.body);
+        final List<Map<String, dynamic>> rawList = data is List<Object?>
+            ? _extractMapList(data)
+            : (data is Map<Object?, Object?>
+                ? _extractMapList(
+                    data['favorites'] ??
+                        data['data'] ??
+                        data['users'] ??
+                        data['items'],
+                  )
+                : <Map<String, dynamic>>[]);
+
         if (rawList.isNotEmpty) {
           return rawList
-              .whereType<Map>()
-              .map((j) => Colleague.fromJson({
-                    ...Map<String, dynamic>.from(j),
-                    'isFavorite': true,
-                    'favoriteId': j['favoriteId'] ?? j['id'],
-                  }))
+              .map(
+                (j) => Colleague.fromJson(<String, dynamic>{
+                  ...j,
+                  'isFavorite': true,
+                  'favoriteId': j['favoriteId'] ?? j['id'],
+                }),
+              )
               .toList();
         }
       }
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("⚠️ Exception in getFavorites (/favorites): $e");
     }
-    return [];
+    return <Colleague>[];
   }
 
   /// Searches for colleagues across the MyRoomz directory.
-  /// Gracefully returns empty list on empty query or API error.
   Future<List<Colleague>> searchColleagues(String token, String query) async {
     final trimmed = query.trim();
-    if (trimmed.isEmpty) return [];
+    if (trimmed.isEmpty) return <Colleague>[];
 
+    String currentToken = token;
     try {
-      final response = await _client.post(
-        Uri.parse("$_apiBase/search?length=30&offset=0"),
-        headers: {
-          ..._authHeaders(token),
-          "roomz-source-type": "MyRoomzWeb",
-          "Content-Type": "application/json",
-        },
-        body: jsonEncode({
-          "text": trimmed,
-        }),
+      final reqResult = await _sendWithAuthRetry(
+        currentToken,
+        (activeToken) => _httpClient.post(
+          Uri.parse("$_apiBase/search?length=30&offset=0"),
+          headers: <String, String>{
+            ..._authHeaders(activeToken),
+            "roomz-source-type": "MyRoomzWeb",
+            "Content-Type": "application/json",
+          },
+          body: jsonEncode(<String, String>{
+            "text": trimmed,
+          }),
+        ),
       );
-      _checkAuthResponse(response);
+      currentToken = reqResult.token;
+      final response = reqResult.response;
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final list = data is List
-            ? data
-            : (data is Map
-                ? (data['users'] ?? data['data'] ?? data['items'] ?? data['results'] ?? [])
-                : []);
-        if (list is List) {
-          final results = list
-              .whereType<Map>()
-              .map((j) => Colleague.fromJson(Map<String, dynamic>.from(j)))
-              .toList();
-          if (results.isNotEmpty) return results;
+        final Object? data = jsonDecode(response.body);
+        final List<Map<String, dynamic>> list = data is List<Object?>
+            ? _extractMapList(data)
+            : (data is Map<Object?, Object?>
+                ? _extractMapList(
+                    data['users'] ??
+                        data['data'] ??
+                        data['items'] ??
+                        data['results'],
+                  )
+                : <Map<String, dynamic>>[]);
+
+        if (list.isNotEmpty) {
+          return list.map(Colleague.fromJson).toList();
         }
       }
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("⚠️ Exception in searchColleagues: $e");
     }
 
     // 2. Fallback: search across harvested colleagues and cached contacts
     try {
       final qLower = trimmed.toLowerCase();
-      List<Colleague> pool = List.from(_cachedHarvestedColleagues);
+      List<Colleague> pool = List<Colleague>.from(_cachedHarvestedColleagues);
       if (pool.isEmpty) {
-        pool = await harvestColleagues(token);
+        pool = await harvestColleagues(currentToken);
       }
       final localFavs = await _storage.getFavoriteColleagues();
-      final Map<String, Colleague> allCandidates = {};
+      final Map<String, Colleague> allCandidates = <String, Colleague>{};
       for (final c in pool) {
         final key = c.id.isNotEmpty ? c.id : (c.email.isNotEmpty ? c.email : c.name);
         allCandidates[key] = c;
@@ -1397,46 +1941,44 @@ class RoomzApiService {
         allCandidates[key] = c;
       }
 
-      final matches = allCandidates.values.where((c) {
+      return allCandidates.values.where((c) {
         return c.name.toLowerCase().contains(qLower) ||
             c.email.toLowerCase().contains(qLower);
       }).toList();
-
-      return matches;
     } catch (e) {
       debugPrint("⚠️ Exception in searchColleagues fallback: $e");
     }
 
-    return [];
+    return <Colleague>[];
   }
 
   // ── Server Favorites Endpoints (Hotfix 5) ──────────────────────────────────
 
-  /// Adds a colleague to favorites on MyRoomz server.
-  /// POST https://api.my.roomz.io/favorites/{colleagueId}
   Future<bool> addFavorite(String token, String colleagueId) async {
     final id = await addFavoriteWithId(token, colleagueId);
     return id != null;
   }
 
-  /// Adds a colleague to favorites and returns the server favorite ID if present.
   Future<String?> addFavoriteWithId(String token, String colleagueId) async {
     try {
-      final response = await _client.post(
-        Uri.parse("$_apiBase/favorites/$colleagueId"),
-        headers: {
-          ..._authHeaders(token),
-          "roomz-source-type": "MyRoomzWeb",
-        },
+      final result = await _sendWithAuthRetry(
+        token,
+        (activeToken) => _httpClient.post(
+          Uri.parse("$_apiBase/favorites/$colleagueId"),
+          headers: <String, String>{
+            ..._authHeaders(activeToken),
+            "roomz-source-type": "MyRoomzWeb",
+          },
+        ),
       );
-      _checkAuthResponse(response);
+      final response = result.response;
       if (response.statusCode == 200 ||
           response.statusCode == 201 ||
           response.statusCode == 204) {
         if (response.body.isNotEmpty) {
           try {
-            final data = jsonDecode(response.body);
-            if (data is Map && data['id'] != null) {
+            final Object? data = jsonDecode(response.body);
+            if (data is Map<Object?, Object?> && data['id'] != null) {
               return data['id'].toString();
             }
           } catch (_) {}
@@ -1445,31 +1987,36 @@ class RoomzApiService {
       }
       return null;
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("⚠️ Exception in addFavorite: $e");
       return null;
     }
   }
 
-  /// Removes a colleague from favorites on MyRoomz server.
-  /// DELETE https://api.my.roomz.io/favorites/{favoriteOrColleagueId}
-  Future<bool> removeFavorite(String token, String favoriteOrColleagueId) async {
+  Future<bool> removeFavorite(
+    String token,
+    String favoriteOrColleagueId,
+  ) async {
     try {
-      final response = await _client.delete(
-        Uri.parse("$_apiBase/favorites/$favoriteOrColleagueId"),
-        headers: {
-          ..._authHeaders(token),
-          "roomz-source-type": "MyRoomzWeb",
-        },
+      final result = await _sendWithAuthRetry(
+        token,
+        (activeToken) => _httpClient.delete(
+          Uri.parse("$_apiBase/favorites/$favoriteOrColleagueId"),
+          headers: <String, String>{
+            ..._authHeaders(activeToken),
+            "roomz-source-type": "MyRoomzWeb",
+          },
+        ),
       );
-      _checkAuthResponse(response);
+      final response = result.response;
       return response.statusCode == 200 || response.statusCode == 204;
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("⚠️ Exception in removeFavorite: $e");
       return false;
     }
   }
 
-  /// Alias for removeFavorite. Accepts either favoriteId or colleagueId.
   Future<bool> deleteFavorite(String token, String favoriteOrColleagueId) =>
       removeFavorite(token, favoriteOrColleagueId);
 
@@ -1480,10 +2027,10 @@ class RoomzApiService {
     try {
       final parts = token.split('.');
       if (parts.length >= 2) {
-        var normalized = base64Url.normalize(parts[1]);
+        final normalized = base64Url.normalize(parts[1]);
         final payload = utf8.decode(base64Url.decode(normalized));
-        final data = jsonDecode(payload);
-        if (data is Map) {
+        final Object? data = jsonDecode(payload);
+        if (data is Map<Object?, Object?>) {
           return data['sub']?.toString() ??
               data['id']?.toString() ??
               data['userId']?.toString();
@@ -1498,10 +2045,10 @@ class RoomzApiService {
     try {
       final parts = token.split('.');
       if (parts.length >= 2) {
-        var normalized = base64Url.normalize(parts[1]);
+        final normalized = base64Url.normalize(parts[1]);
         final payload = utf8.decode(base64Url.decode(normalized));
-        final data = jsonDecode(payload);
-        if (data is Map) {
+        final Object? data = jsonDecode(payload);
+        if (data is Map<Object?, Object?>) {
           return data['email']?.toString() ??
               data['upn']?.toString() ??
               data['preferred_username']?.toString() ??
@@ -1513,7 +2060,6 @@ class RoomzApiService {
   }
 
   /// Fetches all seated occupants for every desk on a given floor for [date].
-  /// Returns a map of DeskOccupant keyed by lowercase workspaceId and exact workspaceId.
   Future<Map<String, DeskOccupant>> getFloorOccupants(
     String token,
     String floorId,
@@ -1522,101 +2068,121 @@ class RoomzApiService {
     String? myUserEmail,
     Map<String, String>? delegatedBookingsMap,
   }) async {
-    final Map<String, DeskOccupant> occupants = {};
+    final Map<String, DeskOccupant> occupants = <String, DeskOccupant>{};
     int offset = 0;
     const int limit = 100;
+    const int maxPages = 20;
+    String currentToken = token;
 
-    final resolvedMyUserId = myUserId ?? await getCurrentUserId(token);
-    final resolvedMyUserEmail = myUserEmail ?? await getCurrentUserEmail(token);
+    final resolvedMyUserId = myUserId ?? await getCurrentUserId(currentToken);
+    final resolvedMyUserEmail =
+        myUserEmail ?? await getCurrentUserEmail(currentToken);
 
     try {
-      while (true) {
-        final payload = {
+      for (int page = 0; page < maxPages; page++) {
+        final payload = <String, Object>{
           "availableWorkspaceOnly": false,
           "date": date,
           "timeSlot": "FullDay",
-          "tagIds": [],
+          "tagIds": const <String>[],
           "workspaceType": "Desk",
         };
 
-        final response = await _client.post(
-          Uri.parse("$_apiBase/floors/$floorId/workspaces/calendars?length=$limit&offset=$offset"),
-          headers: _authHeaders(token)..addAll({
-            "roomz-source-type": "MyRoomzWeb",
-            "Content-Type": "application/json",
-          }),
-          body: jsonEncode(payload),
+        final reqResult = await _sendWithAuthRetry(
+          currentToken,
+          (activeToken) => _httpClient.post(
+            Uri.parse(
+              "$_apiBase/floors/$floorId/workspaces/calendars?length=$limit&offset=$offset",
+            ),
+            headers: _authHeaders(activeToken)
+              ..addAll(const <String, String>{
+                "roomz-source-type": "MyRoomzWeb",
+                "Content-Type": "application/json",
+              }),
+            body: jsonEncode(payload),
+          ),
         );
-        _checkAuthResponse(response);
+        currentToken = reqResult.token;
+        final response = reqResult.response;
 
         if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final List items = data is List
-              ? data
-              : (data is Map
-                  ? (data['data'] as List? ?? data['items'] as List? ?? data['workspaces'] as List? ?? [])
-                  : []);
+          final Object? data = jsonDecode(response.body);
+          final List<Map<String, dynamic>> items = data is List<Object?>
+              ? _extractMapList(data)
+              : (data is Map<Object?, Object?>
+                  ? _extractMapList(
+                      data['data'] ?? data['items'] ?? data['workspaces'],
+                    )
+                  : <Map<String, dynamic>>[]);
+
           if (items.isEmpty) break;
 
           for (final item in items) {
-            if (item is! Map) continue;
             final status = item['status']?.toString();
             final statusLower = status?.toLowerCase();
-            if (statusLower != 'reserved' && statusLower != 'booked' && statusLower != 'occupied') {
+            if (statusLower != 'reserved' &&
+                statusLower != 'booked' &&
+                statusLower != 'occupied') {
               continue;
             }
 
-            dynamic rawSlot = item['bookedTimeSlot'] ??
-                item['booking'] ??
-                item['timeSlot'];
-            if (rawSlot == null && item['bookedTimeSlots'] is List && (item['bookedTimeSlots'] as List).isNotEmpty) {
-              final list = (item['bookedTimeSlots'] as List).whereType<Map>().toList();
-              if (list.isNotEmpty) {
-                rawSlot = list.firstWhere(
-                  (s) => s['timeSlot']?.toString().toLowerCase() == 'fullday',
-                  orElse: () => list.first,
-                );
-              }
+            Object? rawSlot =
+                item['bookedTimeSlot'] ?? item['booking'] ?? item['timeSlot'];
+            final rawSlotsList = _extractMapList(item['bookedTimeSlots']);
+            if (rawSlot == null && rawSlotsList.isNotEmpty) {
+              rawSlot = rawSlotsList.firstWhere(
+                (s) => s['timeSlot']?.toString().toLowerCase() == 'fullday',
+                orElse: () => rawSlotsList.first,
+              );
             }
-            if (rawSlot == null || rawSlot is! Map) continue;
+            final bookedTimeSlot = _asStringMap(rawSlot);
+            if (bookedTimeSlot == null) continue;
 
-            final bookedTimeSlot = Map<String, dynamic>.from(rawSlot);
-
-            Map<String, dynamic>? getMap(dynamic val) =>
-                val is Map<String, dynamic> ? val : (val is Map ? Map<String, dynamic>.from(val) : null);
-
-            final creator = getMap(bookedTimeSlot['creator']);
-            final bookedFor = getMap(bookedTimeSlot['bookedFor']);
-            final user = getMap(bookedTimeSlot['user']);
-            final owner = getMap(bookedTimeSlot['owner']);
-            final organizer = getMap(bookedTimeSlot['organizer']);
+            final creator = _asStringMap(bookedTimeSlot['creator']);
+            final bookedFor = _asStringMap(bookedTimeSlot['bookedFor']);
+            final user = _asStringMap(bookedTimeSlot['user']);
+            final owner = _asStringMap(bookedTimeSlot['owner']);
+            final organizer = _asStringMap(bookedTimeSlot['organizer']);
 
             String? bookedForString;
             if (bookedFor == null && bookedTimeSlot['bookedFor'] is String) {
               bookedForString = bookedTimeSlot['bookedFor'] as String;
             }
 
-            final creatorId = creator?['id']?.toString() ?? creator?['userId']?.toString();
-            final creatorName = creator?['name']?.toString() ?? creator?['displayName']?.toString();
-            final creatorEmail = creator?['email']?.toString() ?? creator?['mail']?.toString();
+            final creatorId =
+                creator?['id']?.toString() ?? creator?['userId']?.toString();
+            final creatorName = creator?['name']?.toString() ??
+                creator?['displayName']?.toString();
+            final creatorEmail =
+                creator?['email']?.toString() ?? creator?['mail']?.toString();
 
-            final organizerId = organizer?['id']?.toString() ?? organizer?['userId']?.toString();
-            final organizerName = organizer?['name']?.toString() ?? organizer?['displayName']?.toString();
-            final organizerEmail = organizer?['email']?.toString() ?? organizer?['mail']?.toString();
+            final organizerId = organizer?['id']?.toString() ??
+                organizer?['userId']?.toString();
+            final organizerName = organizer?['name']?.toString() ??
+                organizer?['displayName']?.toString();
+            final organizerEmail = organizer?['email']?.toString() ??
+                organizer?['mail']?.toString();
 
-            final bool isOrganizerDelegated = creator != null && organizer != null &&
-                ((organizerId != null && creatorId != null && organizerId != creatorId) ||
-                 (organizerEmail != null && creatorEmail != null && organizerEmail.toLowerCase() != creatorEmail.toLowerCase()) ||
-                 (organizerName != null && creatorName != null && organizerName.toLowerCase() != creatorName.toLowerCase()));
+            final bool isOrganizerDelegated = creator != null &&
+                organizer != null &&
+                ((organizerId != null &&
+                        creatorId != null &&
+                        organizerId != creatorId) ||
+                    (organizerEmail != null &&
+                        creatorEmail != null &&
+                        organizerEmail.toLowerCase() !=
+                            creatorEmail.toLowerCase()) ||
+                    (organizerName != null &&
+                        creatorName != null &&
+                        organizerName.toLowerCase() !=
+                            creatorName.toLowerCase()));
 
-            // Hierarchy of occupant resolution:
-            // 1. bookedFor (explicit delegate/colleague target)
-            // 2. organizer if differs from creator (delegated booking for external or colleague)
-            // 3. user
-            // 4. owner
-            // 5. organizer
-            // 6. creator
-            final target = bookedFor ?? (isOrganizerDelegated ? organizer : null) ?? user ?? owner ?? organizer ?? creator;
+            final target = bookedFor ??
+                (isOrganizerDelegated ? organizer : null) ??
+                user ??
+                owner ??
+                organizer ??
+                creator;
 
             final occName = target?['name']?.toString() ??
                 target?['displayName']?.toString() ??
@@ -1630,29 +2196,46 @@ class RoomzApiService {
 
             if (occName.isEmpty) continue;
 
-            final occId = target?['id']?.toString() ?? target?['userId']?.toString() ?? (isOrganizerDelegated ? organizerId : null);
-            final occEmail = target?['email']?.toString() ?? target?['mail']?.toString() ?? (isOrganizerDelegated ? organizerEmail : null);
+            final occId = target?['id']?.toString() ??
+                target?['userId']?.toString() ??
+                (isOrganizerDelegated ? organizerId : null);
+            final occEmail = target?['email']?.toString() ??
+                target?['mail']?.toString() ??
+                (isOrganizerDelegated ? organizerEmail : null);
 
+            final wsNested = _asStringMap(item['workspace']);
             final wsId = item['workspaceId']?.toString() ??
                 item['id']?.toString() ??
-                item['workspace']?['id']?.toString() ??
-                item['workspace']?['workspaceId']?.toString() ??
+                wsNested?['id']?.toString() ??
+                wsNested?['workspaceId']?.toString() ??
                 bookedTimeSlot['workspaceId']?.toString() ??
                 '';
 
-            final isDelegated = (bookedFor != null || bookedForString != null) ||
-                isOrganizerDelegated ||
-                (creator != null && target != null &&
-                    ((occId != null && creatorId != null && occId != creatorId) ||
-                     (occEmail != null && creatorEmail != null && occEmail.toLowerCase() != creatorEmail.toLowerCase()) ||
-                     (occName.isNotEmpty && creatorName != null && occName.toLowerCase() != creatorName.toLowerCase())));
+            final isDelegated =
+                (bookedFor != null || bookedForString != null) ||
+                    isOrganizerDelegated ||
+                    (creator != null &&
+                        target != null &&
+                        ((occId != null &&
+                                creatorId != null &&
+                                occId != creatorId) ||
+                            (occEmail != null &&
+                                creatorEmail != null &&
+                                occEmail.toLowerCase() !=
+                                    creatorEmail.toLowerCase()) ||
+                            (occName.isNotEmpty &&
+                                creatorName != null &&
+                                occName.toLowerCase() !=
+                                    creatorName.toLowerCase())));
 
             bool inDelegatedStorage = false;
             if (delegatedBookingsMap != null && wsId.isNotEmpty) {
               final compositeKey = '$date#$wsId';
-              inDelegatedStorage = delegatedBookingsMap.containsKey(compositeKey) ||
-                  delegatedBookingsMap[date] == wsId ||
-                  (delegatedBookingsMap[date]?.startsWith('$wsId|') ?? false);
+              inDelegatedStorage =
+                  delegatedBookingsMap.containsKey(compositeKey) ||
+                      delegatedBookingsMap[date] == wsId ||
+                      (delegatedBookingsMap[date]?.startsWith('$wsId|') ??
+                          false);
             }
 
             final bool effectiveDelegation = isDelegated || inDelegatedStorage;
@@ -1664,9 +2247,12 @@ class RoomzApiService {
                 isCreatorMe = true;
               }
             }
-            if (!isCreatorMe && resolvedMyUserEmail != null && resolvedMyUserEmail.isNotEmpty) {
+            if (!isCreatorMe &&
+                resolvedMyUserEmail != null &&
+                resolvedMyUserEmail.isNotEmpty) {
               final myEmailLower = resolvedMyUserEmail.toLowerCase();
-              if (creatorEmail != null && creatorEmail.toLowerCase() == myEmailLower) {
+              if (creatorEmail != null &&
+                  creatorEmail.toLowerCase() == myEmailLower) {
                 isCreatorMe = true;
               }
             }
@@ -1678,7 +2264,9 @@ class RoomzApiService {
                 isTargetMe = true;
               }
             }
-            if (!isTargetMe && resolvedMyUserEmail != null && resolvedMyUserEmail.isNotEmpty) {
+            if (!isTargetMe &&
+                resolvedMyUserEmail != null &&
+                resolvedMyUserEmail.isNotEmpty) {
               final myEmailLower = resolvedMyUserEmail.toLowerCase();
               if (occEmail != null && occEmail.toLowerCase() == myEmailLower) {
                 isTargetMe = true;
@@ -1707,9 +2295,8 @@ class RoomzApiService {
               }
             }
 
-            final bookedByName = effectiveDelegation
-                ? (creatorName ?? creatorEmail)
-                : null;
+            final bookedByName =
+                effectiveDelegation ? (creatorName ?? creatorEmail) : null;
 
             if (wsId.isNotEmpty) {
               final occupant = DeskOccupant(
@@ -1724,7 +2311,6 @@ class RoomzApiService {
                 isDelegatedOther: isDelegatedOther,
                 bookedByName: bookedByName,
               );
-              // Ensure all desks for this occupant are preserved in the dictionary
               occupants[wsId] = occupant;
               occupants[wsId.toLowerCase()] = occupant;
             }
@@ -1738,6 +2324,7 @@ class RoomzApiService {
         }
       }
     } catch (e) {
+      OfflineStateManager.instance.reportException(e);
       debugPrint("❌ Exception in getFloorOccupants: $e");
     }
 

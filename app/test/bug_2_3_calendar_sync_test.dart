@@ -82,7 +82,7 @@ void main() {
 
       String? bookedWorkspaceId;
       final client = MockClient((req) async {
-        if (req.url.path.contains('/oauth/token')) {
+        if (req.url.path.contains('/connect/token') || req.url.path.contains('/oauth/token')) {
           return http.Response(jsonEncode({'access_token': 'new-tok', 'refresh_token': 'new-ref'}), 200);
         }
         if (req.url.path.contains('/users/current/reservations') || req.url.path.contains('/users/current/bookings')) {

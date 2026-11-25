@@ -173,13 +173,14 @@ void main() {
       final throwingSecure = FakeSecureStorage(throwOnOperations: true);
       final storage = StorageService(secureStorage: throwingSecure);
 
-      await expectLater(
-        storage.saveRefreshToken('secret_token'),
-        throwsA(isA<MissingPluginException>()),
-      );
+      await storage.saveRefreshToken('secret_token');
 
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('refresh_token'), isNull);
+      expect(await storage.getRefreshToken(), equals('secret_token'));
+
+      await storage.clearAuthToken();
+      expect(await storage.getRefreshToken(), isNull);
     });
 
     test('default parameterless constructor functions properly in mock test environments', () async {
