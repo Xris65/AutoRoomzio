@@ -18,7 +18,7 @@ jobs:
       dest_dir: ${{ steps.config.outputs.dest_dir }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -62,7 +62,7 @@ jobs:
         run: flutter build web --release --wasm --base-href "${{ env.BASE_HREF }}"
 
       - name: Upload Web Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-build
           path: app/build/web/
@@ -81,7 +81,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Download Web Build Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: web-build
           path: ${{ runner.temp }}/web-dist
