@@ -1,7 +1,6 @@
-import 'package:flutter/foundation.dart';
-import 'package:android_intent_plus/android_intent.dart';
 import 'dart:async';
-import 'dart:io';
+import 'package:android_intent_plus/android_intent.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../storage_service.dart';
@@ -13,12 +12,15 @@ class OptimizationScreen extends StatefulWidget {
   State<OptimizationScreen> createState() => _OptimizationScreenState();
 }
 
-class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBindingObserver {
-
+class _OptimizationScreenState extends State<OptimizationScreen>
+    with WidgetsBindingObserver {
   bool _isBatteryOptimized = true;
   Timer? _pollingTimer;
   bool _isNotifGranted = false;
   bool _isAutostartVerified = false;
+
+  bool get _isAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   @override
   void initState() {
@@ -26,7 +28,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
     WidgetsBinding.instance.addObserver(this);
     _checkPermissions();
     // Poll permissions in case system dialogs hide the lifecycle events
-    _pollingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _pollingTimer = Timer.periodic(const Duration(seconds: 1), (Timer _) {
       if (mounted) _checkPermissions();
     });
   }
@@ -46,18 +48,18 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
   }
 
   Future<void> _checkPermissions() async {
-    if (!(!kIsWeb && Platform.isAndroid)) return;
+    if (!_isAndroid) return;
 
-    final batteryOpt = await Permission.ignoreBatteryOptimizations.isGranted;
-    final notif = await Permission.notification.isGranted;
-    
-    final storage = StorageService();
-    final autostart = await storage.getAutostartVerified();
-    final batteryVerified = await storage.getBatteryVerified();
+    final bool batteryOpt = await Permission.ignoreBatteryOptimizations.isGranted;
+    final bool notif = await Permission.notification.isGranted;
+
+    final StorageService storage = StorageService();
+    final bool autostart = await storage.getAutostartVerified();
+    final bool batteryVerified = await storage.getBatteryVerified();
 
     if (mounted) {
       setState(() {
-        _isBatteryOptimized = !(batteryOpt || batteryVerified); // false if batteryOpt is true OR batteryVerified is true
+        _isBatteryOptimized = !(batteryOpt || batteryVerified);
         _isNotifGranted = notif;
         _isAutostartVerified = autostart;
       });
@@ -66,34 +68,71 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
 
   Future<void> _requestBattery() async {
     await Permission.ignoreBatteryOptimizations.request();
-    _checkPermissions();
+    await _checkPermissions();
   }
 
   Future<void> _requestNotif() async {
     await Permission.notification.request();
-    _checkPermissions();
+    await _checkPermissions();
   }
 
   Future<void> _requestAutoStart() async {
-    if (!(!kIsWeb && Platform.isAndroid)) return;
-    
-    final intents = [
-      {'package': 'com.miui.securitycenter', 'component': 'com.miui.permcenter.autostart.AutoStartManagementActivity'},
-      {'package': 'com.huawei.systemmanager', 'component': 'com.huawei.systemmanager.optimize.process.ProtectActivity'},
-      {'package': 'com.huawei.systemmanager', 'component': 'com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity'},
-      {'package': 'com.coloros.safecenter', 'component': 'com.coloros.safecenter.permission.startup.StartupAppListActivity'},
-      {'package': 'com.coloros.safecenter', 'component': 'com.coloros.safecenter.startupapp.StartupAppListActivity'},
-      {'package': 'com.oppo.safe', 'component': 'com.oppo.safe.permission.startup.StartupAppListActivity'},
-      {'package': 'com.iqoo.secure', 'component': 'com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity'},
-      {'package': 'com.vivo.permissionmanager', 'component': 'com.vivo.permissionmanager.activity.BgStartUpManagerActivity'},
-      {'package': 'com.asus.mobilemanager', 'component': 'com.asus.mobilemanager.entry.FunctionActivity'},
-      {'package': 'com.samsung.android.lool', 'component': 'com.samsung.android.sm.ui.battery.BatteryActivity'},
+    if (!_isAndroid) return;
+
+    const List<Map<String, String>> intents = <Map<String, String>>[
+      <String, String>{
+        'package': 'com.miui.securitycenter',
+        'component': 'com.miui.permcenter.autostart.AutoStartManagementActivity',
+      },
+      <String, String>{
+        'package': 'com.huawei.systemmanager',
+        'component':
+            'com.huawei.systemmanager.optimize.process.ProtectActivity',
+      },
+      <String, String>{
+        'package': 'com.huawei.systemmanager',
+        'component':
+            'com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity',
+      },
+      <String, String>{
+        'package': 'com.coloros.safecenter',
+        'component':
+            'com.coloros.safecenter.permission.startup.StartupAppListActivity',
+      },
+      <String, String>{
+        'package': 'com.coloros.safecenter',
+        'component':
+            'com.coloros.safecenter.startupapp.StartupAppListActivity',
+      },
+      <String, String>{
+        'package': 'com.oppo.safe',
+        'component':
+            'com.oppo.safe.permission.startup.StartupAppListActivity',
+      },
+      <String, String>{
+        'package': 'com.iqoo.secure',
+        'component':
+            'com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity',
+      },
+      <String, String>{
+        'package': 'com.vivo.permissionmanager',
+        'component':
+            'com.vivo.permissionmanager.activity.BgStartUpManagerActivity',
+      },
+      <String, String>{
+        'package': 'com.asus.mobilemanager',
+        'component': 'com.asus.mobilemanager.entry.FunctionActivity',
+      },
+      <String, String>{
+        'package': 'com.samsung.android.lool',
+        'component': 'com.samsung.android.sm.ui.battery.BatteryActivity',
+      },
     ];
 
     bool launched = false;
-    for (final intentDict in intents) {
+    for (final Map<String, String> intentDict in intents) {
       try {
-        final intent = AndroidIntent(
+        final AndroidIntent intent = AndroidIntent(
           action: 'android.intent.action.MAIN',
           package: intentDict['package'],
           componentName: intentDict['component'],
@@ -110,40 +149,51 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
 
     if (launched) {
       // Attendre un peu que le menu système s'ouvre bien par-dessus avant d'afficher la popup
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future<void>.delayed(const Duration(milliseconds: 500));
       if (!mounted) return;
       // Demander confirmation à l'utilisateur s'il l'a bien fait
-      final result = await showDialog<bool>(
+      final bool? result = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text("Vérification"),
-          content: const Text("Avez-vous bien autorisé le démarrage automatique pour AutoRoomzio dans les paramètres qui viennent de s'ouvrir ?"),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Non")),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Oui")),
+        builder: (BuildContext ctx) => AlertDialog(
+          title: const Text('Vérification'),
+          content: const Text(
+            "Avez-vous bien autorisé le démarrage automatique pour AutoRoomzio dans les paramètres qui viennent de s'ouvrir ?",
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Non'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Oui'),
+            ),
           ],
-        )
+        ),
       );
       if (result == true) {
         setState(() => _isAutostartVerified = true);
-        final storage = StorageService();
+        final StorageService storage = StorageService();
         await storage.saveAutostartVerified(true);
       }
     } else {
       // Aucun menu trouvé, pas besoin
       setState(() => _isAutostartVerified = true);
-      final storage = StorageService();
+      final StorageService storage = StorageService();
       await storage.saveAutostartVerified(true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Votre téléphone ne nécessite pas de configuration d'autostart supplémentaire."),
+          content: Text(
+            "Votre téléphone ne nécessite pas de configuration d'autostart supplémentaire.",
+          ),
           backgroundColor: Colors.green,
           duration: Duration(seconds: 4),
         ),
       );
     }
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -154,7 +204,7 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+          children: <Widget>[
             const Icon(Icons.settings_suggest, size: 64, color: Colors.indigo),
             const SizedBox(height: 16),
             const Text(
@@ -169,38 +219,43 @@ class _OptimizationScreenState extends State<OptimizationScreen> with WidgetsBin
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
-            
+
             // Batterie
             _PermissionTile(
-              title: "Optimisation de batterie",
-              description: "Empêche Android de tuer l'application en arrière-plan.",
+              title: 'Optimisation de batterie',
+              description:
+                  "Empêche Android de tuer l'application en arrière-plan.",
               isOk: !_isBatteryOptimized,
               onTap: _requestBattery,
               actionLabel: "Désactiver l'optimisation",
-              infoText: "Dans l'écran qui va s'ouvrir, choisissez 'AutoRoomzio' et sélectionnez 'Pas de restriction' ou 'Non optimisée'.\n\nC'est indispensable pour que l'application puisse réserver votre place le matin en arrière-plan.",
+              infoText:
+                  "Dans l'écran qui va s'ouvrir, choisissez 'AutoRoomzio' et sélectionnez 'Pas de restriction' ou 'Non optimisée'.\n\nC'est indispensable pour que l'application puisse réserver votre place le matin en arrière-plan.",
               infoImage: 'assets/images/battery.png',
             ),
             const SizedBox(height: 16),
 
             // Autostart
             _PermissionTile(
-              title: "Démarrage Automatique",
-              description: "Requis (surtout Xiaomi, Huawei, Oppo) pour relancer l'automatisation après un redémarrage.",
+              title: 'Démarrage Automatique',
+              description:
+                  "Requis (surtout Xiaomi, Huawei, Oppo) pour relancer l'automatisation après un redémarrage.",
               isOk: _isAutostartVerified,
               onTap: _requestAutoStart,
               actionLabel: "Vérifier l'autostart",
-              infoText: "Certains téléphones bloquent le lancement des applications après un redémarrage.\n\nDans le menu qui va s'ouvrir, cherchez 'AutoRoomzio' et activez l'interrupteur pour l'autoriser à démarrer tout seul.",
+              infoText:
+                  "Certains téléphones bloquent le lancement des applications après un redémarrage.\n\nDans le menu qui va s'ouvrir, cherchez 'AutoRoomzio' et activez l'interrupteur pour l'autoriser à démarrer tout seul.",
               infoImage: 'assets/images/autostart.png',
             ),
             const SizedBox(height: 16),
 
             // Notifications
             _PermissionTile(
-              title: "Notifications",
-              description: "Pour être prévenu(e) du succès ou de l'échec de vos réservations.",
+              title: 'Notifications',
+              description:
+                  "Pour être prévenu(e) du succès ou de l'échec de vos réservations.",
               isOk: _isNotifGranted,
               onTap: _requestNotif,
-              actionLabel: "Autoriser",
+              actionLabel: 'Autoriser',
             ),
 
             const SizedBox(height: 48),
@@ -239,8 +294,8 @@ class _PermissionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Color statusColor;
-    IconData statusIcon;
+    final Color statusColor;
+    final IconData statusIcon;
 
     if (isOk == true) {
       statusColor = Colors.green;
@@ -259,7 +314,7 @@ class _PermissionTile extends StatelessWidget {
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: statusColor.withValues(alpha: 0.5)),
-        boxShadow: [
+        boxShadow: <BoxShadow>[
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
@@ -269,44 +324,50 @@ class _PermissionTile extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        children: <Widget>[
           Row(
-            children: [
+            children: <Widget>[
               Icon(statusIcon, color: statusColor),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
                 ),
               ),
               if (infoText != null)
                 IconButton(
                   icon: const Icon(Icons.info_outline, color: Colors.blueGrey),
                   onPressed: () {
-                    showDialog(
+                    showDialog<void>(
                       context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: Text("Info : $title"),
+                      builder: (BuildContext ctx) => AlertDialog(
+                        title: Text('Info : $title'),
                         content: SingleChildScrollView(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
-                            children: [
+                            children: <Widget>[
                               Text(infoText!),
-                              if (infoImage != null) ...[
+                              if (infoImage != null) ...<Widget>[
                                 const SizedBox(height: 16),
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
-                                  child: Image.asset(infoImage!, fit: BoxFit.contain),
+                                  child: Image.asset(
+                                    infoImage!,
+                                    fit: BoxFit.contain,
+                                  ),
                                 ),
                               ],
                             ],
                           ),
                         ),
-                        actions: [
+                        actions: <Widget>[
                           TextButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text("Compris"),
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            child: const Text('Compris'),
                           ),
                         ],
                       ),
@@ -316,7 +377,10 @@ class _PermissionTile extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text(description, style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
+          Text(
+            description,
+            style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
+          ),
           const SizedBox(height: 12),
           if (isOk != true)
             SizedBox(
@@ -335,5 +399,3 @@ class _PermissionTile extends StatelessWidget {
     );
   }
 }
-
-
