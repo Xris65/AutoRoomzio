@@ -1,34 +1,25 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:shimmer/shimmer.dart';
-import '../models/desk_occupant.dart';
-import '../models/colleague.dart';
 import '../api_service.dart';
-import '../storage_service.dart';
-import '../widgets/workspace_map_viewer.dart';
-import '../widgets/occupant_details_sheet.dart';
-import '../widgets/colleague_selection_dialog.dart';
-import '../widgets/action_loading_overlay.dart';
-import '../widgets/time_slider_bar.dart';
+import '../models/colleague.dart';
+import '../models/desk_occupant.dart';
 import '../offline_state_manager.dart';
+import '../storage_service.dart';
 import '../utils/date_helpers.dart';
 import '../utils/error_sanitizer.dart';
 import '../utils/workspace_helpers.dart';
-
-class _RoomSummary {
-  final String roomName;
-  final int totalOccupants;
-  final List<DeskOccupant> favoriteOccupants;
-  bool get hasFavorites => favoriteOccupants.isNotEmpty;
-
-  _RoomSummary({
-    required this.roomName,
-    required this.totalOccupants,
-    required this.favoriteOccupants,
-  });
-}
+import '../widgets/action_loading_overlay.dart';
+import '../widgets/occupant_details_sheet.dart';
+import '../widgets/time_slider_bar.dart';
+import '../widgets/workspace_map_viewer.dart';
+import 'team_map/models/team_map_models.dart';
+import 'team_map/widgets/colleague_management_dialogs.dart';
+import 'team_map/widgets/desk_automation_sheet.dart';
+import 'team_map/widgets/favorites_week_modal.dart';
+import 'team_map/widgets/free_desk_booking_sheet.dart';
+import 'team_map/widgets/occupants_summary_panel.dart';
+import 'team_map/widgets/team_map_filter_bar.dart';
+import 'team_map/widgets/team_map_skeleton.dart';
 
 /// Dedicated interactive screen displaying the 2D floor plan with colleague tracking,
 /// date navigation, floor switching, room filter chips with camera framing,
@@ -64,38 +55,35 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   String? _siteId;
   String? _floorId;
   String? _defaultWorkspaceId;
-  String? _cachedAccessToken;
   int _occupancyRequestId = 0;
 
-  List<Map<String, dynamic>> _floors = [];
-  List<Map<String, dynamic>> _features = [];
-  List<Map<String, dynamic>> _allWorkspaces = [];
-  List<Map<String, dynamic>> _workspaces = [];
-  Map<String, DeskOccupant> _occupants = {};
-  final Map<String, Map<String, DeskOccupant>> _occupancyCache = {};
+  List<Map<String, dynamic>> _floors = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _features = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _allWorkspaces = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _workspaces = <Map<String, dynamic>>[];
+  Map<String, DeskOccupant> _occupants = <String, DeskOccupant>{};
+  final Map<String, Map<String, DeskOccupant>> _occupancyCache =
+      <String, Map<String, DeskOccupant>>{};
+
   @visibleForTesting
   Map<String, Map<String, DeskOccupant>> get occupancyCache => _occupancyCache;
 
-  Set<String> _favoriteIds = {};
-  Set<String> _favoriteNamesNormalized = {};
-  Set<String> _favoriteWorkspaceIds = {};
+  List<Colleague> _favorites = <Colleague>[];
+  Set<String> _favoriteIds = <String>{};
+  Set<String> _favoriteEmailsNormalized = <String>{};
+  Set<String> _favoriteNamesNormalized = <String>{};
 
   String? _focusedRoom;
   String? _focusedWorkspaceId;
   String? _selectedDeskId;
   Timer? _selectionTimer;
-  Set<String> _requestedDates = {};
-  Set<String> _bookedDates = {};
-  Map<String, String> _requestedWorkspacesMap = {};
-  final TextEditingController _colleagueSearchController = TextEditingController();
-  String _colleagueSearchQuery = '';
+  Set<String> _requestedDates = <String>{};
+  Set<String> _bookedDates = <String>{};
+  Map<String, String> _requestedWorkspacesMap = <String, String>{};
 
   bool _isLoading = true;
   bool _isOccupancyLoading = false;
   bool _isOccupantsPanelExpanded = false;
-  final ValueNotifier<Offset> _occupantsBarOffset = ValueNotifier<Offset>(Offset.zero);
-  Offset _longPressStartPos = Offset.zero;
-  Offset _longPressStartOffset = Offset.zero;
   bool _isActionInProgress = false;
   String? _actionLoadingMessage;
   bool _hideWeekends = true;
@@ -108,56 +96,56 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     super.initState();
     _storage = widget.storageService ?? StorageService();
     _api = widget.apiService ?? RoomzApiService();
-    _selectedDate = widget.initialDate ?? DateTime.now();
+    _selectedDate = normalizeLocalDate(widget.initialDate ?? DateTime.now());
     if (widget.hideWeekends != null) {
       _hideWeekends = widget.hideWeekends!;
     }
-    if (_hideWeekends) {
-      if (_selectedDate.weekday == DateTime.saturday) {
-        _selectedDate = _selectedDate.add(const Duration(days: 2));
-      } else if (_selectedDate.weekday == DateTime.sunday) {
-        _selectedDate = _selectedDate.add(const Duration(days: 1));
-      }
-    }
-    _loadCacheFirst();
-    _colleagueSearchController.addListener(() {
-      if (mounted) {
-        setState(() {
-          _colleagueSearchQuery = _colleagueSearchController.text.trim();
-        });
-      }
-    });
-    _loadInitialData();
+    _selectedDate = _adjustWeekendForwardIfNeeded(_selectedDate, _hideWeekends);
+    unawaited(_loadCacheFirst());
+    unawaited(_loadInitialData());
   }
 
   @override
   void dispose() {
     _selectionTimer?.cancel();
-    _colleagueSearchController.dispose();
-    _occupantsBarOffset.dispose();
     super.dispose();
+  }
+
+  DateTime _adjustWeekendForwardIfNeeded(DateTime date, bool hideWeekends) {
+    if (!hideWeekends) return date;
+    if (date.weekday == DateTime.saturday) {
+      return addCalendarDays(date, 2);
+    }
+    if (date.weekday == DateTime.sunday) {
+      return addCalendarDays(date, 1);
+    }
+    return date;
   }
 
   Future<void> _loadFavorites() async {
     final favs = await _storage.getFavoriteColleagues();
     final favIds = <String>{};
+    final favEmails = <String>{};
     final favNames = <String>{};
-    final favWsIds = <String>{};
 
     for (final f in favs) {
       if (f.id.isNotEmpty) favIds.add(f.id.toLowerCase());
-      if (f.email.isNotEmpty) favIds.add(f.email.toLowerCase());
-      if (f.name.isNotEmpty) favNames.add(f.name.trim().toLowerCase());
-      if (f.deskName != null && f.deskName!.isNotEmpty) {
-        favWsIds.add(f.deskName!.toLowerCase());
+      if (f.email.isNotEmpty) {
+        final emailLower = f.email.trim().toLowerCase();
+        favIds.add(emailLower);
+        favEmails.add(emailLower);
+      }
+      if (f.name.trim().isNotEmpty) {
+        favNames.add(f.name.trim().toLowerCase());
       }
     }
 
     if (mounted) {
       setState(() {
+        _favorites = favs;
         _favoriteIds = favIds;
+        _favoriteEmailsNormalized = favEmails;
         _favoriteNamesNormalized = favNames;
-        _favoriteWorkspaceIds = favWsIds;
       });
     }
   }
@@ -169,52 +157,51 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           await _storage.getFloorId();
       final dateStr = DateHelpers.formatIsoDate(_selectedDate);
       final showFavWeek = await _storage.getShowFavoriteWeekIndicators();
-      final results = await Future.wait([
+
+      final (
+        List<String> booked,
+        List<String> elsewhere,
+        Map<String, Map<String, String>> userRes,
+        Map<String, DeskOccupant> occs,
+        Object? planData,
+        List<Map<String, dynamic>> allWs,
+      ) = await (
         _storage.getBookedDates(),
         _storage.getBookedElsewhereDates(),
         _storage.getUserReservationsMap(),
-        if (floorId != null) _storage.getFloorOccupants(floorId, dateStr) else Future.value(<String, DeskOccupant>{}),
-        if (floorId != null) _storage.getFloorPlanData(floorId) else Future.value(null),
-        if (floorId != null) _storage.getFloorWorkspaces(floorId) else Future.value(<Map<String, dynamic>>[]),
-      ]);
-      final Set<String> booked = results[0] is Iterable
-          ? (results[0] as Iterable).map((e) => e.toString()).toSet()
-          : <String>{};
-      final Set<String> elsewhere = results[1] is Iterable
-          ? (results[1] as Iterable).map((e) => e.toString()).toSet()
-          : <String>{};
-      final Map userRes = results[2] is Map ? (results[2] as Map) : const {};
-      final Map<String, DeskOccupant> occs = {};
-      if (results.length > 3 && results[3] is Map) {
-        (results[3] as Map).forEach((k, v) {
-          if (v is DeskOccupant) {
-            occs[k.toString()] = v;
-          } else if (v is Map) {
-            try {
-              occs[k.toString()] = DeskOccupant.fromJson(Map<String, dynamic>.from(v));
-            } catch (_) {}
-          }
-        });
-      }
-      final allBooked = {...booked, ...elsewhere, ...userRes.keys.map((k) => k.toString())};
-      if (occs.values.any((o) => o.isMe)) {
-        allBooked.add(dateStr);
-      }
+        floorId != null
+            ? _storage.getFloorOccupants(floorId, dateStr)
+            : Future<Map<String, DeskOccupant>>.value(
+                const <String, DeskOccupant>{},
+              ),
+        floorId != null
+            ? _storage.getFloorPlanData(floorId)
+            : Future<Object?>.value(null),
+        floorId != null
+            ? _storage.getFloorWorkspaces(floorId)
+            : Future<List<Map<String, dynamic>>>.value(
+                const <Map<String, dynamic>>[],
+              ),
+      ).wait;
 
-      dynamic planData = results.length > 4 ? results[4] : null;
-      List<Map<String, dynamic>> allWs = [];
-      if (results.length > 5 && results[5] is List) {
-        allWs = (results[5] as List)
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
+      final allBooked = <String>{
+        ...booked,
+        ...elsewhere,
+        ...userRes.keys,
+      };
+      if (occs.values.any((DeskOccupant o) => o.isMe)) {
+        allBooked.add(dateStr);
       }
 
       final features = parseFloorFeaturesWithFallback(planData, allWs);
       final bookable = allWs.where(isBookableWorkspace).toList();
 
       if (floorId != null) {
-        for (final d in _getVisibleWeekDays(_selectedDate)) {
+        final visibleDays = TeamMapHelpers.getVisibleWeekDays(
+          _selectedDate,
+          hideWeekends: _hideWeekends,
+        );
+        for (final d in visibleDays) {
           final dStr = DateHelpers.formatIsoDate(d);
           final key = '${floorId}_$dStr';
           if (!_occupancyCache.containsKey(key)) {
@@ -245,7 +232,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         });
       }
     } catch (e) {
-      debugPrint("⚠️ _loadCacheFirst exception: $e");
+      debugPrint('⚠️ _loadCacheFirst exception: $e');
     }
   }
 
@@ -261,22 +248,23 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       _showFavoriteWeekIndicators = showFavWeek;
       final effectiveHide = widget.hideWeekends ?? hw;
       _hideWeekends = effectiveHide;
-      if (effectiveHide) {
-        if (_selectedDate.weekday == DateTime.saturday) {
-          _selectedDate = _selectedDate.add(const Duration(days: 2));
-        } else if (_selectedDate.weekday == DateTime.sunday) {
-          _selectedDate = _selectedDate.add(const Duration(days: 1));
-        }
-      }
+      _selectedDate =
+          _adjustWeekendForwardIfNeeded(_selectedDate, effectiveHide);
+
       if (mounted) {
         setState(() {});
       }
+
       _requestedDates = (await _storage.getRequestedDates()).toSet();
       _requestedWorkspacesMap = await _storage.getRequestedWorkspacesMap();
       final booked = await _storage.getBookedDates();
       final bookedElsewhere = await _storage.getBookedElsewhereDates();
       final userRes = await _storage.getUserReservationsMap();
-      _bookedDates = {...booked, ...bookedElsewhere, ...userRes.keys.map((k) => k.toString())};
+      _bookedDates = <String>{
+        ...booked,
+        ...bookedElsewhere,
+        ...userRes.keys,
+      };
 
       await _loadFavorites();
 
@@ -286,15 +274,25 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           await _storage.getFloorId();
       _defaultWorkspaceId = await _storage.getWorkspaceId();
 
-      String? token = await _api.refreshMyToken();
-      token ??= await _storage.getRefreshToken();
-      _cachedAccessToken = token;
-
+      final String? token = await _api.refreshMyToken();
       if (token == null || token.isEmpty) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = "Session expirée. Veuillez vous reconnecter.";
-        });
+        final storedRefresh = await _storage.getRefreshToken();
+        if (storedRefresh == null || storedRefresh.isEmpty) {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+              _errorMessage = ErrorSanitizer.sessionExpiredMessage;
+            });
+          }
+          return;
+        }
+        if (_siteId != null && _siteId!.isNotEmpty) {
+          _floors = await _storage.getCachedFloors(_siteId!);
+          if ((_floorId == null || _floorId!.isEmpty) && _floors.isNotEmpty) {
+            _floorId = _floors.first['id']?.toString();
+          }
+        }
+        await _loadFloorMapFromCacheOnly();
         return;
       }
 
@@ -307,7 +305,6 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         }
       } catch (_) {}
 
-      // If site or floor not stored, fetch from API
       if (_siteId == null || _siteId!.isEmpty) {
         try {
           final sites = await _api.getSites(token);
@@ -336,18 +333,22 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }
 
       if (_floorId == null || _floorId!.isEmpty || _siteId == null) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = "Aucun étage ou bâtiment configuré.";
-        });
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _errorMessage = 'Aucun étage ou bâtiment configuré.';
+          });
+        }
         return;
       }
 
       await _loadFloorMapAndOccupancy(token, _siteId!, _floorId!);
     } catch (e) {
-      debugPrint("⚠️ Exception in _loadInitialData: $e");
+      debugPrint('⚠️ Exception in _loadInitialData: $e');
       if (mounted) {
-        if (_features.isNotEmpty || _allWorkspaces.isNotEmpty || _workspaces.isNotEmpty) {
+        if (_features.isNotEmpty ||
+            _allWorkspaces.isNotEmpty ||
+            _workspaces.isNotEmpty) {
           setState(() {
             _isLoading = false;
             _errorMessage = null;
@@ -356,87 +357,132 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             SnackBar(
               behavior: SnackBarBehavior.floating,
               content: Text(
-                sanitizeErrorMessage(e, fallback: "Mode hors-ligne : données du cache affichées."),
+                ErrorSanitizer.sanitize(
+                  e,
+                  fallback: 'Mode hors-ligne : données du cache affichées.',
+                ),
               ),
             ),
           );
         } else {
           setState(() {
             _isLoading = false;
-            _errorMessage = sanitizeErrorMessage(e, fallback: "Erreur de chargement.");
+            _errorMessage = ErrorSanitizer.sanitize(
+              e,
+              fallback: 'Erreur de chargement.',
+            );
           });
         }
       }
     }
   }
 
+  Future<void> _loadFloorMapFromCacheOnly() async {
+    final floorId = _floorId;
+    if (floorId == null || floorId.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Aucun étage ou bâtiment configuré.';
+        });
+      }
+      return;
+    }
+
+    final dateStr = DateHelpers.formatIsoDate(_selectedDate);
+    final planData = await _storage.getFloorPlanData(floorId);
+    final allWs = await _storage.getFloorWorkspaces(floorId);
+    final occs = await _storage.getFloorOccupants(floorId, dateStr);
+    final features = parseFloorFeaturesWithFallback(planData, allWs);
+    final bookable = allWs.where(isBookableWorkspace).toList();
+
+    if (!mounted) return;
+    if (features.isNotEmpty || allWs.isNotEmpty || occs.isNotEmpty) {
+      _occupancyCache['${floorId}_$dateStr'] = occs;
+      if (occs.values.any((DeskOccupant o) => o.isMe)) {
+        _bookedDates.add(dateStr);
+      }
+      setState(() {
+        _features = features;
+        _allWorkspaces = allWs;
+        _workspaces = bookable;
+        _occupants = occs;
+        _isLoading = false;
+        _isOccupancyLoading = false;
+        _errorMessage = null;
+      });
+    } else {
+      setState(() {
+        _isLoading = false;
+        _isOccupancyLoading = false;
+        _errorMessage = OfflineStateManager.instance.isOffline
+            ? 'Mode hors-ligne : aucune donnée en cache pour cet étage.'
+            : ErrorSanitizer.sessionExpiredMessage;
+      });
+    }
+  }
+
   Future<void> _loadFloorMapAndOccupancy(
-      String token, String siteId, String floorId) async {
+    String token,
+    String siteId,
+    String floorId,
+  ) async {
     final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final delegatedMap = await _storage.getDelegatedBookingsMap();
     final savedEmail = await _storage.getSavedEmail();
 
-    dynamic planData;
-    List<Map<String, dynamic>> allWs = [];
-    Map<String, DeskOccupant> occs = {};
+    Object? planData;
+    List<Map<String, dynamic>> allWs = <Map<String, dynamic>>[];
+    Map<String, DeskOccupant> occs = <String, DeskOccupant>{};
     Object? lastError;
 
     try {
-      final futures = await Future.wait<dynamic>([
-        _api.getFloorPlanData(token, siteId, floorId).catchError((e) {
-          debugPrint("⚠️ getFloorPlanData error: $e");
+      final (
+        List<Map<String, dynamic>> rawPlan,
+        List<Map<String, dynamic>> rawWs,
+        Map<String, DeskOccupant> rawOccs,
+      ) = await (
+        _api.getFloorPlanData(token, siteId, floorId).catchError((Object e) {
+          debugPrint('⚠️ getFloorPlanData error: $e');
           lastError = e;
           return <Map<String, dynamic>>[];
         }),
-        _api.getAllWorkspaces(token, siteId, floorId).catchError((e) {
-          debugPrint("⚠️ getAllWorkspaces error: $e");
+        _api.getAllWorkspaces(token, siteId, floorId).catchError((Object e) {
+          debugPrint('⚠️ getAllWorkspaces error: $e');
           lastError ??= e;
           return <Map<String, dynamic>>[];
         }),
-        _api.getFloorOccupants(
-          token,
-          floorId,
-          dateStr,
-          myUserEmail: savedEmail,
-          delegatedBookingsMap: delegatedMap,
-        ).catchError((e) {
-          debugPrint("⚠️ getFloorOccupants error: $e");
+        _api
+            .getFloorOccupants(
+              token,
+              floorId,
+              dateStr,
+              myUserEmail: savedEmail,
+              delegatedBookingsMap: delegatedMap,
+            )
+            .catchError((Object e) {
+          debugPrint('⚠️ getFloorOccupants error: $e');
           lastError ??= e;
           return <String, DeskOccupant>{};
         }),
-      ]);
+      ).wait;
 
-      final dynamic rawPlan = futures[0];
-      if (rawPlan is List && rawPlan.isNotEmpty) {
-        planData = rawPlan.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-        await _storage.saveFloorPlanData(floorId, planData);
-      } else if (rawPlan is Map && rawPlan.isNotEmpty) {
-        planData = Map<String, dynamic>.from(rawPlan);
+      if (rawPlan.isNotEmpty) {
+        planData = rawPlan;
         await _storage.saveFloorPlanData(floorId, planData);
       } else {
         planData = await _storage.getFloorPlanData(floorId);
       }
 
-      final dynamic rawWs = futures[1];
-      if (rawWs is List && rawWs.isNotEmpty) {
-        allWs = rawWs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      if (rawWs.isNotEmpty) {
+        allWs = rawWs;
         await _storage.saveFloorWorkspaces(floorId, allWs);
       } else {
         allWs = await _storage.getFloorWorkspaces(floorId);
       }
 
-      final dynamic rawOccs = futures[2];
-      if (rawOccs is Map && rawOccs.isNotEmpty) {
-        occs = {};
-        rawOccs.forEach((k, v) {
-          if (v is DeskOccupant) {
-            occs[k.toString()] = v;
-          } else if (v is Map) {
-            try {
-              occs[k.toString()] = DeskOccupant.fromJson(Map<String, dynamic>.from(v));
-            } catch (_) {}
-          }
-        });
+      if (rawOccs.isNotEmpty) {
+        occs = rawOccs;
         await _storage.saveFloorOccupants(floorId, dateStr, occs);
       } else {
         occs = await _storage.getFloorOccupants(floorId, dateStr);
@@ -459,7 +505,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         setState(() {
           _isLoading = false;
           _isOccupancyLoading = false;
-          _errorMessage = sanitizeErrorMessage(lastError, fallback: "Erreur lors du chargement de l'étage.");
+          _errorMessage = ErrorSanitizer.sanitize(
+            lastError,
+            fallback: "Erreur lors du chargement de l'étage.",
+          );
         });
       }
       return;
@@ -467,10 +516,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
     if (mounted) {
       if (_floorId != null) {
-        _occupancyCache["${_floorId}_$dateStr"] = occs;
+        _occupancyCache['${_floorId}_$dateStr'] = occs;
       }
-      final hasMe = occs.values.any((o) => o.isMe);
-      if (hasMe) {
+      if (occs.values.any((DeskOccupant o) => o.isMe)) {
         _bookedDates.add(dateStr);
       }
       setState(() {
@@ -482,14 +530,14 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _isOccupancyLoading = false;
         _errorMessage = null;
       });
-      _preloadWeekOccupancy(_selectedDate);
+      unawaited(_preloadWeekOccupancy(_selectedDate));
 
       if (lastError != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             behavior: SnackBarBehavior.floating,
             content: Text(
-              "Données partielles affichées : ${sanitizeErrorMessage(lastError, fallback: "certaines informations n'ont pu être actualisées.")}",
+              "Données partielles affichées : ${ErrorSanitizer.sanitize(lastError, fallback: "certaines informations n'ont pu être actualisées.")}",
             ),
           ),
         );
@@ -497,24 +545,26 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
-  Future<void> _loadOccupancyForDate(DateTime date, {bool forceRefresh = false}) async {
+  Future<void> _loadOccupancyForDate(
+    DateTime date, {
+    bool forceRefresh = false,
+  }) async {
     final requestId = ++_occupancyRequestId;
     final dateStr = DateHelpers.formatIsoDate(date);
     final floorId = _floorId;
 
-    // Check cache first for instant synchronous UI update
     if (!forceRefresh && floorId != null) {
-      final cacheKey = "${floorId}_$dateStr";
+      final cacheKey = '${floorId}_$dateStr';
       if (_occupancyCache.containsKey(cacheKey)) {
         final cachedOccs = _occupancyCache[cacheKey]!;
-        if (cachedOccs.values.any((o) => o.isMe)) {
+        if (cachedOccs.values.any((DeskOccupant o) => o.isMe)) {
           _bookedDates.add(dateStr);
         }
         setState(() {
           _occupants = cachedOccs;
           _isOccupancyLoading = false;
         });
-        _preloadWeekOccupancy(date);
+        unawaited(_preloadWeekOccupancy(date));
         return;
       }
     }
@@ -524,11 +574,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       _requestedDates = (await _storage.getRequestedDates()).toSet();
       _requestedWorkspacesMap = await _storage.getRequestedWorkspacesMap();
 
-      String? token = _cachedAccessToken;
-      if (token == null || token.isEmpty) {
-        token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
-        _cachedAccessToken = token;
-      }
+      final String? token = await _api.refreshMyToken();
 
       if (token != null && token.isNotEmpty && floorId != null) {
         final delegatedMap = await _storage.getDelegatedBookingsMap();
@@ -547,17 +593,30 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         }
         if (mounted && requestId == _occupancyRequestId) {
           if (!OfflineStateManager.instance.isOffline || occs.isNotEmpty) {
-            _occupancyCache["${floorId}_$dateStr"] = occs;
+            _occupancyCache['${floorId}_$dateStr'] = occs;
           }
-          final hasMe = occs.values.any((o) => o.isMe);
-          if (hasMe) {
+          if (occs.values.any((DeskOccupant o) => o.isMe)) {
             _bookedDates.add(dateStr);
           }
           setState(() {
             _occupants = occs;
             _isOccupancyLoading = false;
           });
-          _preloadWeekOccupancy(date);
+          unawaited(_preloadWeekOccupancy(date));
+        }
+      } else if (floorId != null) {
+        final cached = await _storage.getFloorOccupants(floorId, dateStr);
+        if (mounted && requestId == _occupancyRequestId) {
+          if (cached.isNotEmpty) {
+            _occupancyCache['${floorId}_$dateStr'] = cached;
+            if (cached.values.any((DeskOccupant o) => o.isMe)) {
+              _bookedDates.add(dateStr);
+            }
+          }
+          setState(() {
+            _occupants = cached;
+            _isOccupancyLoading = false;
+          });
         }
       } else {
         if (mounted && requestId == _occupancyRequestId) {
@@ -569,8 +628,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         final cached = await _storage.getFloorOccupants(floorId, dateStr);
         if (mounted && requestId == _occupancyRequestId) {
           if (cached.isNotEmpty) {
-            _occupancyCache["${floorId}_$dateStr"] = cached;
-            if (cached.values.any((o) => o.isMe)) {
+            _occupancyCache['${floorId}_$dateStr'] = cached;
+            if (cached.values.any((DeskOccupant o) => o.isMe)) {
               _bookedDates.add(dateStr);
             }
           }
@@ -585,7 +644,12 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         setState(() => _isOccupancyLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sanitizeErrorMessage(e, fallback: "Impossible de charger les présences.")),
+            content: Text(
+              ErrorSanitizer.sanitize(
+                e,
+                fallback: 'Impossible de charger les présences.',
+              ),
+            ),
             duration: const Duration(seconds: 2),
             behavior: SnackBarBehavior.floating,
           ),
@@ -597,13 +661,16 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   Future<void> _preloadWeekOccupancy(DateTime baseDate) async {
     final floorId = _floorId;
     if (floorId == null) return;
-    String? token = _cachedAccessToken;
+    final String? token = await _api.refreshMyToken();
     if (token == null || token.isEmpty) return;
 
-    final weekDays = _getVisibleWeekDays(baseDate);
+    final weekDays = TeamMapHelpers.getVisibleWeekDays(
+      baseDate,
+      hideWeekends: _hideWeekends,
+    );
 
-    final missingDays = weekDays.where((d) {
-      final key = "${floorId}_${DateHelpers.formatIsoDate(d)}";
+    final missingDays = weekDays.where((DateTime d) {
+      final key = '${floorId}_${DateHelpers.formatIsoDate(d)}';
       return !_occupancyCache.containsKey(key);
     }).toList();
 
@@ -612,34 +679,37 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final delegatedMap = await _storage.getDelegatedBookingsMap();
     final savedEmail = await _storage.getSavedEmail();
 
-    await Future.wait(missingDays.map((d) async {
-      try {
-        final dStr = DateHelpers.formatIsoDate(d);
-        var occs = await _api.getFloorOccupants(
-          token,
-          floorId,
-          dStr,
-          myUserEmail: savedEmail,
-          delegatedBookingsMap: delegatedMap,
-        );
-        if (occs.isEmpty) {
-          occs = await _storage.getFloorOccupants(floorId, dStr);
-        } else {
-          await _storage.saveFloorOccupants(floorId, dStr, occs);
+    await Future.wait<void>(
+      missingDays.map<Future<void>>((DateTime d) async {
+        try {
+          final dStr = DateHelpers.formatIsoDate(d);
+          var occs = await _api.getFloorOccupants(
+            token,
+            floorId,
+            dStr,
+            myUserEmail: savedEmail,
+            delegatedBookingsMap: delegatedMap,
+          );
+          if (occs.isEmpty) {
+            occs = await _storage.getFloorOccupants(floorId, dStr);
+          } else {
+            await _storage.saveFloorOccupants(floorId, dStr, occs);
+          }
+          if (occs.isNotEmpty) {
+            _occupancyCache['${floorId}_$dStr'] = occs;
+          }
+          if (occs.values.any((DeskOccupant o) => o.isMe)) {
+            _bookedDates.add(dStr);
+          }
+        } catch (_) {
+          // Silently swallow background preload error
         }
-        if (occs.isNotEmpty) {
-          _occupancyCache["${floorId}_$dStr"] = occs;
-        }
-        if (occs.values.any((o) => o.isMe)) {
-          _bookedDates.add(dStr);
-        }
-      } catch (_) {
-        // Silently swallow background preload error
-      }
-    }));
+      }),
+    );
 
     if (mounted) {
-      final currentKey = "${floorId}_${DateHelpers.formatIsoDate(_selectedDate)}";
+      final currentKey =
+          '${floorId}_${DateHelpers.formatIsoDate(_selectedDate)}';
       if (_occupancyCache.containsKey(currentKey) && _occupants.isEmpty) {
         setState(() {
           _occupants = _occupancyCache[currentKey]!;
@@ -653,7 +723,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   Future<void> _fetchOccupants() async {
     final floorId = _floorId;
     if (floorId != null) {
-      _occupancyCache.remove("${floorId}_${DateHelpers.formatIsoDate(_selectedDate)}");
+      _occupancyCache
+          .remove('${floorId}_${DateHelpers.formatIsoDate(_selectedDate)}');
     }
     await _loadOccupancyForDate(_selectedDate, forceRefresh: true);
   }
@@ -672,7 +743,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _hideWeekends = widget.hideWeekends ?? hw;
         _showFavoriteWeekIndicators = showFavWeek;
       }
-      String? token = await _api.refreshMyToken(force: true);
+
+      final String? token = await _api.refreshMyToken(force: true);
       if (token == null && OfflineStateManager.instance.isOffline) {
         if (mounted) {
           setState(() => _isLoading = false);
@@ -680,11 +752,13 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             const SnackBar(
               behavior: SnackBarBehavior.floating,
               content: Row(
-                children: [
+                children: <Widget>[
                   Icon(Icons.wifi_off_rounded, color: Colors.white),
                   SizedBox(width: 12),
                   Expanded(
-                    child: Text("Impossible d'actualiser : pas de connexion Internet. Données du cache conservées."),
+                    child: Text(
+                      "Impossible d'actualiser : pas de connexion Internet. Données du cache conservées.",
+                    ),
                   ),
                 ],
               ),
@@ -693,9 +767,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         }
         return;
       }
+
       _occupancyCache.clear();
-      token ??= await _storage.getRefreshToken();
-      _cachedAccessToken = token;
       _requestedDates = (await _storage.getRequestedDates()).toSet();
       _requestedWorkspacesMap = await _storage.getRequestedWorkspacesMap();
 
@@ -709,7 +782,10 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }
       await _loadFavorites();
 
-      if (token != null && token.isNotEmpty && _siteId != null && _floorId != null) {
+      if (token != null &&
+          token.isNotEmpty &&
+          _siteId != null &&
+          _floorId != null) {
         await _loadFloorMapAndOccupancy(token, _siteId!, _floorId!);
       } else {
         await _loadInitialData();
@@ -725,11 +801,13 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             const SnackBar(
               behavior: SnackBarBehavior.floating,
               content: Row(
-                children: [
+                children: <Widget>[
                   Icon(Icons.wifi_off_rounded, color: Colors.white),
                   SizedBox(width: 12),
                   Expanded(
-                    child: Text("Impossible d'actualiser : pas de connexion Internet. Données du cache conservées."),
+                    child: Text(
+                      "Impossible d'actualiser : pas de connexion Internet. Données du cache conservées.",
+                    ),
                   ),
                 ],
               ),
@@ -740,7 +818,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             SnackBar(
               behavior: SnackBarBehavior.floating,
               content: Text(
-                "Erreur lors de l'actualisation: ${sanitizeErrorMessage(e, fallback: "Impossible d'actualiser les données.")}",
+                "Erreur lors de l'actualisation: ${ErrorSanitizer.sanitize(e, fallback: "Impossible d'actualiser les données.")}",
               ),
             ),
           );
@@ -765,41 +843,49 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   void _changeDate(int offsetDays) {
-    var newDate = _selectedDate.add(Duration(days: offsetDays));
+    var newDate = addCalendarDays(_selectedDate, offsetDays);
     if (_hideWeekends) {
       if (offsetDays > 0) {
-        while (newDate.weekday == DateTime.saturday || newDate.weekday == DateTime.sunday) {
-          newDate = newDate.add(const Duration(days: 1));
+        while (newDate.weekday == DateTime.saturday ||
+            newDate.weekday == DateTime.sunday) {
+          newDate = addCalendarDays(newDate, 1);
         }
       } else if (offsetDays < 0) {
-        while (newDate.weekday == DateTime.saturday || newDate.weekday == DateTime.sunday) {
-          newDate = newDate.subtract(const Duration(days: 1));
+        while (newDate.weekday == DateTime.saturday ||
+            newDate.weekday == DateTime.sunday) {
+          newDate = addCalendarDays(newDate, -1);
         }
       }
     }
     setState(() {
       _selectedDate = newDate;
     });
-    _loadOccupancyForDate(newDate);
+    unawaited(_loadOccupancyForDate(newDate));
   }
 
   Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final isWeekendSelected = _selectedDate.weekday == DateTime.saturday || _selectedDate.weekday == DateTime.sunday;
+    final today = normalizeLocalDate(DateTime.now());
+    final normalizedSelected = normalizeLocalDate(_selectedDate);
+    final isWeekendSelected =
+        normalizedSelected.weekday == DateTime.saturday ||
+            normalizedSelected.weekday == DateTime.sunday;
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selectedDate,
-      firstDate: now.subtract(const Duration(days: 365)),
-      lastDate: now.add(const Duration(days: 365)),
+      initialDate: normalizedSelected,
+      firstDate: addCalendarDays(today, -365),
+      lastDate: addCalendarDays(today, 365),
       selectableDayPredicate: (_hideWeekends && !isWeekendSelected)
-          ? (date) => date.weekday != DateTime.saturday && date.weekday != DateTime.sunday
+          ? (DateTime date) =>
+              date.weekday != DateTime.saturday &&
+              date.weekday != DateTime.sunday
           : null,
     );
-    if (picked != null && picked != _selectedDate) {
+    if (picked != null && normalizeLocalDate(picked) != normalizedSelected) {
+      final normalizedPicked = normalizeLocalDate(picked);
       setState(() {
-        _selectedDate = picked;
+        _selectedDate = normalizedPicked;
       });
-      _loadOccupancyForDate(picked);
+      unawaited(_loadOccupancyForDate(normalizedPicked));
     }
   }
 
@@ -814,13 +900,14 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _focusedRoom = null;
       });
 
-      final cachedPlan = await _storage.getFloorPlanData(newFloorId);
+      final Object? cachedPlan = await _storage.getFloorPlanData(newFloorId);
       final cachedWs = await _storage.getFloorWorkspaces(newFloorId);
       final dateStr = DateHelpers.formatIsoDate(_selectedDate);
       final cachedOccs = await _storage.getFloorOccupants(newFloorId, dateStr);
 
       if (mounted && (cachedPlan != null || cachedWs.isNotEmpty)) {
-        final cachedFeatures = parseFloorFeaturesWithFallback(cachedPlan, cachedWs);
+        final cachedFeatures =
+            parseFloorFeaturesWithFallback(cachedPlan, cachedWs);
         final bookable = cachedWs.where(isBookableWorkspace).toList();
 
         setState(() {
@@ -831,25 +918,21 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         });
       }
 
-      String? token = _cachedAccessToken;
-      if (token == null || token.isEmpty) {
-        token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
-        _cachedAccessToken = token;
-      }
-
+      final String? token = await _api.refreshMyToken();
       _siteId ??= await _storage.getSiteId();
 
-      if (token != null && token.isNotEmpty && _siteId != null && _siteId!.isNotEmpty) {
+      if (token != null &&
+          token.isNotEmpty &&
+          _siteId != null &&
+          _siteId!.isNotEmpty) {
         await _loadFloorMapAndOccupancy(token, _siteId!, newFloorId);
-      } else {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
+      } else if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
       }
     } catch (e) {
-      debugPrint("⚠️ Exception in _changeFloor: $e");
+      debugPrint('⚠️ Exception in _changeFloor: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -858,7 +941,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           SnackBar(
             behavior: SnackBarBehavior.floating,
             content: Text(
-              "Erreur lors du changement d'étage: ${sanitizeErrorMessage(e, fallback: "Impossible de charger cet étage.")}",
+              "Erreur lors du changement d'étage: ${ErrorSanitizer.sanitize(e, fallback: 'Impossible de charger cet étage.')}",
             ),
           ),
         );
@@ -867,27 +950,32 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   bool _isOccupantFavorite(DeskOccupant occupant) {
-    if (occupant.isMe) return false;
-    if (occupant.occupantId != null &&
-        (_favoriteIds.contains(occupant.occupantId!.toLowerCase()) ||
-            _favoriteIds.contains(occupant.occupantId!))) {
-      return true;
-    }
-    if (_favoriteNamesNormalized
-        .contains(occupant.occupantName.trim().toLowerCase())) {
-      return true;
-    }
-    return false;
+    return TeamMapHelpers.isOccupantFavorite(
+      occupant,
+      favoriteIds: _favoriteIds,
+      favoriteEmailsNormalized: _favoriteEmailsNormalized,
+      favoriteNamesNormalized: _favoriteNamesNormalized,
+    );
   }
 
   Future<void> _toggleFavorite(DeskOccupant occupant) async {
     final occId = occupant.occupantId ?? '';
-    final isExternal = occId.startsWith('ext_');
-    if (!isExternal && OfflineStateManager.instance.isOffline) {
+    final matchedFavorites =
+        TeamMapHelpers.findMatchingFavoritesForOccupant(_favorites, occupant);
+    final isLocalOnly = matchedFavorites.isNotEmpty
+        ? matchedFavorites.every(
+            (Colleague f) =>
+                f.id.startsWith('ext_') || f.id.startsWith('occ_'),
+          )
+        : (occId.startsWith('ext_') || occId.startsWith('occ_'));
+
+    if (!isLocalOnly && OfflineStateManager.instance.isOffline) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Modification impossible hors-ligne : une connexion Internet est requise pour modifier vos favoris."),
+            content: Text(
+              'Modification impossible hors-ligne : une connexion Internet est requise pour modifier vos favoris.',
+            ),
           ),
         );
       }
@@ -896,23 +984,51 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
     try {
       final isFav = _isOccupantFavorite(occupant);
-      String? token = await _api.refreshMyToken();
-      token ??= await _storage.getRefreshToken();
+      final String? token = await _api.refreshMyToken();
 
       if (isFav) {
-        if (token != null && token.isNotEmpty && occId.isNotEmpty) {
-          await _api.removeFavorite(token, occId);
+        if (matchedFavorites.isNotEmpty) {
+          for (final fav in matchedFavorites) {
+            final deleteTargetId =
+                (fav.favoriteId != null && fav.favoriteId!.isNotEmpty)
+                    ? fav.favoriteId!
+                    : (fav.id.isNotEmpty ? fav.id : occId);
+            final isServerTarget = deleteTargetId.isNotEmpty &&
+                !deleteTargetId.startsWith('ext_') &&
+                !deleteTargetId.startsWith('occ_');
+            if (token != null && token.isNotEmpty && isServerTarget) {
+              await _api.removeFavorite(token, deleteTargetId);
+            }
+            if (fav.id.isNotEmpty) {
+              await _storage.removeFavoriteColleague(fav.id);
+            } else if (fav.email.isNotEmpty) {
+              await _storage.removeFavoriteColleague(fav.email);
+            }
+          }
+        } else {
+          if (token != null &&
+              token.isNotEmpty &&
+              occId.isNotEmpty &&
+              !occId.startsWith('ext_') &&
+              !occId.startsWith('occ_')) {
+            await _api.removeFavorite(token, occId);
+          }
+          if (occId.isNotEmpty) {
+            await _storage.removeFavoriteColleague(occId);
+          }
+          if (occupant.occupantEmail != null &&
+              occupant.occupantEmail!.isNotEmpty) {
+            await _storage.removeFavoriteColleague(occupant.occupantEmail!);
+          }
         }
-        if (occId.isNotEmpty) {
-          await _storage.removeFavoriteColleague(occId);
-        }
-        if (occupant.occupantEmail != null && occupant.occupantEmail!.isNotEmpty) {
-          await _storage.removeFavoriteColleague(occupant.occupantEmail!);
-        }
-        await _storage.removeFavoriteColleague(occupant.occupantName);
       } else {
-        if (token != null && token.isNotEmpty && occId.isNotEmpty) {
-          await _api.addFavorite(token, occId);
+        String? serverFavoriteId;
+        if (token != null &&
+            token.isNotEmpty &&
+            occId.isNotEmpty &&
+            !occId.startsWith('ext_') &&
+            !occId.startsWith('occ_')) {
+          serverFavoriteId = await _api.addFavoriteWithId(token, occId);
         }
         final newFav = Colleague(
           id: occId.isNotEmpty ? occId : 'occ_${occupant.workspaceId}',
@@ -920,16 +1036,20 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           email: occupant.occupantEmail ?? '',
           isFavorite: true,
           deskName: occupant.workspaceId,
+          favoriteId: serverFavoriteId,
         );
         await _storage.addFavoriteColleague(newFav);
       }
+
       await _loadFavorites();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(isFav
-                ? '${occupant.occupantName} retiré(e) des favoris'
-                : '${occupant.occupantName} ajouté(e) aux favoris'),
+            content: Text(
+              isFav
+                  ? '${occupant.occupantName} retiré(e) des favoris'
+                  : '${occupant.occupantName} ajouté(e) aux favoris',
+            ),
             duration: const Duration(seconds: 2),
           ),
         );
@@ -937,14 +1057,20 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erreur lors de la mise à jour des favoris: $e")),
+          SnackBar(
+            content: Text(
+              'Erreur lors de la mise à jour des favoris: ${ErrorSanitizer.sanitize(e, fallback: 'opération impossible.')}',
+            ),
+          ),
         );
       }
     }
   }
 
   Future<void> _showOccupantDetails(
-      Map<String, dynamic> workspace, DeskOccupant occupant) async {
+    Map<String, dynamic> workspace,
+    DeskOccupant occupant,
+  ) async {
     _selectionTimer?.cancel();
     final wsId = workspace['id']?.toString() ?? occupant.workspaceId;
     setState(() {
@@ -952,9 +1078,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     });
 
     final isFav = _isOccupantFavorite(occupant);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final target = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+    final today = normalizeLocalDate(DateTime.now());
+    final target = normalizeLocalDate(_selectedDate);
     final isPast = target.isBefore(today);
 
     final dateStr = DateHelpers.formatIsoDate(_selectedDate);
@@ -968,7 +1093,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final effectiveOccupant = occupant.copyWith(
       isDelegated: occupant.isDelegated || isDelegatedByMe,
       isDelegatedByMe: isDelegatedByMe,
-      isDelegatedOther: !isDelegatedByMe && !occupant.isDelegatedForMe && (occupant.isDelegated || isDelegatedByMe),
+      isDelegatedOther: !isDelegatedByMe &&
+          !occupant.isDelegatedForMe &&
+          (occupant.isDelegated || isDelegatedByMe),
     );
 
     if (!mounted) return;
@@ -978,13 +1105,16 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       workspace: workspace,
       occupant: effectiveOccupant,
       isFavorite: isFav,
-      onToggleFavorite: () => _toggleFavorite(effectiveOccupant),
+      onToggleFavorite: () => unawaited(_toggleFavorite(effectiveOccupant)),
       onCancelMyBooking: (!isPast && effectiveOccupant.isMe)
-          ? () => _cancelMyBooking(workspace, effectiveOccupant)
+          ? () => unawaited(_cancelMyBooking(workspace, effectiveOccupant))
           : null,
-      onCancelDelegatedBooking: (!isPast && isDelegatedByMe && !effectiveOccupant.isMe)
-          ? () => _cancelDelegatedBooking(workspace, effectiveOccupant)
-          : null,
+      onCancelDelegatedBooking:
+          (!isPast && isDelegatedByMe && !effectiveOccupant.isMe)
+              ? () => unawaited(
+                    _cancelDelegatedBooking(workspace, effectiveOccupant),
+                  )
+              : null,
     );
 
     _selectionTimer?.cancel();
@@ -996,27 +1126,24 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   Future<void> _cancelMyBooking(
-      Map<String, dynamic> workspace, DeskOccupant occupant) async {
+    Map<String, dynamic> workspace,
+    DeskOccupant occupant,
+  ) async {
     final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final wsId = workspace['id']?.toString() ?? occupant.workspaceId;
 
     setState(() {
       _isActionInProgress = true;
-      _actionLoadingMessage = "Libération de votre place...";
+      _actionLoadingMessage = 'Libération de votre place...';
     });
 
     try {
-      String? token = _cachedAccessToken;
-      if (token == null || token.isEmpty) {
-        token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
-        _cachedAccessToken = token;
-      }
-
+      final String? token = await _api.refreshMyToken();
       if (token == null || token.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("Session expirée. Veuillez vous reconnecter."),
+              content: Text(ErrorSanitizer.sessionExpiredMessage),
               backgroundColor: Colors.red,
             ),
           );
@@ -1024,7 +1151,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         return;
       }
 
-      bool success = await _api.cancelReservation(dateStr, token, wsId);
+      var success = await _api.cancelReservation(dateStr, token, wsId);
       if (!success) {
         success = await _api.cancelBookingByDate(token, dateStr);
       }
@@ -1049,21 +1176,24 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         await _storage.saveAllTimeElsewhereDates(allTimeElsewhere);
 
         await _fetchOccupants();
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Impossible de libérer la place"),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Impossible de libérer la place'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sanitizeErrorMessage(e, fallback: "Erreur lors de l'annulation.")),
+            content: Text(
+              ErrorSanitizer.sanitize(
+                e,
+                fallback: "Erreur lors de l'annulation.",
+              ),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -1079,27 +1209,24 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   }
 
   Future<void> _cancelDelegatedBooking(
-      Map<String, dynamic> workspace, DeskOccupant occupant) async {
+    Map<String, dynamic> workspace,
+    DeskOccupant occupant,
+  ) async {
     final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final wsId = workspace['id']?.toString() ?? occupant.workspaceId;
 
     setState(() {
       _isActionInProgress = true;
-      _actionLoadingMessage = "Libération de la place du collègue...";
+      _actionLoadingMessage = 'Libération de la place du collègue...';
     });
 
     try {
-      String? token = _cachedAccessToken;
-      if (token == null || token.isEmpty) {
-        token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
-        _cachedAccessToken = token;
-      }
-
+      final String? token = await _api.refreshMyToken();
       if (token == null || token.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("Session expirée. Veuillez vous reconnecter."),
+              content: Text(ErrorSanitizer.sessionExpiredMessage),
               backgroundColor: Colors.red,
             ),
           );
@@ -1124,27 +1251,31 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("Réservation pour le collègue libérée avec succès"),
+              content:
+                  Text('Réservation pour le collègue libérée avec succès'),
               backgroundColor: Colors.green,
             ),
           );
         }
         await _fetchOccupants();
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Impossible de libérer la place du collègue"),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Impossible de libérer la place du collègue'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Erreur lors de la libération: $e"),
+            content: Text(
+              ErrorSanitizer.sanitize(
+                e,
+                fallback: 'Erreur lors de la libération de la place.',
+              ),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -1173,7 +1304,11 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }
     });
 
-    await _storage.addRequestedDate(dateStr, workspaceId: wsId, workspaceName: deskName);
+    await _storage.addRequestedDate(
+      dateStr,
+      workspaceId: wsId,
+      workspaceName: deskName,
+    );
     _requestedDates = (await _storage.getRequestedDates()).toSet();
     _requestedWorkspacesMap = await _storage.getRequestedWorkspacesMap();
 
@@ -1186,7 +1321,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Bureau $deskName programmé (En attente) pour le ${DateHelpers.formatFrenchDate(_selectedDate)}"),
+          content: Text(
+            'Bureau $deskName programmé (En attente) pour le ${DateHelpers.formatFrenchDate(_selectedDate)}',
+          ),
           backgroundColor: Colors.blueAccent,
         ),
       );
@@ -1212,7 +1349,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Programmation annulée pour le bureau $deskName (${DateHelpers.formatFrenchDate(_selectedDate)})"),
+          content: Text(
+            'Programmation annulée pour le bureau $deskName (${DateHelpers.formatFrenchDate(_selectedDate)})',
+          ),
           backgroundColor: Colors.grey.shade800,
         ),
       );
@@ -1224,18 +1363,9 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final wsId = workspace['id']?.toString() ?? '';
     setState(() => _selectedDeskId = wsId);
 
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final target = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
-    final diffInDays = target.difference(today).inDays;
-    final isPast = diffInDays < 0;
-    final isBeyond13Days = diffInDays > 13;
     final hideWe = widget.hideWeekends ?? await _storage.getHideWeekends();
     if (!mounted) return;
     _hideWeekends = hideWe;
-    final isWeekend = _selectedDate.weekday == DateTime.saturday ||
-        _selectedDate.weekday == DateTime.sunday;
-    final isWeekendBlocked = hideWe && isWeekend;
 
     final dateStr = DateHelpers.formatIsoDate(_selectedDate);
     final hasMyBooking = _hasConfirmedReservationForDate(_selectedDate);
@@ -1243,323 +1373,34 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     final isPending = !hasMyBooking &&
         _requestedDates.contains(dateStr) &&
         (pendingWs == null ||
-         pendingWs.toLowerCase() == wsId.toLowerCase() ||
-         pendingWs.toLowerCase() == (workspace['name']?.toString() ?? '').toLowerCase());
-
-    final deskName = workspace['name']?.toString() ??
-        workspace['workspaceName']?.toString() ??
-        wsId;
-    final roomName = workspace['roomName']?.toString() ?? extractRoomName(workspace);
-    final theme = Theme.of(context);
+            pendingWs.toLowerCase() == wsId.toLowerCase() ||
+            pendingWs.toLowerCase() ==
+                (workspace['name']?.toString() ?? '').toLowerCase());
 
     if (_isOccupantsPanelExpanded) {
       setState(() => _isOccupantsPanelExpanded = false);
     }
 
-    await showModalBottomSheet(
+    await FreeDeskBookingSheet.show(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: theme.colorScheme.primaryContainer,
-                      child: Icon(Icons.desk, color: theme.colorScheme.onPrimaryContainer),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            deskName,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          if (roomName.isNotEmpty) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              roomName,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: isPending
-                            ? Colors.blue.withValues(alpha: 0.2)
-                            : Colors.blue.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        isPending ? "En attente" : "Libre",
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: isPending ? Colors.blue.shade800 : Colors.blue,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Card(
-                  elevation: 0,
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
-                      children: [
-                        Icon(Icons.calendar_today, size: 18, color: theme.colorScheme.primary),
-                        const SizedBox(width: 10),
-                        Text(
-                          DateHelpers.formatFrenchDate(_selectedDate),
-                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                if (isWeekendBlocked) ...[
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.orange.shade700.withValues(alpha: 0.5)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.event_busy, color: Colors.orange.shade900, size: 20),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            "Réservations fermées le weekend",
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: theme.brightness == Brightness.dark
-                                  ? Colors.orange.shade200
-                                  : Colors.orange.shade900,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ] else if (isPast) ...[
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.amber.shade700.withValues(alpha: 0.5)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline, color: Colors.amber.shade900, size: 20),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            "La réservation directe n'est pas disponible pour une date passée.",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: theme.brightness == Brightness.dark
-                                  ? Colors.amber.shade200
-                                  : Colors.amber.shade900,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ] else if (isPending) ...[
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.blue.shade700.withValues(alpha: 0.5)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.pending_actions, color: Colors.blue.shade700, size: 22),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                "Programmation en attente",
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                "Ce bureau sera réservé automatiquement par AutoRoomzio dès l'ouverture des créneaux (J-13).",
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    key: const ValueKey('cancel_programming_button'),
-                    icon: const Icon(Icons.cancel_outlined),
-                    label: const Text("Annuler la programmation"),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.red.shade700,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _cancelDeskProgramming(workspace);
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                ] else if (isBeyond13Days) ...[
-                  if (!kIsWeb) ...[
-                    FilledButton.icon(
-                      key: const ValueKey('program_desk_button'),
-                      icon: const Icon(Icons.schedule_rounded),
-                      label: const Text("Programmer ce bureau (En attente)"),
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _programDeskInAdvance(workspace);
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    OutlinedButton.icon(
-                      key: const ValueKey('reserve_for_colleague_beyond13_button'),
-                      icon: const Icon(Icons.person_add_alt_1_rounded),
-                      label: const Text("Réserver pour un collègue"),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      onPressed: null,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "La réservation pour un collègue est limitée à J+13.",
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: theme.colorScheme.error,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                  ] else ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blueGrey.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.blueGrey.shade400.withValues(alpha: 0.5)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.info_outline, color: Colors.blueGrey.shade700, size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              "La réservation directe n'est pas encore ouverte pour cette date (créneaux ouverts jusqu'à 13 jours à l'avance).",
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: theme.colorScheme.onSurface.withValues(alpha: 0.85),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                ] else ...[
-                  FilledButton.icon(
-                    key: const ValueKey('reserve_for_me_button'),
-                    icon: const Icon(Icons.check_circle_outline),
-                    label: const Text("Réserver ce bureau pour moi"),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _reserveForMe(workspace);
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    key: const ValueKey('reserve_for_colleague_button'),
-                    icon: const Icon(Icons.person_add_alt_1_rounded),
-                    label: const Text("Réserver ce bureau pour un collègue"),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _reserveForColleague(workspace);
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                if (!kIsWeb) ...[
-                  OutlinedButton.icon(
-                    key: const ValueKey('automate_desk_button'),
-                    icon: const Icon(Icons.auto_mode_rounded),
-                    label: const Text("Automatiser ce bureau"),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _openDeskAutomationSheet(wsId: wsId, deskName: deskName);
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                TextButton(
-                  key: const ValueKey('close_free_desk_sheet_button'),
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text("Fermer"),
-                ),
-              ],
-            ),
+      workspace: workspace,
+      selectedDate: _selectedDate,
+      isPending: isPending,
+      hideWeekends: hideWe,
+      onCancelProgramming: () => unawaited(_cancelDeskProgramming(workspace)),
+      onProgramInAdvance: () => unawaited(_programDeskInAdvance(workspace)),
+      onReserveForMe: () => unawaited(_reserveForMe(workspace)),
+      onReserveForColleague: () => unawaited(_reserveForColleague(workspace)),
+      onOpenAutomation: (String targetWsId, String deskName) {
+        unawaited(
+          DeskAutomationSheet.show(
+            context: context,
+            wsId: targetWsId,
+            deskName: deskName,
+            siteId: _siteId ?? '',
+            floorId: _floorId ?? '',
+            hideWeekends: _hideWeekends,
+            storageService: _storage,
           ),
         );
       },
@@ -1571,254 +1412,6 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
-  Future<void> _openDeskAutomationSheet({
-    required String wsId,
-    required String deskName,
-  }) async {
-    final rules = await _storage.getAutomationRules();
-    if (!mounted) return;
-
-    const fullWeekDays = DateHelpers.frenchWeekdaysMap;
-    const shortWeekDays = DateHelpers.frenchShortWeekdaysMap;
-    final daysToShow = _hideWeekends ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5, 6, 7];
-
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetCtx) {
-        return StatefulBuilder(
-          builder: (sheetCtx, setSheetState) {
-            final theme = Theme.of(sheetCtx);
-            final isDark = theme.brightness == Brightness.dark;
-            final weekdayMap = <int, AutomationRule>{
-              for (final r in rules)
-                for (final d in r.days) d: r,
-            };
-            final existingIdx = rules.indexWhere(
-              (r) => r.workspaceId.toLowerCase() == wsId.toLowerCase(),
-            );
-            final currentRule = existingIdx >= 0
-                ? rules[existingIdx]
-                : AutomationRule(
-                    id: wsId,
-                    siteId: _siteId ?? '',
-                    floorId: _floorId ?? '',
-                    workspaceId: wsId,
-                    workspaceName: deskName,
-                    days: const [],
-                  );
-
-            Future<void> persistChanges(List<int> nextDays) async {
-              final idx = rules.indexWhere(
-                (r) => r.workspaceId.toLowerCase() == wsId.toLowerCase(),
-              );
-              if (nextDays.isEmpty) {
-                if (idx >= 0) {
-                  rules.removeAt(idx);
-                }
-              } else if (idx >= 0) {
-                rules[idx] = rules[idx].copyWith(
-                  siteId: _siteId ?? rules[idx].siteId,
-                  floorId: _floorId ?? rules[idx].floorId,
-                  workspaceName: deskName,
-                  days: nextDays,
-                );
-              } else {
-                rules.add(
-                  AutomationRule(
-                    id: wsId,
-                    siteId: _siteId ?? '',
-                    floorId: _floorId ?? '',
-                    workspaceId: wsId,
-                    workspaceName: deskName,
-                    days: nextDays,
-                  ),
-                );
-              }
-              await _storage.saveAutomationRules(rules);
-              if (sheetCtx.mounted) {
-                setSheetState(() {});
-              }
-            }
-
-            return SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.auto_mode_rounded, color: theme.colorScheme.primary),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Automatiser $deskName',
-                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                              ),
-                              Text(
-                                'Choisissez les jours récurrents pour ce bureau',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    ...daysToShow.map((day) {
-                      final isActiveHere = currentRule.days.contains(day);
-                      final otherRule = (!isActiveHere) ? weekdayMap[day] : null;
-                      final isConflict =
-                          otherRule != null && otherRule.workspaceId.toLowerCase() != wsId.toLowerCase();
-                      final dayName = fullWeekDays[day] ?? 'Jour $day';
-                      final shortName = shortWeekDays[day] ?? '$day';
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Material(
-                          color: isActiveHere
-                              ? theme.colorScheme.primaryContainer.withValues(alpha: isDark ? 0.5 : 0.7)
-                              : (isConflict
-                                  ? Colors.amber.withValues(alpha: isDark ? 0.18 : 0.14)
-                                  : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)),
-                          borderRadius: BorderRadius.circular(12),
-                          child: InkWell(
-                            key: ValueKey('desk_auto_day_$day'),
-                            borderRadius: BorderRadius.circular(12),
-                            onTap: () async {
-                              if (isActiveHere) {
-                                final nextDays = List<int>.from(currentRule.days)..remove(day);
-                                await persistChanges(nextDays);
-                              } else if (isConflict) {
-                                final confirmed = await showDialog<bool>(
-                                  context: sheetCtx,
-                                  builder: (dlgCtx) => AlertDialog(
-                                    title: Text('Conflit sur le $dayName'),
-                                    content: Text(
-                                      'Le $dayName est déjà automatisé sur la place "${otherRule.workspaceName}".\n\n'
-                                      'Voulez-vous remplacer cette place par "$deskName" pour le $dayName ?',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(dlgCtx, false),
-                                        child: const Text('Annuler'),
-                                      ),
-                                      FilledButton(
-                                        key: const ValueKey('confirm_replace_day_button'),
-                                        onPressed: () => Navigator.pop(dlgCtx, true),
-                                        child: const Text('Remplacer'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                                if (confirmed != true) return;
-                                final otherIdx = rules.indexWhere(
-                                  (r) => r.workspaceId.toLowerCase() == otherRule.workspaceId.toLowerCase(),
-                                );
-                                if (otherIdx >= 0) {
-                                  final otherDays = List<int>.from(rules[otherIdx].days)..remove(day);
-                                  rules[otherIdx] = rules[otherIdx].copyWith(days: otherDays);
-                                }
-                                final nextDays = List<int>.from(currentRule.days)..add(day);
-                                await persistChanges(nextDays);
-                              } else {
-                                final nextDays = List<int>.from(currentRule.days)..add(day);
-                                await persistChanges(nextDays);
-                              }
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: isActiveHere
-                                      ? theme.colorScheme.primary
-                                      : (isConflict
-                                          ? (isDark ? Colors.amber.shade400 : Colors.orange.shade700)
-                                          : theme.dividerColor.withValues(alpha: 0.25)),
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    isActiveHere
-                                        ? Icons.check_circle_rounded
-                                        : (isConflict
-                                            ? Icons.swap_horiz_rounded
-                                            : Icons.radio_button_unchecked_rounded),
-                                    color: isActiveHere
-                                        ? theme.colorScheme.primary
-                                        : (isConflict
-                                            ? (isDark ? Colors.amber.shade300 : Colors.orange.shade800)
-                                            : theme.colorScheme.onSurface.withValues(alpha: 0.5)),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      '$dayName ($shortName)',
-                                      style: TextStyle(
-                                        fontWeight: isActiveHere || isConflict ? FontWeight.bold : FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                  if (isConflict)
-                                    Flexible(
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                        decoration: BoxDecoration(
-                                          color: Colors.amber.withValues(alpha: isDark ? 0.25 : 0.2),
-                                          borderRadius: BorderRadius.circular(8),
-                                          border: Border.all(
-                                            color: isDark ? Colors.amber.shade400 : Colors.orange.shade700,
-                                            width: 0.8,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '⇄ ${otherRule.workspaceName}',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.bold,
-                                            color: isDark ? Colors.amber.shade200 : Colors.orange.shade900,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }),
-                    const SizedBox(height: 8),
-                    FilledButton(
-                      key: const ValueKey('close_desk_automation_sheet_button'),
-                      onPressed: () => Navigator.pop(sheetCtx),
-                      child: const Text('Terminer'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   Future<void> _reserveForMe(Map<String, dynamic> workspace) async {
     final hideWe = widget.hideWeekends ?? await _storage.getHideWeekends();
     if (!mounted) return;
@@ -1826,7 +1419,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _selectedDate.weekday == DateTime.sunday;
     if (hideWe && isWeekend) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Les réservations sont fermées le weekend")),
+        const SnackBar(content: Text('Les réservations sont fermées le weekend')),
       );
       return;
     }
@@ -1845,62 +1438,35 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       }
     }
 
-    final me = existingMe;
-    if (me != null) {
-      final oldWsId = me.workspaceId;
-      final existingDesk = _allWorkspaces.firstWhere(
-        (w) =>
-            w['id']?.toString().toLowerCase() == oldWsId.toLowerCase() ||
-            w['name']?.toString().toLowerCase() == oldWsId.toLowerCase(),
-        orElse: () => <String, dynamic>{'name': oldWsId},
+    if (existingMe != null) {
+      final existingDeskName = TeamMapHelpers.resolveDeskDisplayName(
+        _allWorkspaces,
+        existingMe.workspaceId,
       );
-      final existingDeskName = existingDesk['name']?.toString() ??
-          existingDesk['workspaceName']?.toString() ??
-          oldWsId;
-
-      final confirmed = await showDialog<bool>(
+      final confirmed =
+          await ColleagueManagementDialogs.showReplaceMyBookingConfirmation(
         context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text("Remplacer votre réservation ?"),
-          content: Text(
-            "Vous avez déjà réservé la place $existingDeskName pour cette journée.\n\n"
-            "En réservant la place $deskName, votre place actuelle sera automatiquement libérée et remplacée.",
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text("Annuler"),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("Confirmer le remplacement"),
-            ),
-          ],
-        ),
+        existingDeskName: existingDeskName,
+        newDeskName: deskName,
       );
-
-      if (confirmed != true) return;
+      if (!confirmed || !mounted) return;
     }
 
     setState(() {
       _isActionInProgress = true;
       _actionLoadingMessage = existingMe != null
-          ? "Remplacement de votre réservation..."
-          : "Réservation en cours...";
+          ? 'Remplacement de votre réservation...'
+          : 'Réservation en cours...';
     });
 
     try {
-      String? token = _cachedAccessToken;
-      if (token == null || token.isEmpty) {
-        token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
-        _cachedAccessToken = token;
-      }
-
+      final String? token = await _api.refreshMyToken();
       if (token == null || token.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Session expirée. Veuillez vous reconnecter.")),
+            const SnackBar(
+              content: Text(ErrorSanitizer.sessionExpiredMessage),
+            ),
           );
         }
         return;
@@ -1908,7 +1474,8 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
 
       if (existingMe != null) {
         final oldWsId = existingMe.workspaceId;
-        bool cancelSuccess = await _api.cancelReservation(dateStr, token, oldWsId);
+        final cancelSuccess =
+            await _api.cancelReservation(dateStr, token, oldWsId);
         if (!cancelSuccess) {
           await _api.cancelBookingByDate(token, dateStr);
         }
@@ -1958,29 +1525,34 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(existingMe != null
-                  ? "Réservation remplacée : Bureau $deskName réservé pour le ${DateHelpers.formatFrenchDate(_selectedDate)}"
-                  : "Bureau $deskName réservé avec succès pour le ${DateHelpers.formatFrenchDate(_selectedDate)}"),
+              content: Text(
+                existingMe != null
+                    ? 'Réservation remplacée : Bureau $deskName réservé pour le ${DateHelpers.formatFrenchDate(_selectedDate)}'
+                    : 'Bureau $deskName réservé avec succès pour le ${DateHelpers.formatFrenchDate(_selectedDate)}',
+              ),
               backgroundColor: Colors.green,
             ),
           );
         }
         await _fetchOccupants();
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("Échec de la réservation du bureau $deskName"),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Échec de la réservation du bureau $deskName'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sanitizeErrorMessage(e, fallback: "Erreur lors de la réservation.")),
+            content: Text(
+              ErrorSanitizer.sanitize(
+                e,
+                fallback: 'Erreur lors de la réservation.',
+              ),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -2002,7 +1574,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         _selectedDate.weekday == DateTime.sunday;
     if (hideWe && isWeekend) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Les réservations sont fermées le weekend")),
+        const SnackBar(content: Text('Les réservations sont fermées le weekend')),
       );
       return;
     }
@@ -2013,61 +1585,32 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
         workspace['workspaceName']?.toString() ??
         wsId;
 
-    final alreadySeatedMap = <String, String>{};
-    for (final occ in _occupants.values) {
-      final ws = _allWorkspaces.firstWhere(
-        (w) =>
-            w['id']?.toString().toLowerCase() == occ.workspaceId.toLowerCase() ||
-            w['name']?.toString().toLowerCase() == occ.workspaceId.toLowerCase(),
-        orElse: () => <String, dynamic>{'name': occ.workspaceId},
-      );
-      final seatedDeskName = ws['name']?.toString() ??
-          ws['workspaceName']?.toString() ??
-          occ.workspaceId;
-
-      if (occ.occupantId != null && occ.occupantId!.isNotEmpty) {
-        alreadySeatedMap[occ.occupantId!] = seatedDeskName;
-        alreadySeatedMap[occ.occupantId!.toLowerCase()] = seatedDeskName;
-      }
-      if (occ.occupantName.isNotEmpty) {
-        alreadySeatedMap[occ.occupantName] = seatedDeskName;
-        alreadySeatedMap[occ.occupantName.toLowerCase()] = seatedDeskName;
-      }
-      if (occ.occupantEmail != null && occ.occupantEmail!.isNotEmpty) {
-        alreadySeatedMap[occ.occupantEmail!] = seatedDeskName;
-        alreadySeatedMap[occ.occupantEmail!.toLowerCase()] = seatedDeskName;
-      }
-    }
-
-    final colleague = await showDialog<Colleague>(
+    final colleague =
+        await ColleagueManagementDialogs.showColleagueSelectionForDesk(
       context: context,
-      builder: (ctx) => ColleagueSelectionDialog(
-        date: dateStr,
-        deskName: deskName,
-        apiService: _api,
-        storageService: _storage,
-        alreadySeatedColleagues: alreadySeatedMap,
-      ),
+      dateIso: dateStr,
+      deskName: deskName,
+      apiService: _api,
+      storageService: _storage,
+      occupants: _occupants,
+      allWorkspaces: _allWorkspaces,
     );
 
-    if (colleague == null) return;
+    if (colleague == null || !mounted) return;
 
     setState(() {
       _isActionInProgress = true;
-      _actionLoadingMessage = "Réservation pour ${colleague.name}...";
+      _actionLoadingMessage = 'Réservation pour ${colleague.name}...';
     });
 
     try {
-      String? token = _cachedAccessToken;
-      if (token == null || token.isEmpty) {
-        token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
-        _cachedAccessToken = token;
-      }
-
+      final String? token = await _api.refreshMyToken();
       if (token == null || token.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Session expirée. Veuillez vous reconnecter.")),
+            const SnackBar(
+              content: Text(ErrorSanitizer.sessionExpiredMessage),
+            ),
           );
         }
         return;
@@ -2099,21 +1642,29 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
           );
         }
         await _fetchOccupants();
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(result.getLocalizedMessage(colleague.name)),
-              backgroundColor: Colors.red,
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              ErrorSanitizer.sanitize(
+                result.getLocalizedMessage(colleague.name),
+                fallback: 'Impossible de réserver pour ${colleague.name}.',
+              ),
             ),
-          );
-        }
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sanitizeErrorMessage(e, fallback: "Erreur lors de la réservation.")),
+            content: Text(
+              ErrorSanitizer.sanitize(
+                e,
+                fallback: 'Erreur lors de la réservation.',
+              ),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -2131,7 +1682,7 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   bool _hasConfirmedReservationForDate(DateTime date) {
     final dateStr = DateHelpers.formatIsoDate(date);
     if (DateHelpers.formatIsoDate(_selectedDate) == dateStr) {
-      if (_occupants.values.any((o) => o.isMe)) return true;
+      if (_occupants.values.any((DeskOccupant o) => o.isMe)) return true;
     }
     return _bookedDates.contains(dateStr);
   }
@@ -2140,249 +1691,51 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     if (_hasConfirmedReservationForDate(date)) return false;
     final dateStr = DateHelpers.formatIsoDate(date);
     if (!_requestedDates.contains(dateStr)) return false;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final target = DateTime(date.year, date.month, date.day);
-    final diffInDays = target.difference(today).inDays;
+    final today = normalizeLocalDate(DateTime.now());
+    final target = normalizeLocalDate(date);
+    final diffInDays = calendarDaysBetween(today, target);
     return diffInDays > 13 || _requestedDates.contains(dateStr);
   }
 
   Set<String> _getPendingWorkspaceIdsForSelectedDate() {
-    if (_hasConfirmedReservationForDate(_selectedDate)) return {};
+    if (_hasConfirmedReservationForDate(_selectedDate)) return <String>{};
     final dateStr = DateHelpers.formatIsoDate(_selectedDate);
-    if (!_requestedDates.contains(dateStr)) return {};
+    if (!_requestedDates.contains(dateStr)) return <String>{};
     final wsId = _requestedWorkspacesMap[dateStr] ?? _defaultWorkspaceId;
     if (wsId != null && wsId.isNotEmpty) {
-      if (_occupants.containsKey(wsId) || _occupants.containsKey(wsId.toLowerCase())) {
-        return {};
+      if (_occupants.containsKey(wsId) ||
+          _occupants.containsKey(wsId.toLowerCase())) {
+        return <String>{};
       }
-      return {wsId.toLowerCase(), wsId};
+      return <String>{wsId.toLowerCase(), wsId};
     }
-    return {};
-  }
-
-  List<_RoomSummary> get _roomSummaries {
-    final Map<String, List<DeskOccupant>> roomOccupants = {};
-    final Set<String> seenWorkspaceIds = {};
-
-    for (final entry in _occupants.entries) {
-      final occ = entry.value;
-      if (!seenWorkspaceIds.add(occ.workspaceId.toLowerCase())) continue;
-
-      final wsId = occ.workspaceId;
-      final ws = _allWorkspaces.firstWhere(
-        (w) =>
-            w['id']?.toString().toLowerCase() == wsId.toLowerCase() ||
-            w['name']?.toString().toLowerCase() == wsId.toLowerCase(),
-        orElse: () => <String, dynamic>{'id': wsId},
-      );
-      final rName = extractRoomName(ws);
-      if (rName.isNotEmpty) {
-        roomOccupants.putIfAbsent(rName, () => []).add(occ);
-      }
-    }
-
-    final list = roomOccupants.entries.map((entry) {
-      final rName = entry.key;
-      final occs = entry.value;
-      final favs = occs.where(_isOccupantFavorite).toList();
-      return _RoomSummary(
-        roomName: rName,
-        totalOccupants: occs.length,
-        favoriteOccupants: favs,
-      );
-    }).toList();
-
-    list.sort((a, b) {
-      // 1. Favorite colleague count (descending)
-      final favComp = b.favoriteOccupants.length.compareTo(a.favoriteOccupants.length);
-      if (favComp != 0) return favComp;
-      // 2. Total occupant count (descending)
-      final occComp = b.totalOccupants.compareTo(a.totalOccupants);
-      if (occComp != 0) return occComp;
-      // 3. Room name alphabetical
-      return a.roomName.toLowerCase().compareTo(b.roomName.toLowerCase());
-    });
-
-    return list;
-  }
-
-  Widget _buildRoomFilterBar() {
-    final summaries = _roomSummaries;
-
-    return Container(
-      height: 48,
-      color: Theme.of(context).colorScheme.surface,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Row(
-          children: [
-            FilterChip(
-              label: Text(
-                  'Tous les bureaux (${_workspaces.isNotEmpty ? _workspaces.length : _allWorkspaces.length})'),
-              selected: _focusedRoom == null,
-              onSelected: (_) => setState(() => _focusedRoom = null),
-            ),
-            const SizedBox(width: 8),
-            ...summaries.map((s) {
-              final isSelected = _focusedRoom == s.roomName;
-              if (s.hasFavorites) {
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: FilterChip(
-                    avatar: const Icon(Icons.star, size: 14, color: Colors.amber),
-                    label: Text('${s.roomName} (${s.favoriteOccupants.length})'),
-                    selected: isSelected,
-                    selectedColor: Colors.amber.withValues(alpha: 0.25),
-                    checkmarkColor: Colors.amber.shade900,
-                    onSelected: (selected) {
-                      setState(() => _focusedRoom = selected ? s.roomName : null);
-                    },
-                  ),
-                );
-              } else {
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: FilterChip(
-                    label: Text('${s.roomName} (${s.totalOccupants})'),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      setState(() => _focusedRoom = selected ? s.roomName : null);
-                    },
-                  ),
-                );
-              }
-            }),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLegend() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(
-            color: theme.dividerColor.withValues(alpha: 0.15),
-          ),
-        ),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _buildLegendItem(
-              color: isDark ? const Color(0xFFD97706) : const Color(0xFFFBBF24),
-              border: isDark ? const Color(0xFFFDE68A) : const Color(0xFFB45309),
-              label: "Collègue favori",
-              starPrefix: true,
-            ),
-            const SizedBox(width: 14),
-            _buildLegendItem(
-              color: isDark ? const Color(0xFF15803D) : const Color(0xFF22C55E),
-              border: isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534),
-              label: "Mon bureau",
-            ),
-            const SizedBox(width: 14),
-            _buildLegendItem(
-              color: isDark ? const Color(0xFF4B5563) : const Color(0xFFCBD5E1),
-              border: isDark ? const Color(0xFF6B7280) : const Color(0xFF94A3B8),
-              label: "Occupé",
-            ),
-            const SizedBox(width: 14),
-            _buildLegendItem(
-              color: isDark ? const Color(0xFF1E3A8A) : const Color(0xFFDBEAFE),
-              border: isDark ? const Color(0xFF3B82F6) : const Color(0xFF93C5FD),
-              label: "Libre",
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLegendItem({
-    required Color color,
-    required Color border,
-    required String label,
-    bool starPrefix = false,
-  }) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 14,
-          height: 14,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(3),
-            border: Border.all(color: border, width: 1.5),
-          ),
-          alignment: Alignment.center,
-          child: starPrefix
-              ? const Icon(Icons.star, size: 9, color: Colors.white)
-              : null,
-        ),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11.5,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-
-  List<DateTime> _getVisibleWeekDays(DateTime baseDate) {
-    final monday = DateTime(baseDate.year, baseDate.month, baseDate.day - (baseDate.weekday - 1));
-    final count = _hideWeekends ? 5 : 7;
-    return List.generate(count, (i) => DateTime(monday.year, monday.month, monday.day + i));
-  }
-
-  String _occupantUniqueKey(DeskOccupant occ) {
-    if (occ.occupantId != null && occ.occupantId!.trim().isNotEmpty) {
-      return 'id:${occ.occupantId!.trim().toLowerCase()}';
-    }
-    if (occ.occupantEmail != null && occ.occupantEmail!.trim().isNotEmpty) {
-      return 'email:${occ.occupantEmail!.trim().toLowerCase()}';
-    }
-    return 'name:${occ.occupantName.trim().toLowerCase()}';
-  }
-
-  int _countUniqueFavorites(Map<String, DeskOccupant> occs) {
-    final seenPeople = <String>{};
-    for (final occ in occs.values) {
-      if (_isOccupantFavorite(occ)) {
-        seenPeople.add(_occupantUniqueKey(occ));
-      }
-    }
-    return seenPeople.length;
+    return <String>{};
   }
 
   Map<String, int> _computeFavoriteCountsForVisibleWeek() {
-    final days = _getVisibleWeekDays(_selectedDate);
+    final days = TeamMapHelpers.getVisibleWeekDays(
+      _selectedDate,
+      hideWeekends: _hideWeekends,
+    );
     final selectedIso = DateHelpers.formatIsoDate(_selectedDate);
     final counts = <String, int>{};
     for (final d in days) {
       final dStr = DateHelpers.formatIsoDate(d);
-      Map<String, DeskOccupant>? occs;
+      final Map<String, DeskOccupant>? occs;
       if (dStr == selectedIso) {
         occs = _occupants;
       } else if (_floorId != null) {
         occs = _occupancyCache['${_floorId}_$dStr'];
+      } else {
+        occs = null;
       }
       if (occs != null && occs.isNotEmpty) {
-        final favCount = _countUniqueFavorites(occs);
+        final favCount = TeamMapHelpers.countUniqueFavorites(
+          occs,
+          favoriteIds: _favoriteIds,
+          favoriteEmailsNormalized: _favoriteEmailsNormalized,
+          favoriteNamesNormalized: _favoriteNamesNormalized,
+        );
         if (favCount > 0) {
           counts[dStr] = favCount;
         }
@@ -2391,56 +1744,21 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     return counts;
   }
 
-  String _resolveDeskDisplayName(String wsId) {
-    final ws = _allWorkspaces.firstWhere(
-      (w) =>
-          w['id']?.toString().toLowerCase() == wsId.toLowerCase() ||
-          w['name']?.toString().toLowerCase() == wsId.toLowerCase(),
-      orElse: () => <String, dynamic>{},
-    );
-    return ws['name']?.toString() ??
-        ws['workspaceName']?.toString() ??
-        wsId;
-  }
-
-  DeskOccupant? _findOccupantForColleague(
-    Map<String, DeskOccupant> occs,
-    Colleague fav,
-  ) {
-    for (final occ in occs.values) {
-      if (occ.isMe) continue;
-      if (occ.occupantId != null &&
-          fav.id.isNotEmpty &&
-          occ.occupantId!.toLowerCase() == fav.id.toLowerCase()) {
-        return occ;
-      }
-      if (occ.occupantEmail != null &&
-          fav.email.isNotEmpty &&
-          occ.occupantEmail!.toLowerCase() == fav.email.toLowerCase()) {
-        return occ;
-      }
-      if (fav.name.trim().isNotEmpty &&
-          occ.occupantName.trim().toLowerCase() == fav.name.trim().toLowerCase()) {
-        return occ;
-      }
-    }
-    return null;
-  }
-
   void _jumpToFavoriteDesk(DateTime targetDay, String wsId) {
-    final targetIso = DateHelpers.formatIsoDate(targetDay);
+    final normalizedTarget = normalizeLocalDate(targetDay);
+    final targetIso = DateHelpers.formatIsoDate(normalizedTarget);
     final currentIso = DateHelpers.formatIsoDate(_selectedDate);
     if (targetIso != currentIso) {
       setState(() {
-        _selectedDate = targetDay;
+        _selectedDate = normalizedTarget;
       });
-      _loadOccupancyForDate(targetDay);
+      unawaited(_loadOccupancyForDate(normalizedTarget));
     }
     if (_focusedWorkspaceId == wsId) {
       setState(() {
         _focusedWorkspaceId = null;
       });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((Duration _) {
         if (mounted) {
           _highlightDeskTemporarily(wsId);
         }
@@ -2450,342 +1768,39 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
     }
   }
 
-  Widget _buildFavoritesWeekIcon(
-    BuildContext context, {
-    bool dimStar = false,
-  }) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        const Icon(Icons.calendar_month_rounded),
-        Positioned(
-          right: -4,
-          bottom: -3,
-          child: Container(
-            padding: const EdgeInsets.all(1),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.star_rounded,
-              size: 12,
-              color: dimStar
-                  ? Colors.amber.withValues(alpha: 0.55)
-                  : Colors.amber,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Future<void> _showFavoritesWeekSummaryModal() async {
-    final weekDays = _getVisibleWeekDays(_selectedDate);
     final savedFavs = await _storage.getFavoriteColleagues();
     if (!mounted) return;
 
-    final selectedIso = DateHelpers.formatIsoDate(_selectedDate);
-    final floorId = _floorId;
-    final missingDays = floorId == null
-        ? <DateTime>[]
-        : weekDays.where((d) {
-            final dStr = DateHelpers.formatIsoDate(d);
-            return dStr != selectedIso && !_occupancyCache.containsKey('${floorId}_$dStr');
-          }).toList();
-
-    bool loadTriggered = false;
-    bool isLoadingWeek = missingDays.isNotEmpty;
-    bool localShowIndicators = _showFavoriteWeekIndicators;
-
-    await showModalBottomSheet<void>(
+    await FavoritesWeekModal.show(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetCtx) {
-        return StatefulBuilder(
-          builder: (sheetCtx, setSheetState) {
-            if (!loadTriggered && missingDays.isNotEmpty && floorId != null) {
-              loadTriggered = true;
-              Future(() async {
-                try {
-                  String? token = _cachedAccessToken;
-                  if (token == null || token.isEmpty) {
-                    token = await _api.refreshMyToken() ?? await _storage.getRefreshToken();
-                    _cachedAccessToken = token;
-                  }
-                  final delegatedMap = await _storage.getDelegatedBookingsMap();
-                  final savedEmail = await _storage.getSavedEmail();
-                  await Future.wait(missingDays.map((d) async {
-                    final dStr = DateHelpers.formatIsoDate(d);
-                    try {
-                      var occs = await _storage.getFloorOccupants(floorId, dStr);
-                      if (occs.isEmpty && token != null && token.isNotEmpty) {
-                        occs = await _api.getFloorOccupants(
-                          token,
-                          floorId,
-                          dStr,
-                          myUserEmail: savedEmail,
-                          delegatedBookingsMap: delegatedMap,
-                        );
-                        if (occs.isNotEmpty) {
-                          await _storage.saveFloorOccupants(floorId, dStr, occs);
-                        }
-                      }
-                      if (occs.isNotEmpty) {
-                        _occupancyCache['${floorId}_$dStr'] = occs;
-                      }
-                    } catch (_) {}
-                  }));
-                } finally {
-                  if (mounted) {
-                    setState(() {});
-                  }
-                  if (sheetCtx.mounted) {
-                    setSheetState(() {
-                      isLoadingWeek = false;
-                    });
-                  }
-                }
-              });
-            }
-
-            final Map<String, Map<String, DeskOccupant>> weekOccupants = {};
-            for (final d in weekDays) {
-              final dStr = DateHelpers.formatIsoDate(d);
-              if (dStr == selectedIso) {
-                weekOccupants[dStr] = _occupants;
-              } else if (floorId != null) {
-                weekOccupants[dStr] = _occupancyCache['${floorId}_$dStr'] ?? const {};
-              } else {
-                weekOccupants[dStr] = const {};
-              }
-            }
-
-            final List<Colleague> favoritesList = List.from(savedFavs);
-            for (final occs in weekOccupants.values) {
-              for (final occ in occs.values) {
-                if (!_isOccupantFavorite(occ)) continue;
-                final alreadyPresent = favoritesList.any((fav) =>
-                    (occ.occupantId != null &&
-                        fav.id.isNotEmpty &&
-                        occ.occupantId!.toLowerCase() == fav.id.toLowerCase()) ||
-                    (occ.occupantEmail != null &&
-                        fav.email.isNotEmpty &&
-                        occ.occupantEmail!.toLowerCase() == fav.email.toLowerCase()) ||
-                    (fav.name.trim().isNotEmpty &&
-                        occ.occupantName.trim().toLowerCase() == fav.name.trim().toLowerCase()));
-                if (!alreadyPresent) {
-                  favoritesList.add(
-                    Colleague(
-                      id: occ.occupantId ?? _occupantUniqueKey(occ),
-                      name: occ.occupantName,
-                      email: occ.occupantEmail ?? '',
-                      isFavorite: true,
-                    ),
-                  );
-                }
-              }
-            }
-
-            final theme = Theme.of(sheetCtx);
-            final isDark = theme.brightness == Brightness.dark;
-
-            return SafeArea(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(sheetCtx).size.height * 0.78,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          _buildFavoritesWeekIcon(sheetCtx),
-                          const SizedBox(width: 10),
-                          const Expanded(
-                            child: Text(
-                              'Semaine de mes favoris',
-                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: () => Navigator.pop(sheetCtx),
-                          ),
-                        ],
-                      ),
-                      if (isLoadingWeek) ...[
-                        const SizedBox(height: 6),
-                        const LinearProgressIndicator(minHeight: 2),
-                      ],
-                      const SizedBox(height: 8),
-                      if (favoritesList.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Text(
-                            'Aucun collègue favori configuré pour le moment.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        )
-                      else
-                        Flexible(
-                          child: ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: favoritesList.length,
-                            separatorBuilder: (context, index) => const SizedBox(height: 8),
-                            itemBuilder: (ctx, index) {
-                              final fav = favoritesList[index];
-                              return Card(
-                                elevation: 0,
-                                margin: EdgeInsets.zero,
-                                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                  side: BorderSide(color: theme.colorScheme.outlineVariant),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(10),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          const Icon(Icons.star_rounded, size: 16, color: Colors.amber),
-                                          const SizedBox(width: 6),
-                                          Expanded(
-                                            child: Text(
-                                              fav.name,
-                                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Row(
-                                        children: weekDays.map((d) {
-                                          final dStr = DateHelpers.formatIsoDate(d);
-                                          final occ = _findOccupantForColleague(
-                                            weekOccupants[dStr] ?? const {},
-                                            fav,
-                                          );
-                                          final dayLabel = DateHelpers.frenchShortWeekdaysList[d.weekday - 1];
-                                          final deskDisplay = occ != null
-                                              ? _resolveDeskDisplayName(occ.workspaceId)
-                                              : '—';
-                                          final isPresent = occ != null;
-
-                                          return Expanded(
-                                            child: Padding(
-                                              padding: const EdgeInsets.symmetric(horizontal: 2),
-                                              child: Material(
-                                                color: isPresent
-                                                    ? Colors.amber.withValues(alpha: isDark ? 0.25 : 0.2)
-                                                    : Colors.transparent,
-                                                borderRadius: BorderRadius.circular(8),
-                                                child: InkWell(
-                                                  key: ValueKey('fav_week_cell_${fav.id}_$dStr'),
-                                                  borderRadius: BorderRadius.circular(8),
-                                                  onTap: isPresent
-                                                      ? () {
-                                                          Navigator.pop(sheetCtx);
-                                                          _jumpToFavoriteDesk(d, occ.workspaceId);
-                                                        }
-                                                      : null,
-                                                  child: Container(
-                                                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 3),
-                                                    decoration: BoxDecoration(
-                                                      borderRadius: BorderRadius.circular(8),
-                                                      border: Border.all(
-                                                        color: isPresent
-                                                            ? Colors.amber.shade700.withValues(alpha: 0.5)
-                                                            : theme.dividerColor.withValues(alpha: 0.15),
-                                                      ),
-                                                    ),
-                                                    child: Column(
-                                                      mainAxisSize: MainAxisSize.min,
-                                                      children: [
-                                                        Text(
-                                                          dayLabel,
-                                                          style: TextStyle(
-                                                            fontSize: 10,
-                                                            fontWeight: FontWeight.bold,
-                                                            color: isPresent
-                                                                ? (isDark ? Colors.amber.shade200 : Colors.amber.shade900)
-                                                                : theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                                                          ),
-                                                        ),
-                                                        const SizedBox(height: 2),
-                                                        Text(
-                                                          deskDisplay,
-                                                          maxLines: 1,
-                                                          overflow: TextOverflow.ellipsis,
-                                                          textAlign: TextAlign.center,
-                                                          style: TextStyle(
-                                                            fontSize: 10,
-                                                            fontWeight: isPresent ? FontWeight.bold : FontWeight.normal,
-                                                            color: isPresent
-                                                                ? theme.colorScheme.onSurface
-                                                                : theme.colorScheme.onSurface.withValues(alpha: 0.4),
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          );
-                                        }).toList(),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      const SizedBox(height: 8),
-                      const Divider(height: 1),
-                      SwitchListTile(
-                        key: const ValueKey('modal_toggle_favorite_week_indicators'),
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text(
-                          'Afficher les compteurs ⭐ sur la barre des jours',
-                          style: TextStyle(fontSize: 13),
-                        ),
-                        value: localShowIndicators,
-                        onChanged: (val) async {
-                          await _storage.saveShowFavoriteWeekIndicators(val);
-                          if (mounted) {
-                            setState(() {
-                              _showFavoriteWeekIndicators = val;
-                            });
-                          }
-                          if (sheetCtx.mounted) {
-                            setSheetState(() {
-                              localShowIndicators = val;
-                            });
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
+      selectedDate: _selectedDate,
+      floorId: _floorId,
+      hideWeekends: _hideWeekends,
+      showFavoriteWeekIndicators: _showFavoriteWeekIndicators,
+      savedFavorites: savedFavs,
+      currentOccupants: _occupants,
+      occupancyCache: _occupancyCache,
+      allWorkspaces: _allWorkspaces,
+      favoriteIds: _favoriteIds,
+      favoriteEmailsNormalized: _favoriteEmailsNormalized,
+      favoriteNamesNormalized: _favoriteNamesNormalized,
+      apiService: _api,
+      storageService: _storage,
+      onCacheUpdated: (String cacheKey, Map<String, DeskOccupant> occs) {
+        _occupancyCache[cacheKey] = occs;
+        if (mounted) {
+          setState(() {});
+        }
+      },
+      onJumpToDesk: _jumpToFavoriteDesk,
+      onToggleIndicators: (bool val) async {
+        await _storage.saveShowFavoriteWeekIndicators(val);
+        if (mounted) {
+          setState(() {
+            _showFavoriteWeekIndicators = val;
+          });
+        }
       },
     );
   }
@@ -2800,239 +1815,24 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
       isPendingReservation: _isPendingReservationForDate,
       favoriteCountsByDate: _showFavoriteWeekIndicators
           ? _computeFavoriteCountsForVisibleWeek()
-          : const {},
+          : const <String, int>{},
       showFavoriteIndicators: _showFavoriteWeekIndicators,
       isLoading: _isOccupancyLoading,
-      onDateSelected: (date) {
+      onDateSelected: (DateTime date) {
+        final normalized = normalizeLocalDate(date);
         setState(() {
-          _selectedDate = date;
+          _selectedDate = normalized;
         });
-        _loadOccupancyForDate(date);
+        unawaited(_loadOccupancyForDate(normalized));
       },
       onPreviousDay: () => _changeDate(-1),
       onNextDay: () => _changeDate(1),
       onPickDate: _pickDate,
       onToday: () {
-        final now = DateTime.now();
-        setState(() => _selectedDate = now);
-        _loadOccupancyForDate(now);
+        final today = normalizeLocalDate(DateTime.now());
+        setState(() => _selectedDate = today);
+        unawaited(_loadOccupancyForDate(today));
       },
-    );
-  }
-
-  Widget _buildRoomSilhouette({
-    required double titleWidth,
-    required int deskCount,
-    required double deskWidth,
-    required double deskHeight,
-    bool isRow = false,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.25),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.6),
-          width: 1.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Room title / identifier silhouette
-          Container(
-            width: titleWidth,
-            height: 12,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Inner desk silhouette blocks
-          Expanded(
-            child: Align(
-              alignment: Alignment.topLeft,
-              child: isRow
-                  ? Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: List.generate(
-                        deskCount,
-                        (_) => Container(
-                          width: deskWidth,
-                          height: deskHeight,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(5),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.5),
-                              width: 1,
-                            ),
-                          ),
-                        ),
-                      ),
-                    )
-                  : Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: List.generate(
-                        deskCount,
-                        (_) => Container(
-                          width: deskWidth,
-                          height: deskHeight,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(5),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.5),
-                              width: 1,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMapSkeleton() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final baseColor = isDark ? const Color(0xFF2C2C2C) : const Color(0xFFE0E0E0);
-    final highlightColor = isDark ? const Color(0xFF424242) : const Color(0xFFF5F5F5);
-
-    return Shimmer.fromColors(
-      baseColor: baseColor,
-      highlightColor: highlightColor,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final w = constraints.maxWidth;
-          final h = constraints.maxHeight;
-
-          const double margin = 16.0;
-          const double gap = 14.0;
-
-          if (w <= 0 || h <= 0) return const SizedBox.shrink();
-
-          // Horizontal partition: 2 columns in upper section
-          // Total width = margin + wLeft + gap + wRight + margin = w
-          final double netW = (w - (2 * margin) - gap).clamp(0.0, double.infinity);
-          final double wLeft = (netW * 0.52).roundToDouble();
-          final double wRight = netW - wLeft;
-
-          // Vertical partition: Upper section (Rooms 1..4) and Lower section (Room 5)
-          // Total height = margin + upperH + gap + h5 + margin = h
-          final double netH = (h - (2 * margin) - gap).clamp(0.0, double.infinity);
-          final double h5 = (netH * 0.25).roundToDouble();
-          final double upperH = netH - h5;
-
-          // Left column vertical partition: Room 1 (top) and Room 3 (bottom)
-          // Total left upper height = h1 + gap + h3 = upperH
-          final double netUpperHLeft = (upperH - gap).clamp(0.0, double.infinity);
-          final double h1 = (netUpperHLeft * 0.45).roundToDouble();
-          final double h3 = netUpperHLeft - h1;
-
-          // Right column vertical partition: Room 2 (top) and Room 4 (bottom)
-          // Total right upper height = h2 + gap + h4 = upperH
-          final double netUpperHRight = (upperH - gap).clamp(0.0, double.infinity);
-          final double h2 = (netUpperHRight * 0.55).roundToDouble();
-          final double h4 = netUpperHRight - h2;
-
-          // Coordinates
-          final double left1 = margin;
-          final double top1 = margin;
-
-          final double left2 = margin + wLeft + gap;
-          final double top2 = margin;
-
-          final double left3 = margin;
-          final double top3 = margin + h1 + gap;
-
-          final double left4 = margin + wLeft + gap;
-          final double top4 = margin + h2 + gap;
-
-          final double left5 = margin;
-          final double top5 = margin + upperH + gap;
-          final double w5 = (w - (2 * margin)).clamp(0.0, double.infinity);
-
-          return ClipRect(
-            child: Stack(
-              clipBehavior: Clip.hardEdge,
-              children: [
-                // 1. Room 1 (Horizontal rectangle - North-West)
-                Positioned(
-                  left: left1,
-                  top: top1,
-                  width: wLeft,
-                  height: h1,
-                  child: _buildRoomSilhouette(
-                    titleWidth: 70,
-                    deskCount: 4,
-                    deskWidth: 32,
-                    deskHeight: 24,
-                  ),
-                ),
-                // 2. Room 2 (Vertical rectangle - North-East)
-                Positioned(
-                  left: left2,
-                  top: top2,
-                  width: wRight,
-                  height: h2,
-                  child: _buildRoomSilhouette(
-                    titleWidth: 55,
-                    deskCount: 6,
-                    deskWidth: 26,
-                    deskHeight: 26,
-                  ),
-                ),
-                // 3. Room 3 (Vertical rectangle - Mid-West)
-                Positioned(
-                  left: left3,
-                  top: top3,
-                  width: wLeft,
-                  height: h3,
-                  child: _buildRoomSilhouette(
-                    titleWidth: 65,
-                    deskCount: 4,
-                    deskWidth: 32,
-                    deskHeight: 26,
-                  ),
-                ),
-                // 4. Room 4 (Square - Mid-East)
-                Positioned(
-                  left: left4,
-                  top: top4,
-                  width: wRight,
-                  height: h4,
-                  child: _buildRoomSilhouette(
-                    titleWidth: 50,
-                    deskCount: 4,
-                    deskWidth: 28,
-                    deskHeight: 28,
-                  ),
-                ),
-                // 5. Room 5 (Horizontal rectangle - South)
-                Positioned(
-                  left: left5,
-                  top: top5,
-                  width: w5,
-                  height: h5,
-                  child: _buildRoomSilhouette(
-                    titleWidth: 90,
-                    deskCount: 6,
-                    deskWidth: 36,
-                    deskHeight: 22,
-                    isRow: true,
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
     );
   }
 
@@ -3040,23 +1840,37 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    // Compute count of seated favorites deduplicated by workspaceId
-    final Set<String> seenFavWsIds = {};
-    final favoritesSeatedCount = _occupants.values.where((occ) {
+    final seenFavWsIds = <String>{};
+    final favoritesSeatedCount = _occupants.values.where((DeskOccupant occ) {
       if (!_isOccupantFavorite(occ)) return false;
       return seenFavWsIds.add(occ.workspaceId.toLowerCase());
     }).length;
 
+    final effectiveFavoriteWorkspaceIds =
+        TeamMapHelpers.computeEffectiveFavoriteWorkspaceIds(
+      favorites: _favorites,
+      occupants: _occupants,
+      allWorkspaces: _allWorkspaces,
+      favoriteIds: _favoriteIds,
+      favoriteEmailsNormalized: _favoriteEmailsNormalized,
+      favoriteNamesNormalized: _favoriteNamesNormalized,
+    );
+
+    final roomSummaries = TeamMapHelpers.buildRoomSummaries(
+      occupants: _occupants,
+      allWorkspaces: _allWorkspaces,
+      favoriteIds: _favoriteIds,
+      favoriteEmailsNormalized: _favoriteEmailsNormalized,
+      favoriteNamesNormalized: _favoriteNamesNormalized,
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Plan d'équipe"),
-        actions: [
+        actions: <Widget>[
           IconButton(
             key: const ValueKey('favorites_week_summary_button'),
-            icon: _buildFavoritesWeekIcon(
-              context,
-              dimStar: !_showFavoriteWeekIndicators,
-            ),
+            icon: FavoritesWeekIcon(dimStar: !_showFavoriteWeekIndicators),
             tooltip: 'Semaine de mes favoris',
             onPressed: _showFavoritesWeekSummaryModal,
           ),
@@ -3066,9 +1880,11 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
             onPressed: _refreshData,
           ),
           IconButton(
-            icon: Icon(_showRoomHeatmap
-                ? Icons.thermostat_rounded
-                : Icons.thermostat_outlined),
+            icon: Icon(
+              _showRoomHeatmap
+                  ? Icons.thermostat_rounded
+                  : Icons.thermostat_outlined,
+            ),
             tooltip: _showRoomHeatmap
                 ? 'Désactiver la coloration thermique'
                 : 'Activer la coloration thermique',
@@ -3078,655 +1894,194 @@ class _TeamMapScreenState extends State<TeamMapScreen> {
               });
             },
           ),
-          if (_floors.length > 1)
-            Builder(
-              builder: (context) {
-                final uniqueFloors = <String, Map<String, dynamic>>{};
-                for (final f in _floors) {
-                  final id = f['id']?.toString() ?? '';
-                  if (id.isNotEmpty && !uniqueFloors.containsKey(id)) {
-                    uniqueFloors[id] = f;
-                  }
-                }
-                final currentFloorValue = uniqueFloors.containsKey(_floorId)
-                    ? _floorId
-                    : (uniqueFloors.isNotEmpty ? uniqueFloors.keys.first : null);
-
-                return Padding(
-                  padding: const EdgeInsets.only(right: 12.0),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: currentFloorValue,
-                      icon: const Icon(Icons.arrow_drop_down),
-                      items: uniqueFloors.values.map((f) {
-                        final id = f['id']?.toString() ?? '';
-                        final name = f['name']?.toString() ?? 'Étage $id';
-                        return DropdownMenuItem(value: id, child: Text(name));
-                      }).toList(),
-                      onChanged: (newId) {
-                        if (newId != null) _changeFloor(newId);
-                      },
-                    ),
-                  ),
-                );
-              },
-            )
-          else if (_floors.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 16.0),
-              child: Center(
-                child: Text(
-                  _floors.first['name']?.toString() ?? '',
-                  style: theme.textTheme.bodyMedium,
-                ),
-              ),
-            ),
+          TeamMapFloorSelector(
+            floors: _floors,
+            selectedFloorId: _floorId,
+            onFloorChanged: (String newId) => unawaited(_changeFloor(newId)),
+          ),
         ],
       ),
       body: ActionLoadingOverlay(
         isLoading: _isActionInProgress,
         message: _actionLoadingMessage,
         child: Column(
-          children: [
+          children: <Widget>[
             _buildDateNavigationBar(),
-          if (_errorMessage == null) ...[
-            _buildRoomFilterBar(),
-            _buildLegend(),
-          ],
-          Expanded(
-            child: _isLoading
-                ? _buildMapSkeleton()
-                : _errorMessage != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24.0),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.error_outline,
-                                  color: Colors.red, size: 48),
-                              const SizedBox(height: 12),
-                              Text(_errorMessage!,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(color: Colors.red)),
-                              const SizedBox(height: 16),
-                              ElevatedButton(
-                                onPressed: _loadInitialData,
-                                child: const Text("Réessayer"),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : Stack(
-                        children: [
-                          WorkspaceMapViewer(
-                            features: _features,
-                            workspaces: _workspaces,
-                            allWorkspaces: _allWorkspaces,
-                            occupants: _occupants,
-                            favoriteIds: _favoriteIds,
-                            favoriteNamesNormalized: _favoriteNamesNormalized,
-                            favoriteWorkspaceIds: _favoriteWorkspaceIds,
-                            selectedWorkspaceId: _selectedDeskId,
-                            defaultWorkspaceId: _defaultWorkspaceId,
-                            focusedRoom: _focusedRoom,
-                            focusedWorkspaceId: _focusedWorkspaceId,
-                            pendingWorkspaceIds: _getPendingWorkspaceIdsForSelectedDate(),
-                            showRoomHeatmap: _showRoomHeatmap,
-                            showHeatmapToggleChip: false,
-                            onToggleHeatmap: (val) {
-                              setState(() {
-                                _showRoomHeatmap = val;
-                              });
-                            },
-                            onBackgroundTapped: () {
-                              _selectionTimer?.cancel();
-                              if (_selectedDeskId != null) {
-                                setState(() {
-                                  _selectedDeskId = null;
-                                });
-                              }
-                            },
-                            onSelected: (workspace) {
-                              _selectionTimer?.cancel();
-                              _showFreeDeskSheet(workspace);
-                            },
-                            onOccupantTapped: (ws, occ) {
-                              _selectionTimer?.cancel();
-                              final wsId = ws['id']?.toString() ?? occ.workspaceId;
-                              setState(() {
-                                _focusedWorkspaceId = wsId;
-                              });
-                              _showOccupantDetails(ws, occ);
-                            },
-                          ),
-                          if (_isOccupantsPanelExpanded)
-                            Positioned.fill(
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () => setState(() => _isOccupantsPanelExpanded = false),
-                              ),
-                            ),
-                          _buildOccupantsSummaryPanel(theme, favoritesSeatedCount),
-                          if (_isOccupancyLoading)
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: Material(
-                                elevation: 4,
-                                borderRadius: BorderRadius.circular(20),
-                                color: theme.colorScheme.surface,
-                                child: const Padding(
-                                  padding: EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 6),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      SizedBox(
-                                        width: 14,
-                                        height: 14,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2),
-                                      ),
-                                      SizedBox(width: 8),
-                                      Text("Mise à jour...",
-                                          style: TextStyle(fontSize: 11)),
-                                    ],
-                                  ),
+            if (_errorMessage == null) ...<Widget>[
+              TeamMapRoomFilterBar(
+                summaries: roomSummaries,
+                totalBookableCount: _workspaces.isNotEmpty
+                    ? _workspaces.length
+                    : _allWorkspaces.length,
+                focusedRoom: _focusedRoom,
+                onFocusedRoomChanged: (String? room) {
+                  setState(() => _focusedRoom = room);
+                },
+              ),
+              const TeamMapLegendBar(),
+            ],
+            Expanded(
+              child: _isLoading
+                  ? const TeamMapSkeleton()
+                  : _errorMessage != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24.0),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                const Icon(
+                                  Icons.error_outline,
+                                  color: Colors.red,
+                                  size: 48,
                                 ),
-                              ),
-                            ),
-                        ],
-                      ),
-          ),
-        ],
-      ),
-    ),
-  );
-  }
-
-  Widget _buildOccupantsSummaryPanel(ThemeData theme, int favoritesSeatedCount) {
-    final isDark = theme.brightness == Brightness.dark;
-
-    // Collect deduplicated list of seated occupants with workspace info
-    final seenWorkspaceIds = <String>{};
-    final seatedList = <({
-      DeskOccupant occupant,
-      Map<String, dynamic> workspace,
-      String roomName,
-      String deskLabel,
-      bool isFavorite,
-    })>[];
-    for (final entry in _occupants.entries) {
-      final occ = entry.value;
-      if (!seenWorkspaceIds.add(occ.workspaceId.toLowerCase())) continue;
-      final wsId = occ.workspaceId;
-      final ws = _allWorkspaces.firstWhere(
-        (w) =>
-            w['id']?.toString().toLowerCase() == wsId.toLowerCase() ||
-            w['name']?.toString().toLowerCase() == wsId.toLowerCase(),
-        orElse: () => <String, dynamic>{'id': wsId},
-      );
-      final rName = extractRoomName(ws);
-      final name = ws['name']?.toString() ?? wsId;
-      final parts = name.split('-');
-      final deskLabel = parts.isNotEmpty && parts.last.isNotEmpty ? parts.last : name;
-      final isFav = _isOccupantFavorite(occ);
-      seatedList.add((
-        occupant: occ,
-        workspace: ws,
-        roomName: rName,
-        deskLabel: deskLabel,
-        isFavorite: isFav,
-      ));
-    }
-    final totalOccupantsCount = seatedList.length;
-
-    // Sort seatedList: favorites first, then isMe, then alphabetical
-    seatedList.sort((a, b) {
-      if (a.isFavorite && !b.isFavorite) return -1;
-      if (!a.isFavorite && b.isFavorite) return 1;
-      if (a.occupant.isMe && !b.occupant.isMe) return -1;
-      if (!a.occupant.isMe && b.occupant.isMe) return 1;
-      return a.occupant.occupantName.toLowerCase().compareTo(b.occupant.occupantName.toLowerCase());
-    });
-
-    final query = _colleagueSearchQuery.toLowerCase();
-    final filteredSeatedList = seatedList.where((item) {
-      if (query.isEmpty) return true;
-      final name = item.occupant.occupantName.toLowerCase();
-      final room = item.roomName.toLowerCase();
-      final desk = item.deskLabel.toLowerCase();
-      return name.contains(query) || room.contains(query) || desk.contains(query);
-    }).toList();
-
-    final seatedFavorites = seatedList.where((item) => item.isFavorite).toList();
-
-    return Positioned(
-      bottom: 72,
-      left: 16,
-      right: 16,
-      child: ValueListenableBuilder<Offset>(
-        valueListenable: _occupantsBarOffset,
-        builder: (context, barOffset, child) {
-          return Transform.translate(
-            offset: barOffset,
-            child: child,
-          );
-        },
-        child: TapRegion(
-          groupId: 'occupants_summary_panel',
-          onTapOutside: (_) {
-            if (_isOccupantsPanelExpanded) {
-              setState(() {
-                _isOccupantsPanelExpanded = false;
-              });
-            }
-          },
-          child: Material(
-            elevation: 3,
-            borderRadius: BorderRadius.circular(16),
-            color: theme.colorScheme.surface.withValues(alpha: 0.95),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Whole header bar is draggable via long-press and clickable to expand/collapse
-                  Row(
-                    children: [
-                      // Left side: star + favorite pastilles + count text (tap to toggle)
-                      Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onLongPressStart: (details) {
-                            HapticFeedback.selectionClick();
-                            _longPressStartPos = details.globalPosition;
-                            _longPressStartOffset = _occupantsBarOffset.value;
-                          },
-                          onLongPressMoveUpdate: (details) {
-                            final delta = details.globalPosition - _longPressStartPos;
-                            _occupantsBarOffset.value = _longPressStartOffset + delta;
-                          },
-                          onLongPressEnd: (_) {
-                            HapticFeedback.selectionClick();
-                          },
-                          child: InkWell(
-                            key: const ValueKey('toggle_occupants_panel_left'),
-                            borderRadius: BorderRadius.circular(12),
-                            onTap: () {
-                              setState(() {
-                                _isOccupantsPanelExpanded = !_isOccupantsPanelExpanded;
-                              });
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.star,
-                                    size: 16,
-                                    color: favoritesSeatedCount > 0
-                                        ? Colors.amber.shade800
-                                        : Colors.grey,
-                                  ),
-                                  if (seatedFavorites.isNotEmpty) ...[
-                                    const SizedBox(width: 6),
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        for (final fav in seatedFavorites.take(3))
-                                          Container(
-                                            margin: const EdgeInsets.only(right: 3),
-                                            width: 20,
-                                            height: 20,
-                                            decoration: BoxDecoration(
-                                              color: isDark ? const Color(0xFFD97706) : const Color(0xFFFBBF24),
-                                              shape: BoxShape.circle,
-                                              border: Border.all(
-                                                color: isDark ? const Color(0xFFFDE68A) : const Color(0xFFB45309),
-                                                width: 1,
-                                              ),
-                                            ),
-                                            alignment: Alignment.center,
-                                            child: Text(
-                                              fav.occupant.initials,
-                                              style: TextStyle(
-                                                fontSize: 8.5,
-                                                fontWeight: FontWeight.bold,
-                                                color: isDark ? Colors.white : const Color(0xFF78350F),
-                                              ),
-                                            ),
-                                          ),
-                                        if (seatedFavorites.length > 3)
-                                          Container(
-                                            width: 20,
-                                            height: 20,
-                                            decoration: BoxDecoration(
-                                              color: isDark ? const Color(0xFF78350F) : const Color(0xFFFDE68A),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            alignment: Alignment.center,
-                                            child: Text(
-                                              "+${seatedFavorites.length - 3}",
-                                              style: TextStyle(
-                                                fontSize: 8.5,
-                                                fontWeight: FontWeight.bold,
-                                                color: isDark ? Colors.amber.shade200 : const Color(0xFF78350F),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ],
-                                  const SizedBox(width: 6),
-                                  Flexible(
-                                    child: Text(
-                                      favoritesSeatedCount > 0
-                                          ? "$favoritesSeatedCount collègue${favoritesSeatedCount > 1 ? 's' : ''} favori${favoritesSeatedCount > 1 ? 's' : ''} sur site"
-                                          : "Aucun favori assis ce jour-là",
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: theme.colorScheme.onSurface,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  _errorMessage!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.red),
+                                ),
+                                const SizedBox(height: 16),
+                                ElevatedButton(
+                                  onPressed: _loadInitialData,
+                                  child: const Text('Réessayer'),
+                                ),
+                              ],
                             ),
                           ),
-                        ),
-                      ),
-                      // Reposition button (isolated from toggle tap)
-                      ValueListenableBuilder<Offset>(
-                        valueListenable: _occupantsBarOffset,
-                        builder: (context, off, _) {
-                          if (off == Offset.zero) return const SizedBox.shrink();
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: IconButton(
-                              icon: const Icon(Icons.restart_alt, size: 16),
-                              tooltip: "Repositionner en bas",
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-                              onPressed: () {
-                                _occupantsBarOffset.value = Offset.zero;
+                        )
+                      : Stack(
+                          children: <Widget>[
+                            WorkspaceMapViewer(
+                              features: _features,
+                              workspaces: _workspaces,
+                              allWorkspaces: _allWorkspaces,
+                              occupants: _occupants,
+                              favoriteIds: _favoriteIds,
+                              favoriteNamesNormalized: _favoriteNamesNormalized,
+                              favoriteWorkspaceIds:
+                                  effectiveFavoriteWorkspaceIds,
+                              selectedWorkspaceId: _selectedDeskId,
+                              defaultWorkspaceId: _defaultWorkspaceId,
+                              focusedRoom: _focusedRoom,
+                              focusedWorkspaceId: _focusedWorkspaceId,
+                              pendingWorkspaceIds:
+                                  _getPendingWorkspaceIdsForSelectedDate(),
+                              showRoomHeatmap: _showRoomHeatmap,
+                              showHeatmapToggleChip: false,
+                              onToggleHeatmap: (bool val) {
+                                setState(() {
+                                  _showRoomHeatmap = val;
+                                });
+                              },
+                              onBackgroundTapped: () {
+                                _selectionTimer?.cancel();
+                                if (_selectedDeskId != null) {
+                                  setState(() {
+                                    _selectedDeskId = null;
+                                  });
+                                }
+                              },
+                              onSelected: (Map<String, dynamic> workspace) {
+                                _selectionTimer?.cancel();
+                                unawaited(_showFreeDeskSheet(workspace));
+                              },
+                              onOccupantTapped: (
+                                Map<String, dynamic> ws,
+                                DeskOccupant occ,
+                              ) {
+                                _selectionTimer?.cancel();
+                                final wsId =
+                                    ws['id']?.toString() ?? occ.workspaceId;
+                                setState(() {
+                                  _focusedWorkspaceId = wsId;
+                                });
+                                unawaited(_showOccupantDetails(ws, occ));
                               },
                             ),
-                          );
-                        },
-                      ),
-                      // Right side: expand indicator button
-                      InkWell(
-                        key: const ValueKey('toggle_occupants_panel_right'),
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () {
-                          setState(() {
-                            _isOccupantsPanelExpanded = !_isOccupantsPanelExpanded;
-                          });
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                "Collègues présents ($totalOccupantsCount)",
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.bold,
-                                  color: theme.colorScheme.primary,
-                                ),
-                              ),
-                              const SizedBox(width: 2),
-                              AnimatedRotation(
-                                turns: _isOccupantsPanelExpanded ? 0.5 : 0.0,
-                                duration: const Duration(milliseconds: 260),
-                                curve: Curves.easeOutCubic,
-                                child: Icon(
-                                  Icons.keyboard_arrow_up,
-                                  size: 18,
-                                  color: theme.colorScheme.primary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      if (_isOccupantsPanelExpanded) ...[
-                        const SizedBox(width: 4),
-                        IconButton(
-                          key: const ValueKey('close_occupants_panel_button'),
-                          icon: const Icon(Icons.close, size: 18),
-                          tooltip: "Fermer le panneau",
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                          onPressed: () {
-                            setState(() {
-                              _isOccupantsPanelExpanded = false;
-                            });
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeOutCubic,
-                    child: _isOccupantsPanelExpanded
-                        ? Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const SizedBox(height: 8),
-                              TextField(
-                                key: const ValueKey('colleague_search_field'),
-                                controller: _colleagueSearchController,
-                                decoration: InputDecoration(
-                                  hintText: "Rechercher un collègue ou une salle...",
-                                  hintStyle: const TextStyle(fontSize: 12),
-                                  prefixIcon: const Icon(Icons.search, size: 18),
-                                  suffixIcon: _colleagueSearchQuery.isNotEmpty
-                                      ? IconButton(
-                                          key: const ValueKey('clear_colleague_search_button'),
-                                          icon: const Icon(Icons.clear, size: 16),
-                                          onPressed: () {
-                                            _colleagueSearchController.clear();
-                                          },
-                                        )
-                                      : null,
-                                  isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                  filled: true,
-                                  fillColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide.none,
+                            if (_isOccupantsPanelExpanded)
+                              Positioned.fill(
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: () => setState(
+                                    () => _isOccupantsPanelExpanded = false,
                                   ),
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              const Divider(height: 1),
-                              if (filteredSeatedList.isEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 16.0),
-                                  child: Center(
-                                    child: Text(
-                                      _colleagueSearchQuery.isNotEmpty
-                                          ? "Aucun collègue trouvé pour « $_colleagueSearchQuery »"
-                                          : "Aucun occupant sur cet étage",
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                                      ),
+                            OccupantsSummaryPanel(
+                              isExpanded: _isOccupantsPanelExpanded,
+                              onToggleExpanded: () {
+                                setState(() {
+                                  _isOccupantsPanelExpanded =
+                                      !_isOccupantsPanelExpanded;
+                                });
+                              },
+                              onClose: () {
+                                setState(() {
+                                  _isOccupantsPanelExpanded = false;
+                                });
+                              },
+                              occupants: _occupants,
+                              allWorkspaces: _allWorkspaces,
+                              favoriteIds: _favoriteIds,
+                              favoriteEmailsNormalized:
+                                  _favoriteEmailsNormalized,
+                              favoriteNamesNormalized: _favoriteNamesNormalized,
+                              favoritesSeatedCount: favoritesSeatedCount,
+                              onSelectOccupant: (
+                                Map<String, dynamic> ws,
+                                DeskOccupant occ,
+                              ) {
+                                _selectionTimer?.cancel();
+                                final wsId =
+                                    ws['id']?.toString() ?? occ.workspaceId;
+                                setState(() {
+                                  _focusedWorkspaceId = wsId;
+                                  _isOccupantsPanelExpanded = false;
+                                });
+                                unawaited(_showOccupantDetails(ws, occ));
+                              },
+                              onHighlightDesk: _highlightDeskTemporarily,
+                            ),
+                            if (_isOccupancyLoading)
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: Material(
+                                  elevation: 4,
+                                  borderRadius: BorderRadius.circular(20),
+                                  color: theme.colorScheme.surface,
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 6,
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: <Widget>[
+                                        SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        ),
+                                        SizedBox(width: 8),
+                                        Text(
+                                          'Mise à jour...',
+                                          style: TextStyle(fontSize: 11),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                )
-                              else
-                                ConstrainedBox(
-                                  constraints: const BoxConstraints(maxHeight: 220),
-                                  child: ListView.separated(
-                                    shrinkWrap: true,
-                                    padding: const EdgeInsets.symmetric(vertical: 4),
-                                    itemCount: filteredSeatedList.length,
-                                    separatorBuilder: (context, index) => const Divider(height: 1),
-                                    itemBuilder: (context, index) {
-                                      final item = filteredSeatedList[index];
-                                      final occ = item.occupant;
-                                      final isFav = item.isFavorite;
-                                      final isMe = occ.isMe;
-
-                                      Color badgeBg;
-                                      Color badgeBorder;
-                                      Color badgeText;
-                                      if (isFav) {
-                                        badgeBg = isDark ? const Color(0xFFD97706) : const Color(0xFFFBBF24);
-                                        badgeBorder = isDark ? const Color(0xFFFDE68A) : const Color(0xFFB45309);
-                                        badgeText = isDark ? Colors.white : const Color(0xFF78350F);
-                                      } else if (isMe) {
-                                        badgeBg = isDark ? const Color(0xFF15803D) : const Color(0xFF22C55E);
-                                        badgeBorder = isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534);
-                                        badgeText = Colors.white;
-                                      } else {
-                                        badgeBg = isDark ? const Color(0xFF4B5563) : const Color(0xFFCBD5E1);
-                                        badgeBorder = isDark ? const Color(0xFF6B7280) : const Color(0xFF94A3B8);
-                                        badgeText = isDark ? const Color(0xFFF3F4F6) : const Color(0xFF1E293B);
-                                      }
-
-                                      return Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 2),
-                                        child: Row(
-                                          children: [
-                                            Expanded(
-                                              child: InkWell(
-                                                key: ValueKey('colleague_item_${occ.workspaceId}'),
-                                                onTap: () {
-                                                  _selectionTimer?.cancel();
-                                                  final wsId = item.workspace['id']?.toString() ?? occ.workspaceId;
-                                                  setState(() {
-                                                    _focusedWorkspaceId = wsId;
-                                                    _isOccupantsPanelExpanded = false;
-                                                  });
-                                                  _showOccupantDetails(item.workspace, occ);
-                                                },
-                                                borderRadius: BorderRadius.circular(8),
-                                                child: Padding(
-                                                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                                                  child: Row(
-                                                    children: [
-                                                      Container(
-                                                        width: 26,
-                                                        height: 26,
-                                                        decoration: BoxDecoration(
-                                                          color: badgeBg,
-                                                          borderRadius: BorderRadius.circular(4),
-                                                          border: Border.all(color: badgeBorder, width: 1.5),
-                                                        ),
-                                                        alignment: Alignment.center,
-                                                        child: Text(
-                                                          occ.initials,
-                                                          style: TextStyle(
-                                                            fontSize: 10,
-                                                            fontWeight: FontWeight.bold,
-                                                            color: badgeText,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      Expanded(
-                                                        child: Column(
-                                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                                          mainAxisSize: MainAxisSize.min,
-                                                          children: [
-                                                            Row(
-                                                              children: [
-                                                                Flexible(
-                                                                  child: Text(
-                                                                    occ.occupantName,
-                                                                    style: const TextStyle(
-                                                                      fontSize: 12,
-                                                                      fontWeight: FontWeight.w600,
-                                                                    ),
-                                                                    overflow: TextOverflow.ellipsis,
-                                                                  ),
-                                                                ),
-                                                                if (isFav) ...[
-                                                                  const SizedBox(width: 4),
-                                                                  const Icon(Icons.star, size: 12, color: Colors.amber),
-                                                                ],
-                                                                if (isMe) ...[
-                                                                  const SizedBox(width: 4),
-                                                                  const Text(
-                                                                    "(Moi)",
-                                                                    style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold),
-                                                                  ),
-                                                                ],
-                                                              ],
-                                                            ),
-                                                            Text(
-                                                              "${item.roomName.isNotEmpty ? item.roomName : 'Bureau'} • ${item.deskLabel}",
-                                                              style: TextStyle(
-                                                                fontSize: 10.5,
-                                                                color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                                                                ),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                            IconButton(
-                                              key: ValueKey('colleague_gps_${occ.workspaceId}'),
-                                              icon: const Icon(Icons.gps_fixed, size: 18),
-                                              tooltip: "Centrer sur le plan",
-                                              padding: const EdgeInsets.all(4),
-                                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                              onPressed: () {
-                                                final wsId = item.workspace['id']?.toString() ?? occ.workspaceId;
-                                                _highlightDeskTemporarily(wsId);
-                                              },
-                                            ),
-                                            IconButton(
-                                              key: ValueKey('colleague_details_${occ.workspaceId}'),
-                                              icon: const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
-                                              tooltip: "Voir les détails",
-                                              padding: const EdgeInsets.all(4),
-                                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                              onPressed: () {
-                                                _selectionTimer?.cancel();
-                                                final wsId = item.workspace['id']?.toString() ?? occ.workspaceId;
-                                                setState(() {
-                                                  _focusedWorkspaceId = wsId;
-                                                  _isOccupantsPanelExpanded = false;
-                                                });
-                                                _showOccupantDetails(item.workspace, occ);
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
-                                  ),
                                 ),
-                            ],
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-            ],
-          ),
+                              ),
+                          ],
+                        ),
+            ),
+          ],
         ),
       ),
-    ),
-  ),
-);
+    );
   }
-
 }

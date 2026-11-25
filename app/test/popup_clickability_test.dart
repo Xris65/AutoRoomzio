@@ -191,7 +191,7 @@ void main() {
           }), 200);
         }
         if (path.contains('/floors') && path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/workspaces')) {
           return http.Response(jsonEncode([

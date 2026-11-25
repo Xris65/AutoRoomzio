@@ -203,7 +203,7 @@ void main() {
       });
 
       await storage.saveCachedFloors(siteId, sampleFloors);
-      await storage.saveFloorPlanData(floor1, {'type': 'FeatureCollection', 'features': []});
+      await storage.saveFloorPlanData(floor1, {'type': 'FeatureCollection', 'features': <Object>[]});
       await storage.saveFloorWorkspaces(floor1, []);
       await storage.saveFloorPlanData(floor2, samplePlanF2);
       await storage.saveFloorWorkspaces(floor2, [{'id': 'ws-f2', 'name': 'Desk Floor 2', 'isBookable': true}]);
@@ -391,7 +391,7 @@ void main() {
               body: ElevatedButton(
                 onPressed: () {
                   Navigator.of(context).push(
-                    MaterialPageRoute(
+                    MaterialPageRoute<void>(
                       builder: (_) => SetupScreen(
                         accessToken: 'token-valid',
                         storageService: storage,

@@ -55,7 +55,7 @@ void main() {
         }
         // Floor 2 has EMPTY features list (backend provides no GeoJSON)
         if (path.contains('/floors/fl-2/data')) {
-          return http.Response(jsonEncode({'features': []}), 200);
+          return http.Response(jsonEncode({'features': <Object>[]}), 200);
         }
         // Floor 2 has valid workspaces
         if (path.contains('/floors/fl-2/workspaces/all')) {
@@ -70,7 +70,7 @@ void main() {
           ]), 200);
         }
         if (path.contains('/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/buildings/site-1/floors')) {
           return http.Response(jsonEncode([
@@ -152,7 +152,7 @@ void main() {
           return http.Response('Server Error', 500);
         }
         if (path.contains('/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/buildings/site-1/floors')) {
           return http.Response(jsonEncode([

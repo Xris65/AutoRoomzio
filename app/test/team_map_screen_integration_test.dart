@@ -52,7 +52,7 @@ void main() {
           }), 200);
         }
         if (path.contains('/floors') && path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/workspaces')) {
           return http.Response(jsonEncode([
@@ -119,7 +119,7 @@ void main() {
           }), 200);
         }
         if (path.contains('/floors') && path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/workspaces')) {
           return http.Response(jsonEncode([
@@ -191,7 +191,7 @@ void main() {
           }), 200);
         }
         if (req.url.path.contains('/floors') && req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (req.url.path.contains('/workspaces')) {
           return http.Response(jsonEncode([
@@ -319,7 +319,7 @@ void main() {
           }), 200);
         }
         if (req.url.path.contains('/floors') && req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (req.url.path.contains('/workspaces')) {
           return http.Response(jsonEncode([
@@ -387,7 +387,7 @@ void main() {
           }), 200);
         }
         if (req.url.path.contains('/floors') && req.url.path.contains('/workspaces/calendars')) {
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (req.url.path.contains('/workspaces')) {
           return http.Response(jsonEncode([
@@ -525,7 +525,7 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'mock-access', 'refresh_token': 'mock-refresh'}), 200);
         }
         if (req.url.path.contains('/floors') && req.url.path.contains('/data')) {
-          return http.Response(jsonEncode({'features': []}), 200);
+          return http.Response(jsonEncode({'features': <Object>[]}), 200);
         }
         if (req.url.path.contains('/buildings') && req.url.path.contains('/floors')) {
           return http.Response(jsonEncode([{'id': 'fl-1', 'name': 'Étage 1'}]), 200);

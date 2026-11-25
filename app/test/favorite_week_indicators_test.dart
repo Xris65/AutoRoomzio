@@ -164,7 +164,7 @@ void main() {
               ]
             }), 200);
           }
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/workspaces')) {
           return http.Response(jsonEncode([
@@ -286,7 +286,7 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'tok', 'refresh_token': 'ref'}), 200);
         }
         if (path.contains('/floors') && path.contains('/data')) {
-          return http.Response(jsonEncode({'features': []}), 200);
+          return http.Response(jsonEncode({'features': <Object>[]}), 200);
         }
         if (path.contains('/workspaces/calendars')) {
           final body = jsonDecode(req.body);
@@ -304,7 +304,7 @@ void main() {
               ]
             }), 200);
           }
-          return http.Response(jsonEncode({'data': []}), 200);
+          return http.Response(jsonEncode({'data': <Object>[]}), 200);
         }
         if (path.contains('/workspaces')) {
           return http.Response(jsonEncode([{'id': 'ws-a12', 'name': 'A-12', 'isBookable': true}]), 200);
