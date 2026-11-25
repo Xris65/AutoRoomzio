@@ -88,9 +88,9 @@ jobs:
         run: |
           APK_DIR="app/build/app/outputs/flutter-apk"
           if [ -f "$APK_DIR/app-universal-release.apk" ]; then
-            mv "$APK_DIR/app-universal-release.apk" "$APK_DIR/AutoRoomzio-v${{ env.VERSION }}-universal.apk"
+            mv "$APK_DIR/app-universal-release.apk" "$APK_DIR/AutoRoomzio-v${{ env.VERSION }}-all-universal.apk"
           elif [ -f "$APK_DIR/app-release.apk" ]; then
-            mv "$APK_DIR/app-release.apk" "$APK_DIR/AutoRoomzio-v${{ env.VERSION }}-universal.apk"
+            mv "$APK_DIR/app-release.apk" "$APK_DIR/AutoRoomzio-v${{ env.VERSION }}-all-universal.apk"
           else
             echo "Error: neither app-universal-release.apk nor app-release.apk was found in $APK_DIR" >&2
             ls -la "$APK_DIR" >&2
@@ -106,7 +106,7 @@ jobs:
         with:
           name: release-android-apk
           path: |
-            app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}-universal.apk
+            app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}-all-universal.apk
             app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}-arm64-v8a.apk
             app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}-armeabi-v7a.apk
             app/build/app/outputs/flutter-apk/AutoRoomzio-v${{ env.VERSION }}-x86_64.apk
@@ -209,12 +209,12 @@ jobs:
 
           - **Mise à jour intégrée à l'application (`v2.0.0+`)** : la version légère adaptée à votre téléphone (~21 Mo) est téléchargée automatiquement.
           - **Téléchargement manuel** :
-            - **`AutoRoomzio-v${{ env.VERSION }}-universal.apk` (~61 Mo)** : contient toutes les architectures.
+            - **`AutoRoomzio-v${{ env.VERSION }}-all-universal.apk` (~62 Mo)** : contient toutes les architectures.
             - **`AutoRoomzio-v${{ env.VERSION }}-arm64-v8a.apk` (~21 Mo)** : pour smartphones Android récents (64 bits).
             - **`AutoRoomzio-v${{ env.VERSION }}-armeabi-v7a.apk` (~19 Mo)** : pour anciens smartphones Android (32 bits).
             - **`AutoRoomzio-v${{ env.VERSION }}-x86_64.apk`** : pour émulateurs ou appareils x86_64.
 
-          > **Dans le doute, prenez l'APK universel (`AutoRoomzio-v${{ env.VERSION }}-universal.apk`, ~61 Mo) qui contient tout** : il fonctionne sur 100 % des téléphones, et vous pouvez installer librement la version universelle par-dessus une version allégée et inversement sans rien désinstaller.
+          > **Dans le doute, prenez l'APK universel (`AutoRoomzio-v${{ env.VERSION }}-all-universal.apk`, ~62 Mo) qui contient tout** : il fonctionne sur 100 % des téléphones, et vous pouvez installer librement la version universelle par-dessus une version allégée et inversement sans rien désinstaller.
           EOF
         shell: bash
 
@@ -226,7 +226,7 @@ jobs:
           body_path: release_notes.txt
           fail_on_unmatched_files: true
           files: |
-            release-assets/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-universal.apk
+            release-assets/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-all-universal.apk
             release-assets/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-arm64-v8a.apk
             release-assets/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-armeabi-v7a.apk
             release-assets/AutoRoomzio-v${{ steps.get_version.outputs.APP_VERSION }}-x86_64.apk

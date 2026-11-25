@@ -268,6 +268,97 @@ void main() {
         equals('https://example.com/AutoRoomzio-v2.1.0-universal.apk'),
       );
     });
+
+    test(
+        'orders -all-universal.apk first alphabetically for v1.7.0 OTA while preserving v2.0.0+ ABI selection',
+        () async {
+      final List<String> assetNames = <String>[
+        'AutoRoomzio-v2.0.0-x86_64.apk',
+        'AutoRoomzio-v2.0.0-arm64-v8a.apk',
+        'AutoRoomzio-v2.0.0-armeabi-v7a.apk',
+        'AutoRoomzio-v2.0.0-all-universal.apk',
+      ]..sort();
+
+      expect(
+        assetNames,
+        equals(<String>[
+          'AutoRoomzio-v2.0.0-all-universal.apk',
+          'AutoRoomzio-v2.0.0-arm64-v8a.apk',
+          'AutoRoomzio-v2.0.0-armeabi-v7a.apk',
+          'AutoRoomzio-v2.0.0-x86_64.apk',
+        ]),
+      );
+      expect(
+        assetNames.firstWhere((String name) => name.endsWith('.apk')),
+        equals('AutoRoomzio-v2.0.0-all-universal.apk'),
+      );
+
+      final MockClient githubSortedClient =
+          MockClient((http.Request request) async {
+        expect(request.url, equals(AppUpdateService.latestReleaseUri));
+        final String body = jsonEncode(<String, Object?>{
+          'tag_name': 'v2.0.0',
+          'body': 'v2.0.0 multi-ABI release',
+          'html_url':
+              'https://github.com/Xris65/AutoRoomzio/releases/tag/v2.0.0',
+          'assets': assetNames
+              .map(
+                (String name) => <String, String>{
+                  'name': name,
+                  'browser_download_url': 'https://example.com/$name',
+                },
+              )
+              .toList(),
+        });
+        return http.Response(body, 200);
+      });
+
+      final AppUpdateService arm64Service = AppUpdateService(
+        client: githubSortedClient,
+        currentVersionProvider: () async => '1.9.0',
+        abiProvider: () async => 'arm64-v8a',
+      );
+      final AppUpdateCheckResult arm64Result =
+          await arm64Service.checkForUpdates();
+      expect(arm64Result.status, equals(AppUpdateStatus.updateAvailable));
+      expect(arm64Result.updateInfo?.matchedAbi, equals('arm64-v8a'));
+      expect(
+        arm64Result.updateInfo?.apkUrl,
+        equals('https://example.com/AutoRoomzio-v2.0.0-arm64-v8a.apk'),
+      );
+      expect(
+        arm64Result.updateInfo?.universalApkUrl,
+        equals('https://example.com/AutoRoomzio-v2.0.0-all-universal.apk'),
+      );
+
+      final AppUpdateService nullAbiService = AppUpdateService(
+        client: githubSortedClient,
+        currentVersionProvider: () async => '1.9.0',
+        abiProvider: () async => null,
+      );
+      final AppUpdateCheckResult nullAbiResult =
+          await nullAbiService.checkForUpdates();
+      expect(nullAbiResult.status, equals(AppUpdateStatus.updateAvailable));
+      expect(nullAbiResult.updateInfo?.matchedAbi, isNull);
+      expect(
+        nullAbiResult.updateInfo?.apkUrl,
+        equals('https://example.com/AutoRoomzio-v2.0.0-all-universal.apk'),
+      );
+
+      final AppUpdateService unknownAbiService = AppUpdateService(
+        client: githubSortedClient,
+        currentVersionProvider: () async => '1.9.0',
+        abiProvider: () async => 'mips64',
+      );
+      final AppUpdateCheckResult unknownAbiResult =
+          await unknownAbiService.checkForUpdates();
+      expect(unknownAbiResult.status, equals(AppUpdateStatus.updateAvailable));
+      expect(unknownAbiResult.updateInfo?.matchedAbi, isNull);
+      expect(
+        unknownAbiResult.updateInfo?.apkUrl,
+        equals('https://example.com/AutoRoomzio-v2.0.0-all-universal.apk'),
+      );
+    });
   });
 
   group('3. TokenCryptoService, ProfileSyncService & Offline Fonts Theme', () {
