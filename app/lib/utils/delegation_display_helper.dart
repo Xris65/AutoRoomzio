@@ -171,7 +171,7 @@ class DelegationDisplayHelper {
 
   static String? _extractName(dynamic entity) {
     if (entity == null) return null;
-    if (entity is Map) {
+    if (entity is Map<Object?, Object?>) {
       return entity['name']?.toString() ??
           entity['displayName']?.toString() ??
           entity['fullName']?.toString();
@@ -184,7 +184,7 @@ class DelegationDisplayHelper {
 
   static String? _extractId(dynamic entity) {
     if (entity == null) return null;
-    if (entity is Map) {
+    if (entity is Map<Object?, Object?>) {
       return entity['id']?.toString() ??
           entity['userId']?.toString() ??
           entity['email']?.toString() ??

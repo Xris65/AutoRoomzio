@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:http/http.dart' as http;
 
 /// Utility class for sanitizing and formatting error messages shown to the user.
 ///
 /// Prevents exposing technical details, raw exception strings, stack traces,
 /// internal JSON payloads, and sensitive server URLs (especially HTTPS endpoints).
+/// Pure Dart / Wasm-compatible (no `dart:io` dependency).
 class ErrorSanitizer {
   static const String connectionErrorMessage =
       "Impossible de joindre le serveur. Veuillez vérifier votre connexion.";
@@ -15,6 +15,17 @@ class ErrorSanitizer {
 
   static const String defaultErrorMessage =
       "Une erreur est survenue. Veuillez réessayer.";
+
+  static const Set<String> _networkRuntimeTypes = <String>{
+    'SocketException',
+    '_ClientSocketException',
+    'HandshakeException',
+    'TlsException',
+    'CertificateException',
+    'HttpException',
+    '_HttpException',
+    'WebSocketException',
+  };
 
   /// Returns a clean, user-friendly error message.
   ///
@@ -26,15 +37,16 @@ class ErrorSanitizer {
   /// - NEVER exposes HTTPS URLs, raw stack traces, JSON, or exception names to the UI.
   /// - If the message contains technical tokens or URLs, replaces it with [fallback]
   ///   or [defaultErrorMessage].
-  static String sanitize(dynamic error, {String? fallback}) {
+  static String sanitize(Object? error, {String? fallback}) {
     if (error == null) {
       return fallback ?? defaultErrorMessage;
     }
 
-    // 1. Direct type inspection for network/connection exceptions
-    if (error is SocketException ||
-        error is http.ClientException ||
-        error is TimeoutException) {
+    // 1. Direct type / runtimeType inspection for network/connection exceptions
+    final runtimeTypeName = error.runtimeType.toString();
+    if (error is http.ClientException ||
+        error is TimeoutException ||
+        _networkRuntimeTypes.contains(runtimeTypeName)) {
       return connectionErrorMessage;
     }
 
@@ -88,8 +100,11 @@ class ErrorSanitizer {
 
     // 4. Check for technical leakage: URLs (http/https), stack traces, JSON, raw exceptions
     final hasUrl = RegExp(r'https?://[^\s<>"]+').hasMatch(rawStr);
-    final hasStackTrace = RegExp(r'(#\d+\s+|dart:[a-zA-Z0-9_]+|\.dart:\d+)').hasMatch(rawStr);
-    final hasRawJson = RegExp(r'\{.*"(?:error|message|status|code)".*\}', dotAll: true).hasMatch(rawStr);
+    final hasStackTrace =
+        RegExp(r'(#\d+\s+|dart:[a-zA-Z0-9_]+|\.dart:\d+)').hasMatch(rawStr);
+    final hasRawJson =
+        RegExp(r'\{.*"(?:error|message|status|code)".*\}', dotAll: true)
+            .hasMatch(rawStr);
     final hasTechnicalException = RegExp(
       r'(Exception:|Error:|FormatException|NoSuchMethodError|TypeError|RangeError)',
       caseSensitive: false,
@@ -107,5 +122,5 @@ class ErrorSanitizer {
 }
 
 /// Convenience top-level function for [ErrorSanitizer.sanitize].
-String sanitizeErrorMessage(dynamic error, {String? fallback}) =>
+String sanitizeErrorMessage(Object? error, {String? fallback}) =>
     ErrorSanitizer.sanitize(error, fallback: fallback);

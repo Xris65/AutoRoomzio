@@ -9,7 +9,7 @@ class AutomationRule {
   final String floorId;
   final String workspaceId;
   final String workspaceName;
-  final List<int> days;
+  final List<int> _days;
 
   const AutomationRule({
     required this.id,
@@ -17,27 +17,32 @@ class AutomationRule {
     required this.floorId,
     required this.workspaceId,
     required this.workspaceName,
-    required this.days,
+    required this._days,
   });
+
+  /// Unmodifiable view of configured weekdays, preventing external cache mutation.
+  List<int> get days => List<int>.unmodifiable(_days);
 
   static List<int> normalizeDays(Iterable<int> rawDays) {
     final normalized = rawDays.where((d) => d >= 1 && d <= 7).toSet().toList()
       ..sort();
-    return normalized;
+    return List<int>.unmodifiable(normalized);
   }
 
   factory AutomationRule.fromJson(Map<String, dynamic> json) {
-    final rawDays = json['days'];
+    final Object? rawDays = json['days'];
     final parsedDays = <int>[];
-    if (rawDays is List) {
-      for (final item in rawDays) {
-        final parsed = item is int ? item : int.tryParse(item.toString());
+    if (rawDays is List<Object?>) {
+      for (final Object? item in rawDays) {
+        final parsed =
+            item is int ? item : (item != null ? int.tryParse(item.toString()) : null);
         if (parsed != null && parsed >= 1 && parsed <= 7) {
           parsedDays.add(parsed);
         }
       }
     }
-    final wsId = json['workspaceId']?.toString() ?? json['id']?.toString() ?? '';
+    final wsId =
+        json['workspaceId']?.toString() ?? json['id']?.toString() ?? '';
     final id = json['id']?.toString();
     final wsName = json['workspaceName']?.toString();
     return AutomationRule(
@@ -46,17 +51,17 @@ class AutomationRule {
       floorId: json['floorId']?.toString() ?? '',
       workspaceId: wsId,
       workspaceName: (wsName != null && wsName.isNotEmpty) ? wsName : wsId,
-      days: normalizeDays(parsedDays),
+      days: List<int>.unmodifiable(normalizeDays(parsedDays)),
     );
   }
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson() => <String, dynamic>{
         'id': id,
         'siteId': siteId,
         'floorId': floorId,
         'workspaceId': workspaceId,
         'workspaceName': workspaceName,
-        'days': normalizeDays(days),
+        'days': normalizeDays(_days),
       };
 
   AutomationRule copyWith({
@@ -73,7 +78,9 @@ class AutomationRule {
       floorId: floorId ?? this.floorId,
       workspaceId: workspaceId ?? this.workspaceId,
       workspaceName: workspaceName ?? this.workspaceName,
-      days: days != null ? normalizeDays(days) : normalizeDays(this.days),
+      days: List<int>.unmodifiable(
+        days != null ? normalizeDays(days) : normalizeDays(_days),
+      ),
     );
   }
 
@@ -86,7 +93,7 @@ class AutomationRule {
         other.floorId == floorId &&
         other.workspaceId == workspaceId &&
         other.workspaceName == workspaceName &&
-        listEquals(normalizeDays(other.days), normalizeDays(days));
+        listEquals(normalizeDays(other._days), normalizeDays(_days));
   }
 
   @override
@@ -96,7 +103,7 @@ class AutomationRule {
         floorId,
         workspaceId,
         workspaceName,
-        Object.hashAll(normalizeDays(days)),
+        Object.hashAll(normalizeDays(_days)),
       );
 
   @override

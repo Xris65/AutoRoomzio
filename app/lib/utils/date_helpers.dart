@@ -1,5 +1,5 @@
-/// Utilitaires centralisés pour le formatage et la comparaison de dates.
-const List<String> frenchWeekdays = [
+/// Utilitaires centralisés pour le formatage et l'arithmétique calendaire anti-DST.
+const List<String> frenchWeekdays = <String>[
   'Lundi',
   'Mardi',
   'Mercredi',
@@ -9,7 +9,7 @@ const List<String> frenchWeekdays = [
   'Dimanche',
 ];
 
-const List<String> frenchShortWeekdays = [
+const List<String> frenchShortWeekdays = <String>[
   'Lun',
   'Mar',
   'Mer',
@@ -19,7 +19,7 @@ const List<String> frenchShortWeekdays = [
   'Dim',
 ];
 
-const List<String> _frenchShortMonths = [
+const List<String> _frenchShortMonths = <String>[
   'janv.',
   'févr.',
   'mars',
@@ -34,6 +34,21 @@ const List<String> _frenchShortMonths = [
   'déc.',
 ];
 
+/// Normalise une date en minuit local (année, mois, jour) sans composante horaire.
+DateTime normalizeLocalDate(DateTime d) => DateTime(d.year, d.month, d.day);
+
+/// Ajoute [days] jours calendaires sans dérive liée aux changements d'heure (DST 23h/25h).
+DateTime addCalendarDays(DateTime d, int days) {
+  final u = DateTime.utc(d.year, d.month, d.day + days);
+  return DateTime(u.year, u.month, u.day);
+}
+
+/// Calcule l'écart exact en jours calendaires entre [from] et [to] en UTC (insensible au DST).
+int calendarDaysBetween(DateTime from, DateTime to) =>
+    DateTime.utc(to.year, to.month, to.day)
+        .difference(DateTime.utc(from.year, from.month, from.day))
+        .inDays;
+
 String formatIsoDate(DateTime date) => DateHelpers.formatIsoDate(date);
 
 String formatFrenchDate(DateTime date, {bool includeYear = false}) =>
@@ -43,7 +58,7 @@ class DateHelpers {
   static const List<String> frenchWeekdaysList = frenchWeekdays;
   static const List<String> frenchShortWeekdaysList = frenchShortWeekdays;
 
-  static const Map<int, String> frenchWeekdaysMap = {
+  static const Map<int, String> frenchWeekdaysMap = <int, String>{
     1: 'Lundi',
     2: 'Mardi',
     3: 'Mercredi',
@@ -53,7 +68,7 @@ class DateHelpers {
     7: 'Dimanche',
   };
 
-  static const Map<int, String> frenchShortWeekdaysMap = {
+  static const Map<int, String> frenchShortWeekdaysMap = <int, String>{
     1: 'Lun',
     2: 'Mar',
     3: 'Mer',
@@ -62,6 +77,19 @@ class DateHelpers {
     6: 'Sam',
     7: 'Dim',
   };
+
+  static DateTime normalizeLocalDate(DateTime d) =>
+      DateTime(d.year, d.month, d.day);
+
+  static DateTime addCalendarDays(DateTime d, int days) {
+    final u = DateTime.utc(d.year, d.month, d.day + days);
+    return DateTime(u.year, u.month, u.day);
+  }
+
+  static int calendarDaysBetween(DateTime from, DateTime to) =>
+      DateTime.utc(to.year, to.month, to.day)
+          .difference(DateTime.utc(from.year, from.month, from.day))
+          .inDays;
 
   static String formatIsoDate(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
@@ -73,9 +101,7 @@ class DateHelpers {
 
   static String formatFrenchDate(DateTime date, {bool includeYear = false}) {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final target = DateTime(date.year, date.month, date.day);
-    final diff = target.difference(today).inDays;
+    final diff = calendarDaysBetween(now, date);
 
     final weekday = frenchWeekdays[date.weekday - 1];
     final month = _frenchShortMonths[date.month - 1];
