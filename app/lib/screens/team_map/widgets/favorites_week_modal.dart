@@ -530,9 +530,22 @@ class _FavoritesWeekModalState extends State<FavoritesWeekModal> {
                 key: const ValueKey('modal_toggle_favorite_week_indicators'),
                 dense: true,
                 contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  'Afficher les compteurs ⭐ sur la barre des jours',
-                  style: TextStyle(fontSize: 13),
+                title: const Text.rich(
+                  TextSpan(
+                    style: TextStyle(fontSize: 13),
+                    children: <InlineSpan>[
+                      TextSpan(text: 'Afficher les compteurs '),
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: Icon(
+                          Icons.star_rounded,
+                          size: 15,
+                          color: Colors.amber,
+                        ),
+                      ),
+                      TextSpan(text: ' sur la barre des jours'),
+                    ],
+                  ),
                 ),
                 value: _localShowIndicators,
                 onChanged: (bool val) async {

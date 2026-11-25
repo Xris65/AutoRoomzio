@@ -88,18 +88,36 @@ Future<void> main() async {
   runApp(const MyApp());
 }
 
-ThemeData _buildAppTheme(ColorScheme scheme, String fontKey) {
-  final String fontFamily = switch (fontKey) {
+String _resolveFontFamily(String fontKey) {
+  return switch (fontKey) {
     'poppins' => 'Poppins',
     'firaCode' => 'FiraCode',
     _ => 'Roboto',
   };
+}
+
+ThemeData _buildAppTheme(ColorScheme scheme, String fontKey) {
+  final String fontFamily = _resolveFontFamily(fontKey);
+  final Typography typography = Typography.material2021(
+    platform: defaultTargetPlatform,
+    colorScheme: scheme,
+  );
+  final TextTheme baseTextTheme =
+      (scheme.brightness == Brightness.dark
+              ? typography.white
+              : typography.black)
+          .apply(fontFamily: fontFamily);
   final ThemeData baseTheme = ThemeData(
     colorScheme: scheme,
     useMaterial3: true,
     fontFamily: fontFamily,
+    typography: typography,
+    textTheme: baseTextTheme,
+    primaryTextTheme: baseTextTheme,
   );
   return baseTheme.copyWith(
+    textTheme: baseTheme.textTheme.apply(fontFamily: fontFamily),
+    primaryTextTheme: baseTheme.primaryTextTheme.apply(fontFamily: fontFamily),
     appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
     cardTheme: CardThemeData(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -149,6 +167,7 @@ class MyApp extends StatelessWidget {
                   2 => 'firaCode',
                   _ => 'roboto',
                 };
+                final String activeFontFamily = _resolveFontFamily(fontKey);
 
                 return ValueListenableBuilder<double>(
                   valueListenable: uiScaleNotifier,
@@ -157,6 +176,7 @@ class MyApp extends StatelessWidget {
                       navigatorKey: rootNavigatorKey,
                       title: 'AutoRoomzio',
                       themeMode: mode,
+                      themeAnimationDuration: Duration.zero,
                       builder: (BuildContext context, Widget? child) {
                         final MediaQueryData mediaQuery = MediaQuery.of(context);
                         final double targetScale =
@@ -166,24 +186,30 @@ class MyApp extends StatelessWidget {
                           data: mediaQuery.copyWith(
                             textScaler: TextScaler.linear(targetScale),
                           ),
-                          child: ValueListenableBuilder<bool>(
-                            valueListenable:
-                                OfflineStateManager.instance.isOfflineNotifier,
-                            builder:
-                                (BuildContext context, bool isOffline, Widget? _) {
-                              return Column(
-                                children: <Widget>[
-                                  Expanded(
-                                    child: child ?? const SizedBox.shrink(),
-                                  ),
-                                  if (isOffline)
-                                    const SafeArea(
-                                      top: false,
-                                      child: OfflineRibbon(),
+                          child: DefaultTextStyle.merge(
+                            style: TextStyle(fontFamily: activeFontFamily),
+                            child: ValueListenableBuilder<bool>(
+                              valueListenable:
+                                  OfflineStateManager.instance.isOfflineNotifier,
+                              builder: (
+                                BuildContext context,
+                                bool isOffline,
+                                Widget? _,
+                              ) {
+                                return Column(
+                                  children: <Widget>[
+                                    Expanded(
+                                      child: child ?? const SizedBox.shrink(),
                                     ),
-                                ],
-                              );
-                            },
+                                    if (isOffline)
+                                      const SafeArea(
+                                        top: false,
+                                        child: OfflineRibbon(),
+                                      ),
+                                  ],
+                                );
+                              },
+                            ),
                           ),
                         );
                       },

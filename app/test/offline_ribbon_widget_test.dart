@@ -17,7 +17,7 @@ void main() {
       'automation_enabled': false,
       'theme_mode': 0,
       'theme_color': 0,
-      'font_family': 0,
+      'font_family_index': 0,
     });
     stateManager = OfflineStateManager.instance;
     stateManager.reset();

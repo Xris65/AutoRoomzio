@@ -163,13 +163,28 @@ class OccupantDetailsSheet extends StatelessWidget {
                                 color: Colors.amber.withValues(alpha: 0.2),
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              child: Text(
-                                "⭐ Favori",
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: isDark ? Colors.amber.shade200 : Colors.amber.shade900,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Icon(
+                                    Icons.star_rounded,
+                                    size: 13,
+                                    color: isDark
+                                        ? Colors.amber.shade300
+                                        : Colors.amber.shade800,
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    "Favori",
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: isDark
+                                          ? Colors.amber.shade200
+                                          : Colors.amber.shade900,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           if (occupant.isDelegated)

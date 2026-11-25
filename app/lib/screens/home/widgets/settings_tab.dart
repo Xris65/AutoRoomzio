@@ -129,7 +129,7 @@ class SettingsTab extends StatelessWidget {
     await notifService.showNotification(
       title: 'AutoRoomzio - Test',
       body:
-          'Ceci est une notification de test ! Si tu vois ça, tout fonctionne. 🎉',
+          'Ceci est une notification de test ! Si tu vois ça, tout fonctionne.',
     );
   }
 
@@ -234,12 +234,14 @@ class SettingsTab extends StatelessWidget {
               ValueListenableBuilder<int>(
                 valueListenable: fontNotifier,
                 builder: (BuildContext ctx, int currentFont, Widget? _) {
+                  final int safeFont =
+                      (currentFont >= 0 && currentFont <= 2) ? currentFont : 0;
                   return ListTile(
                     title: const Text("Police d'écriture"),
                     leading: const Icon(Icons.font_download_rounded),
                     trailing: _buildStyledDropdown<int>(
                       ctx,
-                      value: currentFont,
+                      value: safeFont,
                       onChanged: (int? val) {
                         if (val != null) {
                           fontNotifier.value = val;
@@ -374,9 +376,22 @@ class SettingsTab extends StatelessWidget {
               SwitchListTile(
                 key: const ValueKey<String>('toggle_favorite_week_indicators'),
                 title: const Text('Présence des favoris sur la semaine'),
-                subtitle: const Text(
-                  'Afficher les compteurs ⭐ par jour sur la barre de la semaine',
-                  style: TextStyle(fontSize: 12),
+                subtitle: const Text.rich(
+                  TextSpan(
+                    style: TextStyle(fontSize: 12),
+                    children: <InlineSpan>[
+                      TextSpan(text: 'Afficher les compteurs '),
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: Icon(
+                          Icons.star_rounded,
+                          size: 14,
+                          color: Colors.amber,
+                        ),
+                      ),
+                      TextSpan(text: ' par jour sur la barre de la semaine'),
+                    ],
+                  ),
                 ),
                 secondary: const Icon(Icons.star_outline_rounded),
                 value: showFavoriteWeekIndicators,

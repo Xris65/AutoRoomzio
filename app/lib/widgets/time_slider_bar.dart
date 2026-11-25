@@ -345,32 +345,35 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   // Short day label: "Lun 19", "Mar 20"...
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        _formatShortDay(day),
-                                        style: TextStyle(
-                                          fontSize: 12.5,
-                                          fontWeight: isSelected || isDayToday
-                                              ? FontWeight.bold
-                                              : FontWeight.w500,
-                                          color: textColor,
-                                        ),
-                                      ),
-                                      if (isDayToday && !isSelected) ...[
-                                        const SizedBox(width: 3),
-                                        Container(
-                                          width: 4,
-                                          height: 4,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: theme.colorScheme.primary,
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          _formatShortDay(day),
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: isSelected || isDayToday
+                                                ? FontWeight.bold
+                                                : FontWeight.w500,
+                                            color: textColor,
                                           ),
                                         ),
+                                        if (isDayToday && !isSelected) ...[
+                                          const SizedBox(width: 3),
+                                          Container(
+                                            width: 4,
+                                            height: 4,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: theme.colorScheme.primary,
+                                            ),
+                                          ),
+                                        ],
                                       ],
-                                    ],
+                                    ),
                                   ),
 
                                   const SizedBox(height: 2),
@@ -422,16 +425,33 @@ class _TimeSliderBarState extends State<TimeSliderBar> {
                                       ),
                                       child: FittedBox(
                                         fit: BoxFit.scaleDown,
-                                        child: Text(
-                                          '⭐ $favCount',
-                                          style: TextStyle(
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.bold,
-                                            color: isSelected
-                                                ? Colors.white
-                                                : (isDark ? Colors.amber.shade200 : Colors.amber.shade900),
-                                            height: 1.1,
-                                          ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: <Widget>[
+                                            Icon(
+                                              Icons.star_rounded,
+                                              size: 10.5,
+                                              color: isSelected
+                                                  ? Colors.white
+                                                  : (isDark
+                                                      ? Colors.amber.shade300
+                                                      : Colors.amber.shade800),
+                                            ),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              '$favCount',
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                                color: isSelected
+                                                    ? Colors.white
+                                                    : (isDark
+                                                        ? Colors.amber.shade200
+                                                        : Colors.amber.shade900),
+                                                height: 1.1,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),

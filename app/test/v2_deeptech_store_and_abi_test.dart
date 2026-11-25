@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:auto_roomzio/main.dart';
+import 'package:auto_roomzio/screens/home_screen.dart';
 import 'package:auto_roomzio/services/app_update_service.dart';
 import 'package:auto_roomzio/services/profile_sync_service.dart';
 import 'package:auto_roomzio/services/reservation_store.dart';
@@ -315,22 +316,43 @@ void main() {
         'refresh_token': 'mock_refresh_token',
         'workspace_name': 'Desk A-01',
         'automation_enabled': false,
-        'font_family': 0,
+        'font_family_index': 0,
       });
 
       await tester.pumpWidget(const MyApp());
       await tester.pump();
 
       MaterialApp app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expect(app.themeAnimationDuration, equals(Duration.zero));
       expect(app.theme?.textTheme.bodyMedium?.fontFamily, equals('Roboto'));
+      expect(
+        app.theme?.primaryTextTheme.bodyMedium?.fontFamily,
+        equals('Roboto'),
+      );
       expect(app.darkTheme?.textTheme.bodyMedium?.fontFamily, equals('Roboto'));
+      expect(
+        DefaultTextStyle.of(tester.element(find.byType(HomeScreen)))
+            .style
+            .fontFamily,
+        equals('Roboto'),
+      );
 
       fontNotifier.value = 1;
       await tester.pump();
       app = tester.widget<MaterialApp>(find.byType(MaterialApp));
       expect(app.theme?.textTheme.bodyMedium?.fontFamily, equals('Poppins'));
       expect(
+        app.theme?.primaryTextTheme.bodyMedium?.fontFamily,
+        equals('Poppins'),
+      );
+      expect(
         app.darkTheme?.textTheme.bodyMedium?.fontFamily,
+        equals('Poppins'),
+      );
+      expect(
+        DefaultTextStyle.of(tester.element(find.byType(HomeScreen)))
+            .style
+            .fontFamily,
         equals('Poppins'),
       );
 
@@ -339,12 +361,28 @@ void main() {
       app = tester.widget<MaterialApp>(find.byType(MaterialApp));
       expect(app.theme?.textTheme.bodyMedium?.fontFamily, equals('FiraCode'));
       expect(
+        app.theme?.primaryTextTheme.bodyMedium?.fontFamily,
+        equals('FiraCode'),
+      );
+      expect(
         app.darkTheme?.textTheme.bodyMedium?.fontFamily,
+        equals('FiraCode'),
+      );
+      expect(
+        DefaultTextStyle.of(tester.element(find.byType(HomeScreen)))
+            .style
+            .fontFamily,
         equals('FiraCode'),
       );
 
       fontNotifier.value = 0;
       await tester.pump();
+      expect(
+        DefaultTextStyle.of(tester.element(find.byType(HomeScreen)))
+            .style
+            .fontFamily,
+        equals('Roboto'),
+      );
     });
   });
 }

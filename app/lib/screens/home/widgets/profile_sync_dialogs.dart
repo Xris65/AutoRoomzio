@@ -140,7 +140,7 @@ class _ExportProfileDialogState extends State<_ExportProfileDialog> {
                       _exportedCode!,
                       key: const ValueKey<String>('exported_roomzio_code_text'),
                       style: const TextStyle(
-                        fontFamily: 'monospace',
+                        fontFamily: 'FiraCode',
                         fontSize: 11.5,
                       ),
                     ),

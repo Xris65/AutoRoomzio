@@ -354,7 +354,14 @@ void main() {
 
       expect(find.text('Ada Lovelace'), findsOneWidget);
       expect(find.text('AL'), findsOneWidget); // Initials
-      expect(find.text('⭐ Favori'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(OccupantDetailsSheet),
+          matching: find.byIcon(Icons.star_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Favori'), findsOneWidget);
       expect(find.text('ada@computing.org'), findsOneWidget);
       expect(find.text('B01-08'), findsOneWidget);
       expect(find.text('Salle B01'), findsOneWidget);

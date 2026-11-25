@@ -208,8 +208,16 @@ void main() {
       await tester.tap(find.text('25').last);
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('holiday_banner_in_modal')), findsOneWidget);
-      expect(find.text('🎉 Jour férié : Noël (Automatisation suspendue)'), findsOneWidget);
+      final Finder holidayBanner = find.byKey(const ValueKey('holiday_banner_in_modal'));
+      expect(holidayBanner, findsOneWidget);
+      expect(
+        find.descendant(
+          of: holidayBanner,
+          matching: find.byIcon(Icons.celebration_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Jour férié : Noël (Automatisation suspendue)'), findsOneWidget);
     });
   });
 }

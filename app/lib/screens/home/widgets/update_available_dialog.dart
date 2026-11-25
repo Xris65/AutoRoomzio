@@ -16,7 +16,18 @@ Future<void> showUpdateAvailableDialog(
   await showDialog<void>(
     context: context,
     builder: (BuildContext dialogContext) => AlertDialog(
-      title: const Text('Mise à jour disponible 🎉'),
+      title: Row(
+        children: <Widget>[
+          Icon(
+            Icons.celebration_rounded,
+            color: Theme.of(dialogContext).colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('Mise à jour disponible'),
+          ),
+        ],
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,

@@ -482,26 +482,44 @@ class AutomationTab extends StatelessWidget {
                     isDark: isDark,
                   ),
                   const SizedBox(height: 20),
-                  Row(
-                    children: <Widget>[
-                      const Expanded(
-                        child: Text(
-                          '📅 Mes places automatisées',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                  SizedBox(
+                    width: double.infinity,
+                    child: Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 12,
+                      runSpacing: 8,
+                      children: <Widget>[
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Icon(
+                              Icons.calendar_today_rounded,
+                              size: 18,
+                              color: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            const Flexible(
+                              child: Text(
+                                'Mes places automatisées',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        FilledButton.tonalIcon(
+                          key: const ValueKey<String>(
+                            'add_automation_rule_button',
                           ),
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('Ajouter une place'),
+                          onPressed: onAddAutomationPlace,
                         ),
-                      ),
-                      FilledButton.tonalIcon(
-                        key: const ValueKey<String>(
-                          'add_automation_rule_button',
-                        ),
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Ajouter une place'),
-                        onPressed: onAddAutomationPlace,
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                   if (!automationEnabled) ...<Widget>[
                     const SizedBox(height: 4),

@@ -391,7 +391,14 @@ void main() {
         expect(
           find.descendant(
             of: todayCockpitBadge,
-            matching: find.text('⭐ 1'),
+            matching: find.byIcon(Icons.star_rounded),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: todayCockpitBadge,
+            matching: find.text('1'),
           ),
           findsOneWidget,
         );
@@ -418,7 +425,14 @@ void main() {
         expect(
           find.descendant(
             of: todayCalBadge,
-            matching: find.text('⭐1'),
+            matching: find.byIcon(Icons.star_rounded),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: todayCalBadge,
+            matching: find.text('1'),
           ),
           findsOneWidget,
         );

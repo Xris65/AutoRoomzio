@@ -66,15 +66,29 @@ Future<String?> showDateActionSheet(
                       color: Colors.amber.shade700.withValues(alpha: 0.5),
                     ),
                   ),
-                  child: Text(
-                    '🎉 Jour férié : $holidayName (Automatisation suspendue)',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isDark
-                          ? Colors.amber.shade200
-                          : Colors.amber.shade900,
-                    ),
+                  child: Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.celebration_rounded,
+                        size: 16,
+                        color: isDark
+                            ? Colors.amber.shade300
+                            : Colors.amber.shade800,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Jour férié : $holidayName (Automatisation suspendue)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: isDark
+                                ? Colors.amber.shade200
+                                : Colors.amber.shade900,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

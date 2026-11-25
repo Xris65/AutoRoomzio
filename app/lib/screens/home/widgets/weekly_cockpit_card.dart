@@ -527,15 +527,28 @@ class _WeeklyCockpitCardState extends State<WeeklyCockpitCard> {
                                     ),
                                     child: FittedBox(
                                       fit: BoxFit.scaleDown,
-                                      child: Text(
-                                        '⭐ $favCount',
-                                        style: TextStyle(
-                                          fontSize: 9.5,
-                                          fontWeight: FontWeight.bold,
-                                          color: isDark
-                                              ? Colors.amber.shade200
-                                              : Colors.amber.shade900,
-                                        ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: <Widget>[
+                                          Icon(
+                                            Icons.star_rounded,
+                                            size: 11,
+                                            color: isDark
+                                                ? Colors.amber.shade300
+                                                : Colors.amber.shade800,
+                                          ),
+                                          const SizedBox(width: 2),
+                                          Text(
+                                            '$favCount',
+                                            style: TextStyle(
+                                              fontSize: 9.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: isDark
+                                                  ? Colors.amber.shade200
+                                                  : Colors.amber.shade900,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),

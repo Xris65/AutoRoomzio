@@ -578,7 +578,17 @@ void main() {
       expect(find.text('Automatiser B01-55'), findsOneWidget);
       // Wednesday (day 3) shows conflict with Bureau Ancien
       final wedRow = find.byKey(const ValueKey('desk_auto_day_3'));
-      expect(find.descendant(of: wedRow, matching: find.text('⇄ Bureau Ancien')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: wedRow,
+          matching: find.byIcon(Icons.swap_horiz_rounded),
+        ),
+        findsNWidgets(2),
+      );
+      expect(
+        find.descendant(of: wedRow, matching: find.text('Bureau Ancien')),
+        findsOneWidget,
+      );
 
       await tester.tap(wedRow);
       await tester.pumpAndSettle();

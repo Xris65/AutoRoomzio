@@ -183,14 +183,14 @@ class CalendarTab extends StatelessWidget {
         : null;
     if (holidayName != null) {
       cellTooltip = cellTooltip != null
-          ? '$cellTooltip • 🎉 Jour férié : $holidayName'
-          : '🎉 Jour férié : $holidayName';
+          ? '$cellTooltip • Jour férié : $holidayName'
+          : 'Jour férié : $holidayName';
     }
 
     final int favCount = favoriteCountsByDate[dateStr] ?? 0;
     if (favCount > 0) {
       final String favLabel =
-          '⭐ $favCount collègue${favCount > 1 ? 's' : ''} favori${favCount > 1 ? 's' : ''}';
+          '$favCount collègue${favCount > 1 ? 's' : ''} favori${favCount > 1 ? 's' : ''}';
       cellTooltip = cellTooltip != null ? '$cellTooltip • $favLabel' : favLabel;
     }
 
@@ -245,14 +245,28 @@ class CalendarTab extends StatelessWidget {
                   width: 0.6,
                 ),
               ),
-              child: Text(
-                '⭐$favCount',
-                style: TextStyle(
-                  fontSize: 8.5,
-                  height: 1.05,
-                  fontWeight: FontWeight.bold,
-                  color: isDark ? Colors.amber.shade100 : Colors.amber.shade900,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(
+                    Icons.star_rounded,
+                    size: 9.5,
+                    color:
+                        isDark ? Colors.amber.shade200 : Colors.amber.shade800,
+                  ),
+                  const SizedBox(width: 1),
+                  Text(
+                    '$favCount',
+                    style: TextStyle(
+                      fontSize: 8.5,
+                      height: 1.05,
+                      fontWeight: FontWeight.bold,
+                      color: isDark
+                          ? Colors.amber.shade100
+                          : Colors.amber.shade900,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

@@ -194,12 +194,16 @@ void main() {
       await tester.pumpAndSettle();
 
       // Monday has 1 unique favorite (even though occupants map has ws-a12 + lowercase keys)
-      expect(find.byKey(const ValueKey('week_day_fav_badge_$monStr')), findsOneWidget);
-      expect(find.text('⭐ 1'), findsOneWidget);
+      final monBadge = find.byKey(const ValueKey('week_day_fav_badge_$monStr'));
+      expect(monBadge, findsOneWidget);
+      expect(find.descendant(of: monBadge, matching: find.byIcon(Icons.star_rounded)), findsOneWidget);
+      expect(find.descendant(of: monBadge, matching: find.text('1')), findsOneWidget);
 
       // Tuesday has 2 unique favorites
-      expect(find.byKey(const ValueKey('week_day_fav_badge_$tueStr')), findsOneWidget);
-      expect(find.text('⭐ 2'), findsOneWidget);
+      final tueBadge = find.byKey(const ValueKey('week_day_fav_badge_$tueStr'));
+      expect(tueBadge, findsOneWidget);
+      expect(find.descendant(of: tueBadge, matching: find.byIcon(Icons.star_rounded)), findsOneWidget);
+      expect(find.descendant(of: tueBadge, matching: find.text('2')), findsOneWidget);
 
       // Wednesday has 0 favorites -> no badge
       expect(find.byKey(const ValueKey('week_day_fav_badge_$wedStr')), findsNothing);
@@ -372,9 +376,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(await storage.getShowFavoriteWeekIndicators(), isTrue);
-      expect(find.byKey(const ValueKey('week_day_fav_badge_$monStr')), findsOneWidget);
-      expect(find.byKey(const ValueKey('week_day_fav_badge_$tueStr')), findsOneWidget);
-      expect(find.text('⭐ 1'), findsNWidgets(2));
+      final monBadgeRestored = find.byKey(const ValueKey('week_day_fav_badge_$monStr'));
+      final tueBadgeRestored = find.byKey(const ValueKey('week_day_fav_badge_$tueStr'));
+      expect(monBadgeRestored, findsOneWidget);
+      expect(tueBadgeRestored, findsOneWidget);
+      expect(find.descendant(of: monBadgeRestored, matching: find.byIcon(Icons.star_rounded)), findsOneWidget);
+      expect(find.descendant(of: monBadgeRestored, matching: find.text('1')), findsOneWidget);
+      expect(find.descendant(of: tueBadgeRestored, matching: find.byIcon(Icons.star_rounded)), findsOneWidget);
+      expect(find.descendant(of: tueBadgeRestored, matching: find.text('1')), findsOneWidget);
 
       await tester.tap(
         find.descendant(

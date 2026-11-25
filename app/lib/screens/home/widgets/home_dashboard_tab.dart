@@ -606,12 +606,26 @@ class HomeDashboardTab extends StatelessWidget {
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: <Widget>[
-                                const Text(
-                                  '📅 Prochaines réservations',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                Row(
+                                  children: <Widget>[
+                                    Icon(
+                                      Icons.calendar_today_rounded,
+                                      size: 18,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    const Expanded(
+                                      child: Text(
+                                        'Prochaines réservations',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                                 const SizedBox(height: 8),
                                 Wrap(
@@ -659,12 +673,25 @@ class HomeDashboardTab extends StatelessWidget {
                                 ) &&
                                 automationEnabled) ...<Widget>[
                               const SizedBox(height: 20),
-                              const Text(
-                                '📅 Prochaines réservations',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              Row(
+                                children: <Widget>[
+                                  Icon(
+                                    Icons.calendar_today_rounded,
+                                    size: 18,
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Expanded(
+                                    child: Text(
+                                      'Prochaines réservations',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 8),
                               isCalendarBusy

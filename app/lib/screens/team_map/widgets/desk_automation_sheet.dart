@@ -287,17 +287,32 @@ class _DeskAutomationSheetState extends State<DeskAutomationSheet> {
                                     width: 0.8,
                                   ),
                                 ),
-                                child: Text(
-                                  '⇄ ${otherRule.workspaceName}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: isDark
-                                        ? Colors.amber.shade200
-                                        : Colors.orange.shade900,
-                                  ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: <Widget>[
+                                    Icon(
+                                      Icons.swap_horiz_rounded,
+                                      size: 13,
+                                      color: isDark
+                                          ? Colors.amber.shade200
+                                          : Colors.orange.shade900,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Flexible(
+                                      child: Text(
+                                        otherRule.workspaceName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                          color: isDark
+                                              ? Colors.amber.shade200
+                                              : Colors.orange.shade900,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
