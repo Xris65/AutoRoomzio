@@ -27,14 +27,17 @@ class _PrefsStore implements ReservationPrefsBackend {
 
   Future<SharedPreferences> _legacy() => SharedPreferences.getInstance();
 
-  SharedPreferencesAsync _async() => SharedPreferencesAsync();
+  Future<SharedPreferencesAsync> _readyAsync() async {
+    await StorageService.ensureLegacyPrefsMigrated();
+    return SharedPreferencesAsync();
+  }
 
   @override
   Future<String?> getString(String key) async {
     if (_useTestPrefs) {
       return (await _legacy()).getString(key);
     }
-    return _async().getString(key);
+    return (await _readyAsync()).getString(key);
   }
 
   @override
@@ -43,14 +46,14 @@ class _PrefsStore implements ReservationPrefsBackend {
       await (await _legacy()).setString(key, value);
       return;
     }
-    await _async().setString(key, value);
+    await (await _readyAsync()).setString(key, value);
   }
 
   Future<bool?> getBool(String key) async {
     if (_useTestPrefs) {
       return (await _legacy()).getBool(key);
     }
-    return _async().getBool(key);
+    return (await _readyAsync()).getBool(key);
   }
 
   Future<void> setBool(String key, bool value) async {
@@ -58,14 +61,14 @@ class _PrefsStore implements ReservationPrefsBackend {
       await (await _legacy()).setBool(key, value);
       return;
     }
-    await _async().setBool(key, value);
+    await (await _readyAsync()).setBool(key, value);
   }
 
   Future<int?> getInt(String key) async {
     if (_useTestPrefs) {
       return (await _legacy()).getInt(key);
     }
-    return _async().getInt(key);
+    return (await _readyAsync()).getInt(key);
   }
 
   Future<void> setInt(String key, int value) async {
@@ -73,14 +76,14 @@ class _PrefsStore implements ReservationPrefsBackend {
       await (await _legacy()).setInt(key, value);
       return;
     }
-    await _async().setInt(key, value);
+    await (await _readyAsync()).setInt(key, value);
   }
 
   Future<double?> getDouble(String key) async {
     if (_useTestPrefs) {
       return (await _legacy()).getDouble(key);
     }
-    return _async().getDouble(key);
+    return (await _readyAsync()).getDouble(key);
   }
 
   Future<void> setDouble(String key, double value) async {
@@ -88,7 +91,7 @@ class _PrefsStore implements ReservationPrefsBackend {
       await (await _legacy()).setDouble(key, value);
       return;
     }
-    await _async().setDouble(key, value);
+    await (await _readyAsync()).setDouble(key, value);
   }
 
   @override
@@ -96,7 +99,7 @@ class _PrefsStore implements ReservationPrefsBackend {
     if (_useTestPrefs) {
       return (await _legacy()).getStringList(key);
     }
-    return _async().getStringList(key);
+    return (await _readyAsync()).getStringList(key);
   }
 
   @override
@@ -105,14 +108,14 @@ class _PrefsStore implements ReservationPrefsBackend {
       await (await _legacy()).setStringList(key, value);
       return;
     }
-    await _async().setStringList(key, value);
+    await (await _readyAsync()).setStringList(key, value);
   }
 
   Future<bool> containsKey(String key) async {
     if (_useTestPrefs) {
       return (await _legacy()).containsKey(key);
     }
-    return _async().containsKey(key);
+    return (await _readyAsync()).containsKey(key);
   }
 
   // ignore: unused_element
@@ -122,7 +125,7 @@ class _PrefsStore implements ReservationPrefsBackend {
       if (allowList == null) return keys;
       return keys.where(allowList.contains).toSet();
     }
-    return _async().getKeys(allowList: allowList);
+    return (await _readyAsync()).getKeys(allowList: allowList);
   }
 
   @override
@@ -131,7 +134,7 @@ class _PrefsStore implements ReservationPrefsBackend {
       await (await _legacy()).remove(key);
       return;
     }
-    await _async().remove(key);
+    await (await _readyAsync()).remove(key);
   }
 
   Future<void> clear({Set<String>? allowList}) async {
@@ -146,13 +149,15 @@ class _PrefsStore implements ReservationPrefsBackend {
       }
       return;
     }
-    await _async().clear(allowList: allowList);
+    await (await _readyAsync()).clear(allowList: allowList);
   }
 
   Future<void> reload() async {
     if (_useTestPrefs) {
       await (await _legacy()).reload();
+      return;
     }
+    await StorageService.ensureLegacyPrefsMigrated();
     // SharedPreferencesAsync reads directly from platform storage with no cache.
   }
 }
@@ -185,7 +190,22 @@ class StorageService {
 
   ReservationStore get reservationStore => _reservationStore;
 
+  static const String legacyMigrationDoneKey = 'legacy_prefs_migrated_v2';
+
+  static Future<void>? _migrationInFlight;
+
+  @visibleForTesting
+  static bool forceAsyncPrefsForTesting = false;
+
+  @visibleForTesting
+  static void resetLegacyMigrationForTesting() {
+    _migrationInFlight = null;
+  }
+
+  static bool isFlutterTestEnvironment() => _isFlutterTestEnvironment();
+
   static bool _isFlutterTestEnvironment() {
+    if (forceAsyncPrefsForTesting) return false;
     if (kIsWeb) return false;
     if (const bool.fromEnvironment('FLUTTER_TEST')) return true;
     try {
@@ -195,6 +215,89 @@ class StorageService {
       }
     } catch (_) {}
     return Zone.current[#test.invoker] != null;
+  }
+
+  /// Idempotently migrates v1.7.0 [SharedPreferences] keys to
+  /// [SharedPreferencesAsync] on the first v2.0.0+ run without overwriting any
+  /// keys already written in the async store.
+  static Future<void> ensureLegacyPrefsMigrated({
+    SharedPreferences? legacyPrefsOverride,
+    SharedPreferencesAsync? asyncPrefsOverride,
+  }) {
+    if (_isFlutterTestEnvironment() &&
+        legacyPrefsOverride == null &&
+        asyncPrefsOverride == null) {
+      return Future<void>.value();
+    }
+    final Future<void>? inFlight = _migrationInFlight;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final Future<void> run = _migrateLegacyPrefsInternal(
+      legacyPrefsOverride: legacyPrefsOverride,
+      asyncPrefsOverride: asyncPrefsOverride,
+    ).catchError((Object error, StackTrace stackTrace) {
+      _migrationInFlight = null;
+      Error.throwWithStackTrace(error, stackTrace);
+    });
+    _migrationInFlight = run;
+    return run;
+  }
+
+  static Future<void> _migrateLegacyPrefsInternal({
+    SharedPreferences? legacyPrefsOverride,
+    SharedPreferencesAsync? asyncPrefsOverride,
+  }) async {
+    final SharedPreferencesAsync asyncPrefs =
+        asyncPrefsOverride ?? SharedPreferencesAsync();
+    if (await asyncPrefs.getBool(legacyMigrationDoneKey) == true) {
+      return;
+    }
+
+    final SharedPreferences legacyPrefs =
+        legacyPrefsOverride ?? await SharedPreferences.getInstance();
+    await legacyPrefs.reload();
+
+    final Set<String> legacyKeys = legacyPrefs.getKeys();
+    if (legacyKeys.isNotEmpty) {
+      final Set<String> existingAsyncKeys = await asyncPrefs.getKeys();
+      for (final String key in legacyKeys) {
+        if (key == legacyMigrationDoneKey) {
+          continue;
+        }
+        // Do not overwrite any preference already configured in v2.0.0, while
+        // still copying missing legacy reservation keys so ReservationStore
+        // can reconcile them into reservations_v2.
+        if (existingAsyncKeys.contains(key)) {
+          continue;
+        }
+        final Object? value = legacyPrefs.get(key);
+        if (value == null) {
+          continue;
+        }
+        try {
+          if (value is bool) {
+            await asyncPrefs.setBool(key, value);
+          } else if (value is int) {
+            await asyncPrefs.setInt(key, value);
+          } else if (value is double) {
+            await asyncPrefs.setDouble(key, value);
+          } else if (value is String) {
+            await asyncPrefs.setString(key, value);
+          } else if (value is List<Object?>) {
+            final List<String> stringList = value is List<String>
+                ? List<String>.from(value)
+                : value.cast<String>().toList();
+            await asyncPrefs.setStringList(key, stringList);
+          }
+        } catch (_) {
+          // Isolate per-key failures (e.g. Android DataStore rejecting strings
+          // with special internal prefixes) so all other keys still migrate.
+        }
+      }
+    }
+
+    await asyncPrefs.setBool(legacyMigrationDoneKey, true);
   }
 
   static const String _refreshTokenKey = 'refresh_token';
@@ -237,6 +340,7 @@ class StorageService {
 
   /// Clears in-memory caches and reloads SharedPreferences from disk.
   Future<void> reloadFromDisk() async {
+    await ensureLegacyPrefsMigrated();
     clearMemoryCache();
     await _prefs.reload();
   }
@@ -1241,6 +1345,15 @@ class StorageService {
     }
 
     await _prefs.clear();
+
+    if (!_prefs._useTestPrefs) {
+      try {
+        final SharedPreferences legacyPrefs =
+            await SharedPreferences.getInstance();
+        await legacyPrefs.clear();
+      } catch (_) {}
+      await _prefs.setBool(legacyMigrationDoneKey, true);
+    }
 
     if (remember && savedEmail != null && savedEmail.isNotEmpty) {
       await _prefs.setBool(_rememberEmailKey, true);

@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/reservation_entry.dart';
+import '../storage_service.dart';
 
 /// Minimal async key-value backend used by [ReservationStore].
 abstract interface class ReservationPrefsBackend {
@@ -17,60 +15,52 @@ abstract interface class ReservationPrefsBackend {
 class _DefaultReservationPrefsBackend implements ReservationPrefsBackend {
   const _DefaultReservationPrefsBackend();
 
-  static bool _isFlutterTestEnvironment() {
-    if (kIsWeb) return false;
-    if (const bool.fromEnvironment('FLUTTER_TEST')) return true;
-    try {
-      final String bindingType =
-          WidgetsBinding.instance.runtimeType.toString();
-      if (bindingType.contains('Test')) {
-        return true;
-      }
-    } catch (_) {}
-    return Zone.current[#test.invoker] != null;
+  Future<SharedPreferencesAsync> _readyAsync() async {
+    await StorageService.ensureLegacyPrefsMigrated();
+    return SharedPreferencesAsync();
   }
 
   @override
   Future<String?> getString(String key) async {
-    if (_isFlutterTestEnvironment()) {
+    if (StorageService.isFlutterTestEnvironment()) {
       return (await SharedPreferences.getInstance()).getString(key);
     }
-    return SharedPreferencesAsync().getString(key);
+    return (await _readyAsync()).getString(key);
   }
 
   @override
   Future<void> setString(String key, String value) async {
-    if (_isFlutterTestEnvironment()) {
+    if (StorageService.isFlutterTestEnvironment()) {
       await (await SharedPreferences.getInstance()).setString(key, value);
       return;
     }
-    await SharedPreferencesAsync().setString(key, value);
+    await (await _readyAsync()).setString(key, value);
   }
 
   @override
   Future<List<String>?> getStringList(String key) async {
-    if (_isFlutterTestEnvironment()) {
+    if (StorageService.isFlutterTestEnvironment()) {
       return (await SharedPreferences.getInstance()).getStringList(key);
     }
-    return SharedPreferencesAsync().getStringList(key);
+    return (await _readyAsync()).getStringList(key);
   }
 
   @override
   Future<void> setStringList(String key, List<String> value) async {
-    if (_isFlutterTestEnvironment()) {
+    if (StorageService.isFlutterTestEnvironment()) {
       await (await SharedPreferences.getInstance()).setStringList(key, value);
       return;
     }
-    await SharedPreferencesAsync().setStringList(key, value);
+    await (await _readyAsync()).setStringList(key, value);
   }
 
   @override
   Future<void> remove(String key) async {
-    if (_isFlutterTestEnvironment()) {
+    if (StorageService.isFlutterTestEnvironment()) {
       await (await SharedPreferences.getInstance()).remove(key);
       return;
     }
-    await SharedPreferencesAsync().remove(key);
+    await (await _readyAsync()).remove(key);
   }
 }
 
