@@ -39,6 +39,8 @@ class SettingsTab extends StatelessWidget {
   final ValueChanged<int> onSaveThemeColorIndex;
   final ValueChanged<int> onSaveFontFamilyIndex;
   final ValueChanged<double> onSaveUiScale;
+  final VoidCallback? onExportProfile;
+  final VoidCallback? onImportProfile;
 
   const SettingsTab({
     super.key,
@@ -72,6 +74,8 @@ class SettingsTab extends StatelessWidget {
     required this.onSaveThemeColorIndex,
     required this.onSaveFontFamilyIndex,
     required this.onSaveUiScale,
+    this.onExportProfile,
+    this.onImportProfile,
   });
 
   Widget _buildStyledDropdown<T>(
@@ -137,6 +141,7 @@ class SettingsTab extends StatelessWidget {
         value: 0,
         child: Text('Accueil (par défaut)'),
       ),
+      const DropdownMenuItem<int>(value: 5, child: Text('Plan')),
       const DropdownMenuItem<int>(value: 1, child: Text('Calendrier')),
       if (!kIsWeb && showAutomation)
         const DropdownMenuItem<int>(value: 2, child: Text('Automate')),
@@ -589,6 +594,56 @@ class SettingsTab extends StatelessWidget {
             ),
           ),
         ],
+        const SizedBox(height: 24),
+        const Text(
+          'Sauvegarde & Synchronisation (.roomzio)',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.lightBlue,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            children: <Widget>[
+              ListTile(
+                key: const ValueKey<String>('export_roomzio_tile'),
+                leading: const Icon(
+                  Icons.upload_file_rounded,
+                  color: Colors.lightBlue,
+                ),
+                title: const Text('Exporter ma configuration (.roomzio)'),
+                subtitle: const Text(
+                  'Générer un code chiffré sans déconnecter vos autres appareils',
+                  style: TextStyle(fontSize: 12),
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: onExportProfile,
+              ),
+              const Divider(height: 1),
+              ListTile(
+                key: const ValueKey<String>('import_roomzio_tile'),
+                leading: const Icon(
+                  Icons.download_for_offline_rounded,
+                  color: Colors.green,
+                ),
+                title: const Text('Importer une configuration (.roomzio)'),
+                subtitle: const Text(
+                  'Restaurer règles, favoris, congés et réglages depuis un code',
+                  style: TextStyle(fontSize: 12),
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: onImportProfile,
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 24),
         const Text(
           'À propos',

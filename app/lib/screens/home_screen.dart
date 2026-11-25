@@ -7,21 +7,25 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:workmanager/workmanager.dart';
 import '../api_service.dart';
 import '../holiday_service.dart';
+import '../main.dart';
 import '../models/booking_result.dart';
 import '../models/colleague.dart';
 import '../offline_state_manager.dart';
 import '../services/app_update_service.dart';
 import '../services/automation_engine.dart';
+import '../services/profile_sync_service.dart';
 import '../storage_service.dart';
 import '../utils/date_helpers.dart';
 import '../utils/error_sanitizer.dart';
 import '../widgets/colleague_selection_dialog.dart';
 import '../widgets/fun_loading_widget.dart';
 import '../widgets/web_pairing_dialog.dart';
+import 'home/widgets/adaptive_app_shell.dart';
 import 'home/widgets/automation_tab.dart';
 import 'home/widgets/calendar_tab.dart';
 import 'home/widgets/delegation_dialogs.dart';
 import 'home/widgets/home_dashboard_tab.dart';
+import 'home/widgets/profile_sync_dialogs.dart';
 import 'home/widgets/settings_tab.dart';
 import 'home/widgets/stats_tab.dart';
 import 'home/widgets/update_available_dialog.dart';
@@ -54,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<AutomationRule> _automationRules = <AutomationRule>[];
   String? _workspaceName;
   String? _defaultWorkspaceId;
+  String? _floorId;
   bool _isLoading = true;
   bool _isCalendarBusy = false;
   bool _automationEnabled = false;
@@ -93,7 +98,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _showDelegatedReservations = true;
   final ValueNotifier<String> _loadingTextNotifier =
       ValueNotifier<String>("Démarrage d'AutoRoomzio...");
-  int _currentIndex = 0;
+  late final ValueNotifier<DateTime> _focusedMapDateNotifier;
+  AppDestination _selectedDestination = AppDestination.home;
+  bool _isSplitMapVisible = true;
+  int _cockpitRefreshToken = 0;
   int _permissionStatus = 0;
 
   // All-time historical bookings for stats
@@ -115,6 +123,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _storage = widget.storageService ?? StorageService();
     _api = widget.apiService ?? RoomzApiService();
     _updateService = AppUpdateService(storage: _storage);
+    _focusedMapDateNotifier = ValueNotifier<DateTime>(
+      normalizeLocalDate(DateTime.now()),
+    );
     WidgetsBinding.instance.addObserver(this);
     unawaited(_loadAppVersion());
     if (!kIsWeb) {
@@ -127,6 +138,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _loadingTextNotifier.dispose();
+    _focusedMapDateNotifier.dispose();
     super.dispose();
   }
 
@@ -240,8 +252,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await _loadData();
   }
 
+  bool get _canShowSplitMap =>
+      (_defaultWorkspaceId != null && _defaultWorkspaceId!.isNotEmpty) &&
+      (_floorId != null && _floorId!.isNotEmpty);
+
+  void _syncFocusedMapDate(DateTime date) {
+    final DateTime normalized = normalizeLocalDate(date);
+    _focusedMapDateNotifier.value = normalized;
+    if (mounted) {
+      setState(() => _focusedDay = normalized);
+    }
+  }
+
   Future<void> _openTeamMap({DateTime? date}) async {
-    final DateTime targetDate = date ?? _focusedDay;
+    final DateTime targetDate = normalizeLocalDate(date ?? _focusedDay);
+    _syncFocusedMapDate(targetDate);
+
+    final bool isExpanded =
+        mounted && MediaQuery.sizeOf(context).width >= 1100;
+    if (isExpanded && _canShowSplitMap && _isSplitMapVisible) {
+      if (_selectedDestination != AppDestination.home &&
+          _selectedDestination != AppDestination.calendar) {
+        setState(() => _selectedDestination = AppDestination.home);
+      }
+      return;
+    }
+
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (BuildContext _) => TeamMapScreen(
@@ -257,6 +293,47 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _reloadAutomationAndSettings();
       await _syncCalendar();
     }
+  }
+
+  Future<void> _reloadLocalBookingSnapshot() async {
+    final String? wsId = await _storage.getWorkspaceId();
+    final String? flId = await _storage.getFloorId();
+    final ({Set<String> here, Map<String, String> elsewhere}) partition =
+        await _storage.partitionUserReservations(wsId);
+    final List<String> reqDates = await _storage.getRequestedDates();
+    final Map<String, String> reqWs =
+        await _storage.getRequestedWorkspacesMap();
+    final Map<String, String> reqNames =
+        await _storage.getRequestedWorkspaceNamesMap();
+    final Map<String, int> stats = await _storage.getBookingStats();
+    if (!mounted) return;
+    setState(() {
+      _defaultWorkspaceId = wsId;
+      _floorId = flId;
+      _bookedDates = partition.here;
+      _bookedElsewhereMap = partition.elsewhere;
+      _requestedDates = reqDates.toSet();
+      _requestedWorkspacesMap = reqWs;
+      _requestedWorkspaceNamesMap = reqNames;
+      _statsMap = stats;
+      _cockpitRefreshToken++;
+    });
+    await _reloadAutomationAndSettings();
+  }
+
+  void _handleMapReservationChanged() {
+    if (!mounted) return;
+    unawaited(_reloadLocalBookingSnapshot());
+  }
+
+  Future<void> _reloadThemePreferencesFromStorage() async {
+    final int modeIndex = await _storage.getThemeModeIndex();
+    themeNotifier.value = modeIndex == 1
+        ? ThemeMode.light
+        : (modeIndex == 2 ? ThemeMode.dark : ThemeMode.system);
+    themeColorNotifier.value = await _storage.getThemeColorIndex();
+    fontNotifier.value = await _storage.getFontFamilyIndex();
+    uiScaleNotifier.value = await _storage.getUiScale();
   }
 
   Future<void> _reloadAutomationAndSettings() async {
@@ -277,6 +354,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _automationRules = rules;
         _selectedDays = days;
         _showFavoriteWeekIndicators = showFavWeek;
+        _cockpitRefreshToken++;
       });
     }
   }
@@ -292,6 +370,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _requestedDates = reqDates.toSet();
         _requestedWorkspacesMap = reqWorkspaces;
         _requestedWorkspaceNamesMap = reqNames;
+        _cockpitRefreshToken++;
       });
     }
   }
@@ -307,25 +386,58 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           apiService: _api,
           isManagementMode: true,
         ),
-      ),
+      ).then((void _) {
+        if (mounted) {
+          setState(() => _cockpitRefreshToken++);
+        }
+      }),
     );
   }
 
-  int _sanitizeInitialTab(int rawTab, {required bool showAutomation}) {
+  int _sanitizeInitialTab(
+    int rawTab, {
+    required bool showAutomation,
+    bool showStats = true,
+  }) {
     if ((kIsWeb || !showAutomation) && rawTab == 2) {
       return 0;
     }
-    if (rawTab < 0 || rawTab > 2) {
+    if (!showStats && rawTab == 3) {
+      return 0;
+    }
+    if (rawTab < 0 || rawTab > 5) {
       return 0;
     }
     return rawTab;
   }
 
-  int _computeTabCount({
+  AppDestination _destinationFromCanonicalTab(
+    int rawTab, {
     required bool showAutomation,
     required bool showStats,
   }) {
-    return 2 + (showAutomation && !kIsWeb ? 1 : 0) + (showStats ? 1 : 0) + 1;
+    return switch (rawTab) {
+      1 => AppDestination.calendar,
+      2 => (showAutomation && !kIsWeb)
+          ? AppDestination.automation
+          : AppDestination.home,
+      3 => showStats ? AppDestination.stats : AppDestination.home,
+      4 => AppDestination.settings,
+      5 => AppDestination.map,
+      _ => AppDestination.home,
+    };
+  }
+
+  bool _isDestinationVisible(
+    AppDestination dest, {
+    required bool showAutomation,
+    required bool showStats,
+  }) {
+    return switch (dest) {
+      AppDestination.automation => showAutomation && !kIsWeb,
+      AppDestination.stats => showStats,
+      _ => true,
+    };
   }
 
   Future<void> _loadData() async {
@@ -349,6 +461,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await _storage.getRequestedWorkspaceNamesMap();
     final List<String> ignored = await _storage.getIgnoredDates();
     final String? wsId = await _storage.getWorkspaceId();
+    final String? flId = await _storage.getFloorId();
     final ({Set<String> here, Map<String, String> elsewhere}) partition =
         await _storage.partitionUserReservations(wsId);
     final bool autoEnabled = await _storage.getAutomationEnabled();
@@ -374,9 +487,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await _storage.getDelegatedBookingsMap();
     final Map<String, String> occupied = await _storage.getOccupiedByOthers();
 
-    final int safeInitialTab =
-        _sanitizeInitialTab(rawInitialTab, showAutomation: showAuto);
-    final int tabCount = _computeTabCount(
+    final int safeInitialTab = _sanitizeInitialTab(
+      rawInitialTab,
       showAutomation: showAuto,
       showStats: showStats,
     );
@@ -387,6 +499,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _selectedDays = days;
         _workspaceName = name;
         _defaultWorkspaceId = wsId;
+        _floorId = flId;
         _requestedDates = requested.toSet();
         _requestedWorkspacesMap = requestedWorkspaces;
         _requestedWorkspaceNamesMap = requestedNames;
@@ -429,11 +542,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             (DateTimeRange a, DateTimeRange b) => a.start.compareTo(b.start),
           );
         _compactMode = comp;
+        _cockpitRefreshToken++;
         if (!_initialTabApplied) {
           _initialTabApplied = true;
-          _currentIndex = safeInitialTab.clamp(0, tabCount - 1);
-        } else if (_currentIndex >= tabCount) {
-          _currentIndex = tabCount - 1;
+          _selectedDestination = _destinationFromCanonicalTab(
+            safeInitialTab,
+            showAutomation: showAuto,
+            showStats: showStats,
+          );
+        } else if (!_isDestinationVisible(
+          _selectedDestination,
+          showAutomation: showAuto,
+          showStats: showStats,
+        )) {
+          _selectedDestination = AppDestination.home;
         }
       });
     }
@@ -863,6 +985,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _workspaceName = null;
         _defaultWorkspaceId = null;
+        _floorId = null;
+        _cockpitRefreshToken++;
       });
     }
   }
@@ -1327,6 +1451,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _occupiedByOthers = occupiedDates;
           _allTimeBookedDates.addAll(bookedHere);
           _allTimeElsewhereDates.addAll(bookedElsewhere.keys);
+          _cockpitRefreshToken++;
         });
         await _storage.saveAllTimeBookedDates(_allTimeBookedDates.toList());
         await _storage
@@ -1433,6 +1558,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (_isCalendarBusy) return;
     final DateTime today = normalizeLocalDate(DateTime.now());
     final DateTime day = normalizeLocalDate(selectedDay);
+    _syncFocusedMapDate(day);
 
     if (day.isBefore(today)) {
       _showTopToast('Impossible de modifier le passé.', isError: true);
@@ -1880,42 +2006,278 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Widget _buildNavItem(int index, IconData icon, String label) {
-    final bool isSelected = _currentIndex == index;
-    final Color color = isSelected
-        ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6);
+  void _onDestinationSelected(AppDestination destination) {
+    if (destination == _selectedDestination) return;
+    setState(() => _selectedDestination = destination);
+    if (destination == AppDestination.home ||
+        destination == AppDestination.calendar ||
+        destination == AppDestination.map) {
+      unawaited(_reloadPendingSchedules());
+    }
+    unawaited(_reloadAutomationAndSettings());
+  }
 
-    return Expanded(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () {
-            if (index == _currentIndex) return;
-            setState(() => _currentIndex = index);
-            if (index == 0 || index == 1) {
-              unawaited(_reloadPendingSchedules());
-            }
-            unawaited(_reloadAutomationAndSettings());
-          },
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Icon(icon, color: color),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+  Widget _buildEmbeddedTeamMap({Key? key}) {
+    return TeamMapScreen(
+      key: key,
+      apiService: _api,
+      storageService: _storage,
+      initialDate: _focusedMapDateNotifier.value,
+      hideWeekends: _hideWeekends,
+      isEmbedded: true,
+      externalDateNotifier: _focusedMapDateNotifier,
+      onReservationChanged: _handleMapReservationChanged,
     );
+  }
+
+  Widget _buildTabContent(
+    AppDestination destination, {
+    required bool isSplitActive,
+  }) {
+    switch (destination) {
+      case AppDestination.home:
+        return HomeDashboardTab(
+          isCalendarBusy: _isCalendarBusy,
+          pullToRefreshEnabled: _pullToRefreshEnabled,
+          onRefresh: () => _syncCalendar(isManual: true),
+          showAutomation: _showAutomation,
+          vacations: _vacations,
+          isVacation: _isVacation,
+          workspaceName: _workspaceName,
+          defaultWorkspaceId: _defaultWorkspaceId,
+          onChangeWorkspace: () => unawaited(_changeWorkspace()),
+          onResetWorkspace: () => unawaited(_resetWorkspace()),
+          hideWeekends: _hideWeekends,
+          onQuickBook: _quickBook,
+          onOpenTeamMapToday: () =>
+              unawaited(_openTeamMap(date: DateTime.now())),
+          onOpenFavoritesManager: _openFavoritesManager,
+          showAllReservations: _showAllReservations,
+          onToggleShowAllReservations: (bool val) =>
+              setState(() => _showAllReservations = val),
+          showDelegatedReservations: _showDelegatedReservations,
+          onToggleShowDelegatedReservations: (bool val) {
+            setState(() => _showDelegatedReservations = val);
+            unawaited(_storage.saveShowDelegatedBookings(val));
+          },
+          compactMode: _compactMode,
+          automationEnabled: _automationEnabled,
+          automationRules: _automationRules,
+          selectedDays: _selectedDays,
+          projectionsCount: _projectionsCount,
+          skipPublicHolidays: _skipPublicHolidays,
+          holidayCountryCode: _holidayCountryCode,
+          ignoredDates: _ignoredDates,
+          bookedDates: _bookedDates,
+          requestedDates: _requestedDates,
+          requestedWorkspacesMap: _requestedWorkspacesMap,
+          requestedWorkspaceNamesMap: _requestedWorkspaceNamesMap,
+          bookedElsewhereMap: _bookedElsewhereMap,
+          delegatedBookingsMap: _delegatedBookingsMap,
+          occupiedByOthers: _occupiedByOthers,
+          onDateTap: _handleDateTap,
+          onQuickAction: _quickAction,
+          focusedDate: _focusedDay,
+          onCockpitDaySelected: (DateTime day) {
+            _syncFocusedMapDate(day);
+            if (!isSplitActive) {
+              final DateTime today = normalizeLocalDate(DateTime.now());
+              if (!normalizeLocalDate(day).isBefore(today)) {
+                unawaited(_handleDateTap(day));
+              } else {
+                unawaited(_openTeamMap(date: day));
+              }
+            }
+          },
+          storageService: _storage,
+          floorId: _floorId,
+          showFavoriteWeekIndicators: _showFavoriteWeekIndicators,
+          cockpitRefreshToken: _cockpitRefreshToken,
+        );
+      case AppDestination.map:
+        return _buildEmbeddedTeamMap(
+          key: const ValueKey<String>('embedded_tab_team_map'),
+        );
+      case AppDestination.calendar:
+        return CalendarTab(
+          workspaceName: _workspaceName,
+          isCalendarBusy: _isCalendarBusy,
+          pullToRefreshEnabled: _pullToRefreshEnabled,
+          onRefresh: () => _syncCalendar(isManual: true),
+          onOpenFavoritesManager: _openFavoritesManager,
+          onOpenTeamMapFocused: () =>
+              unawaited(_openTeamMap(date: _focusedDay)),
+          onManualSync: () => unawaited(_syncCalendar(isManual: true)),
+          showAllReservations: _showAllReservations,
+          onToggleShowAllReservations: (bool val) =>
+              setState(() => _showAllReservations = val),
+          showDelegatedReservations: _showDelegatedReservations,
+          onToggleShowDelegatedReservations: (bool val) {
+            setState(() => _showDelegatedReservations = val);
+            unawaited(_storage.saveShowDelegatedBookings(val));
+          },
+          focusedDay: _focusedDay,
+          onPageChanged: (DateTime focusedDay) {
+            _focusedDay = focusedDay;
+          },
+          onDateTap: _handleDateTap,
+          hideWeekends: _hideWeekends,
+          showAutomation: _showAutomation,
+          vacations: _vacations,
+          compactMode: _compactMode,
+          skipPublicHolidays: _skipPublicHolidays,
+          holidayCountryCode: _holidayCountryCode,
+          bookedDates: _bookedDates,
+          requestedDates: _requestedDates,
+          ignoredDates: _ignoredDates,
+          bookedElsewhereMap: _bookedElsewhereMap,
+          delegatedBookingsMap: _delegatedBookingsMap,
+          occupiedByOthers: _occupiedByOthers,
+        );
+      case AppDestination.automation:
+        return AutomationTab(
+          isCalendarBusy: _isCalendarBusy,
+          hideWeekends: _hideWeekends,
+          showAutomation: _showAutomation,
+          automationEnabled: _automationEnabled,
+          automationTime: _automationTime,
+          vacations: _vacations,
+          automationRules: _automationRules,
+          onAddVacation: _handleAddVacation,
+          onDeleteVacation: _handleDeleteVacation,
+          onToggleAutomation: _toggleAutomation,
+          onAutomationTimeChanged: (TimeOfDay time) async {
+            setState(() => _automationTime = time);
+            await _storage.saveAutomationTime(time.hour, time.minute);
+            await _toggleAutomation(true);
+          },
+          onRunAutomationNow: _runAutomationNow,
+          onAddAutomationPlace: _addAutomationPlace,
+          onChangeRulePlace: _changeRulePlace,
+          onDeleteAutomationRule: _deleteAutomationRule,
+          onRuleDayPressed: _onRuleDayPressed,
+        );
+      case AppDestination.stats:
+        return StatsTab(
+          statsMap: _statsMap,
+          bookedDates: _bookedDates,
+          bookedElsewhereMap: _bookedElsewhereMap,
+          selectedDays: _selectedDays,
+          workspaceName: _workspaceName,
+        );
+      case AppDestination.settings:
+        return SettingsTab(
+          initialTab: _initialTab,
+          onInitialTabChanged: (int val) {
+            final int safeVal = _sanitizeInitialTab(
+              val,
+              showAutomation: _showAutomation,
+              showStats: _showStats,
+            );
+            setState(() => _initialTab = safeVal);
+            unawaited(_storage.saveInitialTab(safeVal));
+          },
+          showAutomation: _showAutomation,
+          onShowAutomationChanged: (bool val) {
+            setState(() {
+              _showAutomation = val;
+              if (!val && _initialTab == 2) {
+                _initialTab = 0;
+                unawaited(_storage.saveInitialTab(0));
+              }
+              if (!val && _selectedDestination == AppDestination.automation) {
+                _selectedDestination = AppDestination.home;
+              }
+              if (!val && _automationEnabled) {
+                unawaited(_toggleAutomation(false));
+              }
+            });
+            unawaited(_storage.saveShowAutomation(val));
+          },
+          showStats: _showStats,
+          onShowStatsChanged: (bool val) {
+            setState(() {
+              _showStats = val;
+              if (!val && _initialTab == 3) {
+                _initialTab = 0;
+                unawaited(_storage.saveInitialTab(0));
+              }
+              if (!val && _selectedDestination == AppDestination.stats) {
+                _selectedDestination = AppDestination.home;
+              }
+            });
+            unawaited(_storage.saveShowStats(val));
+          },
+          pullToRefreshEnabled: _pullToRefreshEnabled,
+          onPullToRefreshChanged: (bool val) {
+            setState(() => _pullToRefreshEnabled = val);
+            unawaited(_storage.savePullToRefresh(val));
+          },
+          showFavoriteWeekIndicators: _showFavoriteWeekIndicators,
+          onShowFavoriteWeekIndicatorsChanged: (bool val) {
+            setState(() => _showFavoriteWeekIndicators = val);
+            unawaited(_storage.saveShowFavoriteWeekIndicators(val));
+          },
+          projectionsCount: _projectionsCount,
+          onProjectionsCountChanged: (int val) {
+            setState(() => _projectionsCount = val);
+            unawaited(_storage.saveProjectionsCount(val));
+          },
+          hideWeekends: _hideWeekends,
+          onHideWeekendsChanged: (bool val) {
+            setState(() => _hideWeekends = val);
+            unawaited(_storage.saveHideWeekends(val));
+          },
+          skipPublicHolidays: _skipPublicHolidays,
+          onSkipPublicHolidaysChanged: (bool val) {
+            setState(() => _skipPublicHolidays = val);
+            unawaited(_storage.saveSkipPublicHolidays(val));
+          },
+          holidayCountryCode: _holidayCountryCode,
+          onHolidayCountryCodeChanged: (String val) {
+            setState(() => _holidayCountryCode = val);
+            unawaited(_storage.saveHolidayCountryCode(val));
+          },
+          compactMode: _compactMode,
+          onCompactModeChanged: (bool val) {
+            setState(() => _compactMode = val);
+            unawaited(_storage.saveCompactMode(val));
+          },
+          notifySuccess: _notifySuccess,
+          onNotifySuccessChanged: (bool val) {
+            setState(() => _notifySuccess = val);
+            unawaited(_storage.saveNotifySuccess(val));
+          },
+          notifyFailure: _notifyFailure,
+          onNotifyFailureChanged: (bool val) {
+            setState(() => _notifyFailure = val);
+            unawaited(_storage.saveNotifyFailure(val));
+          },
+          appVersion: _appVersion,
+          onCheckForUpdates: _checkForUpdates,
+          onSaveThemeModeIndex: (int idx) =>
+              unawaited(_storage.saveThemeModeIndex(idx)),
+          onSaveThemeColorIndex: (int idx) =>
+              unawaited(_storage.saveThemeColorIndex(idx)),
+          onSaveFontFamilyIndex: (int idx) =>
+              unawaited(_storage.saveFontFamilyIndex(idx)),
+          onSaveUiScale: (double scale) =>
+              unawaited(_storage.saveUiScale(scale)),
+          onExportProfile: () => unawaited(
+            showExportProfileDialog(context, storage: _storage),
+          ),
+          onImportProfile: () => unawaited(
+            showImportProfileDialog(
+              context,
+              storage: _storage,
+              onImportSuccess: (ProfileImportResult _) async {
+                await _reloadThemePreferencesFromStorage();
+                await _loadData();
+              },
+            ),
+          ),
+        );
+    }
   }
 
   @override
@@ -1926,365 +2288,164 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         body: FunLoadingWidget(messageNotifier: _loadingTextNotifier),
       );
     } else {
-      final List<({String id, IconData icon, String label, Widget widget})>
-          tabs = <({String id, IconData icon, String label, Widget widget})>[
-        (
-          id: 'home',
-          icon: Icons.home_rounded,
+      final List<AdaptiveNavItem> destinations = <AdaptiveNavItem>[
+        const AdaptiveNavItem(
+          destination: AppDestination.home,
           label: 'Accueil',
-          widget: HomeDashboardTab(
-            isCalendarBusy: _isCalendarBusy,
-            pullToRefreshEnabled: _pullToRefreshEnabled,
-            onRefresh: () => _syncCalendar(isManual: true),
-            showAutomation: _showAutomation,
-            vacations: _vacations,
-            isVacation: _isVacation,
-            workspaceName: _workspaceName,
-            defaultWorkspaceId: _defaultWorkspaceId,
-            onChangeWorkspace: () => unawaited(_changeWorkspace()),
-            onResetWorkspace: () => unawaited(_resetWorkspace()),
-            hideWeekends: _hideWeekends,
-            onQuickBook: _quickBook,
-            onOpenTeamMapToday: () =>
-                unawaited(_openTeamMap(date: DateTime.now())),
-            onOpenFavoritesManager: _openFavoritesManager,
-            showAllReservations: _showAllReservations,
-            onToggleShowAllReservations: (bool val) =>
-                setState(() => _showAllReservations = val),
-            showDelegatedReservations: _showDelegatedReservations,
-            onToggleShowDelegatedReservations: (bool val) {
-              setState(() => _showDelegatedReservations = val);
-              unawaited(_storage.saveShowDelegatedBookings(val));
-            },
-            compactMode: _compactMode,
-            automationEnabled: _automationEnabled,
-            automationRules: _automationRules,
-            selectedDays: _selectedDays,
-            projectionsCount: _projectionsCount,
-            skipPublicHolidays: _skipPublicHolidays,
-            holidayCountryCode: _holidayCountryCode,
-            ignoredDates: _ignoredDates,
-            bookedDates: _bookedDates,
-            requestedDates: _requestedDates,
-            requestedWorkspacesMap: _requestedWorkspacesMap,
-            requestedWorkspaceNamesMap: _requestedWorkspaceNamesMap,
-            bookedElsewhereMap: _bookedElsewhereMap,
-            delegatedBookingsMap: _delegatedBookingsMap,
-            occupiedByOthers: _occupiedByOthers,
-            onDateTap: _handleDateTap,
-            onQuickAction: _quickAction,
-          ),
+          icon: Icons.home_outlined,
+          selectedIcon: Icons.home_rounded,
         ),
-        (
-          id: 'calendar',
-          icon: Icons.calendar_month_rounded,
+        const AdaptiveNavItem(
+          destination: AppDestination.map,
+          label: 'Plan',
+          icon: Icons.map_outlined,
+          selectedIcon: Icons.map_rounded,
+        ),
+        const AdaptiveNavItem(
+          destination: AppDestination.calendar,
           label: 'Calendrier',
-          widget: CalendarTab(
-            workspaceName: _workspaceName,
-            isCalendarBusy: _isCalendarBusy,
-            pullToRefreshEnabled: _pullToRefreshEnabled,
-            onRefresh: () => _syncCalendar(isManual: true),
-            onOpenFavoritesManager: _openFavoritesManager,
-            onOpenTeamMapFocused: () =>
-                unawaited(_openTeamMap(date: _focusedDay)),
-            onManualSync: () => unawaited(_syncCalendar(isManual: true)),
-            showAllReservations: _showAllReservations,
-            onToggleShowAllReservations: (bool val) =>
-                setState(() => _showAllReservations = val),
-            showDelegatedReservations: _showDelegatedReservations,
-            onToggleShowDelegatedReservations: (bool val) {
-              setState(() => _showDelegatedReservations = val);
-              unawaited(_storage.saveShowDelegatedBookings(val));
-            },
-            focusedDay: _focusedDay,
-            onPageChanged: (DateTime focusedDay) {
-              _focusedDay = focusedDay;
-            },
-            onDateTap: _handleDateTap,
-            hideWeekends: _hideWeekends,
-            showAutomation: _showAutomation,
-            vacations: _vacations,
-            compactMode: _compactMode,
-            skipPublicHolidays: _skipPublicHolidays,
-            holidayCountryCode: _holidayCountryCode,
-            bookedDates: _bookedDates,
-            requestedDates: _requestedDates,
-            ignoredDates: _ignoredDates,
-            bookedElsewhereMap: _bookedElsewhereMap,
-            delegatedBookingsMap: _delegatedBookingsMap,
-            occupiedByOthers: _occupiedByOthers,
-          ),
+          icon: Icons.calendar_month_outlined,
+          selectedIcon: Icons.calendar_month_rounded,
         ),
         if (_showAutomation && !kIsWeb)
-          (
-            id: 'auto',
-            icon: Icons.auto_awesome,
+          const AdaptiveNavItem(
+            destination: AppDestination.automation,
             label: 'Automate',
-            widget: AutomationTab(
-              isCalendarBusy: _isCalendarBusy,
-              hideWeekends: _hideWeekends,
-              showAutomation: _showAutomation,
-              automationEnabled: _automationEnabled,
-              automationTime: _automationTime,
-              vacations: _vacations,
-              automationRules: _automationRules,
-              onAddVacation: _handleAddVacation,
-              onDeleteVacation: _handleDeleteVacation,
-              onToggleAutomation: _toggleAutomation,
-              onAutomationTimeChanged: (TimeOfDay time) async {
-                setState(() => _automationTime = time);
-                await _storage.saveAutomationTime(time.hour, time.minute);
-                await _toggleAutomation(true);
-              },
-              onRunAutomationNow: _runAutomationNow,
-              onAddAutomationPlace: _addAutomationPlace,
-              onChangeRulePlace: _changeRulePlace,
-              onDeleteAutomationRule: _deleteAutomationRule,
-              onRuleDayPressed: _onRuleDayPressed,
-            ),
+            icon: Icons.auto_awesome_outlined,
+            selectedIcon: Icons.auto_awesome,
           ),
         if (_showStats)
-          (
-            id: 'stats',
-            icon: Icons.insights_rounded,
+          const AdaptiveNavItem(
+            destination: AppDestination.stats,
             label: 'Stats',
-            widget: StatsTab(
-              statsMap: _statsMap,
-              bookedDates: _bookedDates,
-              bookedElsewhereMap: _bookedElsewhereMap,
-              selectedDays: _selectedDays,
-              workspaceName: _workspaceName,
-            ),
+            icon: Icons.insights_outlined,
+            selectedIcon: Icons.insights_rounded,
           ),
-        (
-          id: 'settings',
-          icon: Icons.settings_rounded,
+        const AdaptiveNavItem(
+          destination: AppDestination.settings,
           label: 'Paramètres',
-          widget: SettingsTab(
-            initialTab: _initialTab,
-            onInitialTabChanged: (int val) {
-              final int safeVal = _sanitizeInitialTab(
-                val,
-                showAutomation: _showAutomation,
-              );
-              setState(() => _initialTab = safeVal);
-              unawaited(_storage.saveInitialTab(safeVal));
-            },
-            showAutomation: _showAutomation,
-            onShowAutomationChanged: (bool val) {
-              setState(() {
-                _showAutomation = val;
-                if (!val && _initialTab == 2) {
-                  _initialTab = 0;
-                  unawaited(_storage.saveInitialTab(0));
-                }
-                _currentIndex = 2 +
-                    (_showAutomation && !kIsWeb ? 1 : 0) +
-                    (_showStats ? 1 : 0);
-                if (!val && _automationEnabled) {
-                  unawaited(_toggleAutomation(false));
-                }
-              });
-              unawaited(_storage.saveShowAutomation(val));
-            },
-            showStats: _showStats,
-            onShowStatsChanged: (bool val) {
-              setState(() {
-                _showStats = val;
-                _currentIndex = 2 +
-                    (_showAutomation && !kIsWeb ? 1 : 0) +
-                    (_showStats ? 1 : 0);
-              });
-              unawaited(_storage.saveShowStats(val));
-            },
-            pullToRefreshEnabled: _pullToRefreshEnabled,
-            onPullToRefreshChanged: (bool val) {
-              setState(() => _pullToRefreshEnabled = val);
-              unawaited(_storage.savePullToRefresh(val));
-            },
-            showFavoriteWeekIndicators: _showFavoriteWeekIndicators,
-            onShowFavoriteWeekIndicatorsChanged: (bool val) {
-              setState(() => _showFavoriteWeekIndicators = val);
-              unawaited(_storage.saveShowFavoriteWeekIndicators(val));
-            },
-            projectionsCount: _projectionsCount,
-            onProjectionsCountChanged: (int val) {
-              setState(() => _projectionsCount = val);
-              unawaited(_storage.saveProjectionsCount(val));
-            },
-            hideWeekends: _hideWeekends,
-            onHideWeekendsChanged: (bool val) {
-              setState(() => _hideWeekends = val);
-              unawaited(_storage.saveHideWeekends(val));
-            },
-            skipPublicHolidays: _skipPublicHolidays,
-            onSkipPublicHolidaysChanged: (bool val) {
-              setState(() => _skipPublicHolidays = val);
-              unawaited(_storage.saveSkipPublicHolidays(val));
-            },
-            holidayCountryCode: _holidayCountryCode,
-            onHolidayCountryCodeChanged: (String val) {
-              setState(() => _holidayCountryCode = val);
-              unawaited(_storage.saveHolidayCountryCode(val));
-            },
-            compactMode: _compactMode,
-            onCompactModeChanged: (bool val) {
-              setState(() => _compactMode = val);
-              unawaited(_storage.saveCompactMode(val));
-            },
-            notifySuccess: _notifySuccess,
-            onNotifySuccessChanged: (bool val) {
-              setState(() => _notifySuccess = val);
-              unawaited(_storage.saveNotifySuccess(val));
-            },
-            notifyFailure: _notifyFailure,
-            onNotifyFailureChanged: (bool val) {
-              setState(() => _notifyFailure = val);
-              unawaited(_storage.saveNotifyFailure(val));
-            },
-            appVersion: _appVersion,
-            onCheckForUpdates: _checkForUpdates,
-            onSaveThemeModeIndex: (int idx) =>
-                unawaited(_storage.saveThemeModeIndex(idx)),
-            onSaveThemeColorIndex: (int idx) =>
-                unawaited(_storage.saveThemeColorIndex(idx)),
-            onSaveFontFamilyIndex: (int idx) =>
-                unawaited(_storage.saveFontFamilyIndex(idx)),
-            onSaveUiScale: (double scale) =>
-                unawaited(_storage.saveUiScale(scale)),
-          ),
+          icon: Icons.settings_outlined,
+          selectedIcon: Icons.settings_rounded,
         ),
       ];
 
-      if (_currentIndex >= tabs.length) {
-        _currentIndex = tabs.length - 1;
-      }
-      if (_currentIndex < 0) {
-        _currentIndex = 0;
-      }
+      final AppDestination activeDest = _isDestinationVisible(
+        _selectedDestination,
+        showAutomation: _showAutomation,
+        showStats: _showStats,
+      )
+          ? _selectedDestination
+          : AppDestination.home;
 
-      content = Scaffold(
-        appBar: AppBar(
-          title: const Text('AutoRoomzio'),
-          actions: <Widget>[
-            if (_isAndroid && _automationEnabled)
-              IconButton(
-                icon: Icon(
-                  Icons.shield_rounded,
-                  color: _permissionStatus == 1
-                      ? Colors.green
-                      : (_permissionStatus == 2
-                          ? Colors.orange
-                          : Colors.red.shade300),
-                ),
-                tooltip: 'Statut des permissions',
-                onPressed: () {
-                  unawaited(
-                    Navigator.of(context)
-                        .push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (BuildContext _) =>
-                                const OptimizationScreen(),
-                          ),
-                        )
-                        .then((void _) => _checkPermissionsStatus()),
-                  );
-                },
-              ),
+      final bool isExpandedWidth = MediaQuery.sizeOf(context).width >= 1100;
+      final bool splitEligibleTab = activeDest == AppDestination.home ||
+          activeDest == AppDestination.calendar;
+      final bool isSplitActive =
+          isExpandedWidth && _canShowSplitMap && _isSplitMapVisible && splitEligibleTab;
+
+      final PreferredSizeWidget appBar = AppBar(
+        title: const Text('AutoRoomzio'),
+        actions: <Widget>[
+          if (isExpandedWidth && _canShowSplitMap && splitEligibleTab)
             IconButton(
-              icon: const Icon(Icons.qr_code_scanner),
-              tooltip: 'Lier un appareil Web',
-              onPressed: () => unawaited(
-                showWebPairingDialog(
-                  context,
-                  storage: _storage,
-                  workspaceId: _defaultWorkspaceId,
-                  workspaceName: _workspaceName,
-                  onLoggedOut: () => unawaited(_logout()),
-                ),
+              key: const ValueKey<String>('toggle_split_map_button'),
+              icon: Icon(
+                _isSplitMapVisible
+                    ? Icons.vertical_split_rounded
+                    : Icons.vertical_split_outlined,
               ),
+              tooltip: _isSplitMapVisible
+                  ? 'Masquer le plan combiné'
+                  : 'Afficher le plan combiné',
+              onPressed: () =>
+                  setState(() => _isSplitMapVisible = !_isSplitMapVisible),
             ),
+          if (_isAndroid && _automationEnabled)
             IconButton(
-              icon: const Icon(Icons.logout),
-              tooltip: 'Se déconnecter',
-              onPressed: () => unawaited(_logout()),
+              icon: Icon(
+                Icons.shield_rounded,
+                color: _permissionStatus == 1
+                    ? Colors.green
+                    : (_permissionStatus == 2
+                        ? Colors.orange
+                        : Colors.red.shade300),
+              ),
+              tooltip: 'Statut des permissions',
+              onPressed: () {
+                unawaited(
+                  Navigator.of(context)
+                      .push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (BuildContext _) =>
+                              const OptimizationScreen(),
+                        ),
+                      )
+                      .then((void _) => _checkPermissionsStatus()),
+                );
+              },
             ),
-          ],
-        ),
-        body: Scaffold(
-          backgroundColor: Colors.transparent,
-          body: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onHorizontalDragEnd: (DragEndDetails details) {
-              if (details.primaryVelocity == null) return;
-              if (details.primaryVelocity! > 300) {
-                if (_currentIndex > 0) setState(() => _currentIndex--);
-              } else if (details.primaryVelocity! < -300) {
-                if (_currentIndex < tabs.length - 1) {
-                  setState(() => _currentIndex++);
-                }
-              }
-            },
-            child: SizedBox.expand(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                layoutBuilder: (
-                  Widget? currentChild,
-                  List<Widget> previousChildren,
-                ) {
-                  return Stack(
-                    alignment: Alignment.topCenter,
-                    children: <Widget>[
-                      ...previousChildren,
-                      ?currentChild,
-                    ],
-                  );
-                },
-                transitionBuilder: (
-                  Widget child,
-                  Animation<double> animation,
-                ) {
-                  return SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0, 0.04),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: FadeTransition(opacity: animation, child: child),
-                  );
-                },
-                child: KeyedSubtree(
-                  key: ValueKey<String>(tabs[_currentIndex].id),
-                  child: tabs[_currentIndex].widget,
-                ),
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner),
+            tooltip: 'Lier un appareil Web',
+            onPressed: () => unawaited(
+              showWebPairingDialog(
+                context,
+                storage: _storage,
+                workspaceId: _defaultWorkspaceId,
+                workspaceName: _workspaceName,
+                onLoggedOut: () => unawaited(_logout()),
               ),
             ),
           ),
-          bottomNavigationBar: Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).scaffoldBackgroundColor,
-              border: Border(
-                top: BorderSide(
-                  color: Theme.of(context).dividerColor.withValues(alpha: 0.1),
-                ),
-              ),
-            ),
-            child: SafeArea(
-              child: SizedBox(
-                height: 60,
-                child: Row(
-                  children: List<Widget>.generate(
-                    tabs.length,
-                    (int index) => _buildNavItem(
-                      index,
-                      tabs[index].icon,
-                      tabs[index].label,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Se déconnecter',
+            onPressed: () => unawaited(_logout()),
+          ),
+        ],
+      );
+
+      final Widget body = SizedBox.expand(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          layoutBuilder: (
+            Widget? currentChild,
+            List<Widget> previousChildren,
+          ) {
+            return Stack(
+              alignment: Alignment.topCenter,
+              children: <Widget>[
+                ...previousChildren,
+                ?currentChild,
+              ],
+            );
+          },
+          transitionBuilder: (
+            Widget child,
+            Animation<double> animation,
+          ) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          child: KeyedSubtree(
+            key: ValueKey<AppDestination>(activeDest),
+            child: _buildTabContent(activeDest, isSplitActive: isSplitActive),
           ),
         ),
+      );
+
+      content = AdaptiveAppShell(
+        destinations: destinations,
+        selectedDestination: activeDest,
+        onDestinationSelected: _onDestinationSelected,
+        appBar: appBar,
+        body: body,
+        fullWidthBody: activeDest == AppDestination.map,
+        showSplitMap: _canShowSplitMap && _isSplitMapVisible && splitEligibleTab,
+        splitMapPanel: (_canShowSplitMap && splitEligibleTab)
+            ? _buildEmbeddedTeamMap(
+                key: const ValueKey<String>('embedded_split_team_map'),
+              )
+            : null,
       );
     }
 

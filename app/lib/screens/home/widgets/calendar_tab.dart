@@ -94,6 +94,7 @@ class CalendarTab extends StatelessWidget {
     DateTime day, {
     bool isToday = false,
     bool isOutside = false,
+    bool isSelected = false,
   }) {
     final String dateStr = DateHelpers.formatIsoDate(day);
     final bool isBooked = bookedDates.contains(dateStr) && showAllReservations;
@@ -192,11 +193,16 @@ class CalendarTab extends StatelessWidget {
           decoration: BoxDecoration(
             color: bgColor,
             shape: BoxShape.circle,
-            border: isOccupiedByOthers
-                ? Border.all(color: Colors.grey.shade400, width: 1)
-                : (holidayName != null && bgColor == null
-                    ? Border.all(color: Colors.amber.shade600, width: 1.2)
-                    : null),
+            border: isSelected
+                ? Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2.2,
+                  )
+                : (isOccupiedByOthers
+                    ? Border.all(color: Colors.grey.shade400, width: 1)
+                    : (holidayName != null && bgColor == null
+                        ? Border.all(color: Colors.amber.shade600, width: 1.2)
+                        : null)),
           ),
           alignment: Alignment.center,
           child: Text(
@@ -411,6 +417,8 @@ class CalendarTab extends StatelessWidget {
                               ),
                             ),
                             onPageChanged: onPageChanged,
+                            selectedDayPredicate: (DateTime day) =>
+                                DateHelpers.isSameDay(day, focusedDay),
                             onDaySelected:
                                 (DateTime selectedDay, DateTime _) {
                               onDateTap(selectedDay);
@@ -422,6 +430,12 @@ class CalendarTab extends StatelessWidget {
                                 DateTime _,
                               ) =>
                                   _buildDayCell(ctx, day),
+                              selectedBuilder: (
+                                BuildContext ctx,
+                                DateTime day,
+                                DateTime _,
+                              ) =>
+                                  _buildDayCell(ctx, day, isSelected: true),
                               todayBuilder: (
                                 BuildContext ctx,
                                 DateTime day,

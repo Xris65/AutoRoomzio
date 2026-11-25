@@ -1,12 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../../holiday_service.dart';
-import '../../../models/automation_rule.dart';
+import '../../../storage_service.dart';
 import '../../../utils/date_helpers.dart';
 import '../../../utils/delegation_display_helper.dart';
+import 'weekly_cockpit_card.dart';
 
-/// Dashboard (Home) tab displaying the selected workspace, quick actions,
-/// team map / favorites shortcuts, and upcoming reservations.
+/// Dashboard (Home) tab displaying the weekly cockpit, selected workspace,
+/// quick actions, team map / favorites shortcuts, and upcoming reservations.
 class HomeDashboardTab extends StatelessWidget {
   final bool isCalendarBusy;
   final bool pullToRefreshEnabled;
@@ -48,6 +50,12 @@ class HomeDashboardTab extends StatelessWidget {
     String source, {
     bool isRequested,
   }) onQuickAction;
+  final DateTime? focusedDate;
+  final ValueChanged<DateTime>? onCockpitDaySelected;
+  final StorageService? storageService;
+  final String? floorId;
+  final bool showFavoriteWeekIndicators;
+  final int cockpitRefreshToken;
 
   const HomeDashboardTab({
     super.key,
@@ -86,6 +94,12 @@ class HomeDashboardTab extends StatelessWidget {
     required this.occupiedByOthers,
     required this.onDateTap,
     required this.onQuickAction,
+    this.focusedDate,
+    this.onCockpitDaySelected,
+    this.storageService,
+    this.floorId,
+    this.showFavoriteWeekIndicators = true,
+    this.cockpitRefreshToken = 0,
   });
 
   Widget _wrapWithPtr(Widget child) {
@@ -437,6 +451,33 @@ class HomeDashboardTab extends StatelessWidget {
                                 ],
                               ),
                             ),
+                          WeeklyCockpitCard(
+                            selectedDate: focusedDate,
+                            onDaySelected: (DateTime day) {
+                              if (onCockpitDaySelected != null) {
+                                onCockpitDaySelected!(day);
+                              } else {
+                                unawaited(onDateTap(day));
+                              }
+                            },
+                            hideWeekends: hideWeekends,
+                            showAutomation: showAutomation,
+                            automationEnabled: automationEnabled,
+                            automationRules: automationRules,
+                            selectedDays: selectedDays,
+                            isVacation: isVacation,
+                            skipPublicHolidays: skipPublicHolidays,
+                            holidayCountryCode: holidayCountryCode,
+                            bookedDates: bookedDates,
+                            requestedDates: requestedDates,
+                            ignoredDates: ignoredDates,
+                            bookedElsewhereMap: bookedElsewhereMap,
+                            storageService: storageService,
+                            floorId: floorId,
+                            showFavoriteWeekIndicators:
+                                showFavoriteWeekIndicators,
+                            refreshToken: cockpitRefreshToken,
+                          ),
                           Card(
                             clipBehavior: Clip.antiAlias,
                             child: InkWell(

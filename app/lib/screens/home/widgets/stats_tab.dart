@@ -207,6 +207,57 @@ class StatsTab extends StatelessWidget {
             : "Définissez vos jours dans l'onglet Automate")
         : rhythmDaysStr;
 
+    final List<Widget> statCards = <Widget>[
+      _buildStatCard(
+        context,
+        title: 'Réservations à venir',
+        value: '$totalUpcoming',
+        subtitle: totalUpcoming > 0
+            ? '${upcomingHere.length} sur bureau favori'
+            : 'Aucune réservation',
+        icon: Icons.event_available_rounded,
+        color: Colors.blue,
+        tooltip:
+            "Nombre total de réservations confirmées à venir (aujourd'hui et 14 prochains jours) issues de MyRoomz.",
+      ),
+      _buildStatCard(
+        context,
+        title: 'Taux Bureau Favori',
+        value: totalUpcoming > 0 ? '$favLoyaltyRatio%' : '-',
+        subtitle: totalUpcoming > 0
+            ? '${upcomingHere.length} sur $totalUpcoming à venir'
+            : 'Aucune réservation',
+        icon: Icons.star_rounded,
+        color: Colors.green,
+        tooltip:
+            'Pourcentage de vos réservations à venir effectuées sur votre bureau habituel${workspaceName != null ? ' ($workspaceName)' : ''}.',
+      ),
+      if (!kIsWeb) ...<Widget>[
+        _buildStatCard(
+          context,
+          title: 'Automatisées',
+          value: '$autoCount',
+          subtitle:
+              autoCount > 0 ? '$autoCount via automate' : 'Par AutoRoomzio',
+          icon: Icons.auto_awesome,
+          color: Theme.of(context).colorScheme.primary,
+          tooltip:
+              "Nombre total de réservations créées automatiquement par l'automate en tâche de fond sur cet appareil.",
+        ),
+        _buildStatCard(
+          context,
+          title: 'Manuelles',
+          value: '$manualCount',
+          subtitle:
+              manualCount > 0 ? '$manualCount en un clic' : 'En un clic',
+          icon: Icons.touch_app_rounded,
+          color: Colors.orange,
+          tooltip:
+              "Nombre total de réservations créées manuellement en un clic depuis l'application sur cet appareil.",
+        ),
+      ],
+    ];
+
     return ListView(
       padding: const EdgeInsets.all(24),
       children: <Widget>[
@@ -238,63 +289,31 @@ class StatsTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          mainAxisSpacing: 16,
-          crossAxisSpacing: 16,
-          childAspectRatio: 0.80,
-          children: <Widget>[
-            _buildStatCard(
-              context,
-              title: 'Réservations à venir',
-              value: '$totalUpcoming',
-              subtitle: totalUpcoming > 0
-                  ? '${upcomingHere.length} sur bureau favori'
-                  : 'Aucune réservation',
-              icon: Icons.event_available_rounded,
-              color: Colors.blue,
-              tooltip:
-                  "Nombre total de réservations confirmées à venir (aujourd'hui et 14 prochains jours) issues de MyRoomz.",
-            ),
-            _buildStatCard(
-              context,
-              title: 'Taux Bureau Favori',
-              value: totalUpcoming > 0 ? '$favLoyaltyRatio%' : '-',
-              subtitle: totalUpcoming > 0
-                  ? '${upcomingHere.length} sur $totalUpcoming à venir'
-                  : 'Aucune réservation',
-              icon: Icons.star_rounded,
-              color: Colors.green,
-              tooltip:
-                  'Pourcentage de vos réservations à venir effectuées sur votre bureau habituel${workspaceName != null ? ' ($workspaceName)' : ''}.',
-            ),
-            if (!kIsWeb) ...<Widget>[
-              _buildStatCard(
-                context,
-                title: 'Automatisées',
-                value: '$autoCount',
-                subtitle:
-                    autoCount > 0 ? '$autoCount via automate' : 'Par AutoRoomzio',
-                icon: Icons.auto_awesome,
-                color: Theme.of(context).colorScheme.primary,
-                tooltip:
-                    "Nombre total de réservations créées automatiquement par l'automate en tâche de fond sur cet appareil.",
-              ),
-              _buildStatCard(
-                context,
-                title: 'Manuelles',
-                value: '$manualCount',
-                subtitle:
-                    manualCount > 0 ? '$manualCount en un clic' : 'En un clic',
-                icon: Icons.touch_app_rounded,
-                color: Colors.orange,
-                tooltip:
-                    "Nombre total de réservations créées manuellement en un clic depuis l'application sur cet appareil.",
-              ),
-            ],
-          ],
+        LayoutBuilder(
+          builder: (BuildContext ctx, BoxConstraints constraints) {
+            final bool isNarrow = constraints.maxWidth < 520;
+            final SliverGridDelegate gridDelegate = isNarrow
+                ? const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 16,
+                    crossAxisSpacing: 16,
+                    childAspectRatio: 0.86,
+                  )
+                : const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 260,
+                    mainAxisSpacing: 16,
+                    crossAxisSpacing: 16,
+                    childAspectRatio: 1.05,
+                  );
+
+            return GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: gridDelegate,
+              itemCount: statCards.length,
+              itemBuilder: (BuildContext _, int index) => statCards[index],
+            );
+          },
         ),
         if (!kIsWeb || selectedDays.isNotEmpty) ...<Widget>[
           const SizedBox(height: 16),
