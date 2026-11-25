@@ -17,19 +17,20 @@
   <base href="/AutoRoomzio/recette/">
 
   <meta charset="UTF-8">
+  <meta name="referrer" content="no-referrer">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="AutoRoomzio - Réservation et automatisation intelligente MyRoomz">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="auto_roomzio">
+  <meta name="apple-mobile-web-app-title" content="AutoRoomzio">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>auto_roomzio</title>
+  <title>AutoRoomzio</title>
   <link rel="manifest" href="manifest.json">
 
   <!-- Garde défensif pour les environnements d'entreprise où WebAssembly est désactivé par GPO -->
@@ -148,9 +149,9 @@
     <div class="efb-container">
       <div class="efb-icon">⚠️</div>
       <div class="efb-content">
-        <h3 class="efb-title">Moteur graphique restreint (WebAssembly / CanvasKit)</h3>
+        <h3 class="efb-title">Moteur graphique restreint — WebAssembly (Skwasm / CanvasKit)</h3>
         <p class="efb-text">
-          AutoRoomzio n'a pas pu démarrer le moteur graphique <strong>CanvasKit</strong>. Dans les environnements d'entreprise, ceci survient généralement lorsque <strong>WebAssembly</strong> est bloqué par le <strong>Mode de Sécurité Renforcée de Microsoft Edge</strong> ou par une stratégie de groupe (GPO).
+          AutoRoomzio n'a pas pu démarrer le moteur graphique <strong>WebAssembly (Skwasm / CanvasKit)</strong>. Dans les environnements d'entreprise, ceci survient généralement lorsque <strong>WebAssembly</strong> est bloqué par le <strong>Mode de Sécurité Renforcée de Microsoft Edge</strong> ou par une stratégie de groupe (GPO).
         </p>
         <div class="efb-box">
           <strong>Actions recommandées :</strong>
@@ -182,11 +183,13 @@
         }
       }
 
-      // 1. Écoute des erreurs globales liées à WebAssembly / CanvasKit
+      // 1. Écoute des erreurs globales liées à WebAssembly (Skwasm / CanvasKit)
       window.addEventListener('error', function(event) {
         var msg = (event && (event.message || (event.error && event.error.message))) || '';
         if (typeof msg === 'string' && (
           msg.indexOf('WebAssembly') !== -1 ||
+          msg.indexOf('Skwasm') !== -1 ||
+          msg.indexOf('skwasm') !== -1 ||
           msg.indexOf('CanvasKit') !== -1 ||
           msg.indexOf('canvaskit') !== -1 ||
           msg.indexOf('wasm') !== -1 ||
@@ -202,6 +205,8 @@
         var str = String(reason || '');
         if (
           str.indexOf('WebAssembly') !== -1 ||
+          str.indexOf('Skwasm') !== -1 ||
+          str.indexOf('skwasm') !== -1 ||
           str.indexOf('CanvasKit') !== -1 ||
           str.indexOf('canvaskit') !== -1 ||
           str.indexOf('wasm') !== -1 ||
@@ -216,7 +221,7 @@
       var timeoutId = setTimeout(function() {
         var flutterElement = document.querySelector('flutter-view, flt-glass-pane');
         if (!flutterElement) {
-          showFallbackBanner('Timeout : Flutter/CanvasKit ne s\'est pas initialisé après 10s');
+          showFallbackBanner('Timeout : Flutter WebAssembly (Skwasm / CanvasKit) ne s\'est pas initialisé après 10s');
         }
       }, 10000);
 
