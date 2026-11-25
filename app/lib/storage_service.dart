@@ -7,17 +7,172 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models/automation_rule.dart';
 import 'models/colleague.dart';
 import 'models/desk_occupant.dart';
+import 'models/reservation_entry.dart';
+import 'services/reservation_store.dart';
 
 export 'models/automation_rule.dart';
+export 'models/reservation_entry.dart';
+
+/// Unified preference store adapter:
+/// - Uses [SharedPreferencesAsync] in production / Web / Windows / WorkManager
+///   background isolates so reads and writes hit platform storage directly
+///   without a stale cross-isolate in-memory cache.
+/// - Delegates to `SharedPreferences.getInstance()` when running under
+///   `flutter test` so `SharedPreferences.setMockInitialValues(...)` works
+///   transparently across the existing test suite.
+class _PrefsStore implements ReservationPrefsBackend {
+  const _PrefsStore();
+
+  bool get _useTestPrefs => StorageService._isFlutterTestEnvironment();
+
+  Future<SharedPreferences> _legacy() => SharedPreferences.getInstance();
+
+  SharedPreferencesAsync _async() => SharedPreferencesAsync();
+
+  @override
+  Future<String?> getString(String key) async {
+    if (_useTestPrefs) {
+      return (await _legacy()).getString(key);
+    }
+    return _async().getString(key);
+  }
+
+  @override
+  Future<void> setString(String key, String value) async {
+    if (_useTestPrefs) {
+      await (await _legacy()).setString(key, value);
+      return;
+    }
+    await _async().setString(key, value);
+  }
+
+  Future<bool?> getBool(String key) async {
+    if (_useTestPrefs) {
+      return (await _legacy()).getBool(key);
+    }
+    return _async().getBool(key);
+  }
+
+  Future<void> setBool(String key, bool value) async {
+    if (_useTestPrefs) {
+      await (await _legacy()).setBool(key, value);
+      return;
+    }
+    await _async().setBool(key, value);
+  }
+
+  Future<int?> getInt(String key) async {
+    if (_useTestPrefs) {
+      return (await _legacy()).getInt(key);
+    }
+    return _async().getInt(key);
+  }
+
+  Future<void> setInt(String key, int value) async {
+    if (_useTestPrefs) {
+      await (await _legacy()).setInt(key, value);
+      return;
+    }
+    await _async().setInt(key, value);
+  }
+
+  Future<double?> getDouble(String key) async {
+    if (_useTestPrefs) {
+      return (await _legacy()).getDouble(key);
+    }
+    return _async().getDouble(key);
+  }
+
+  Future<void> setDouble(String key, double value) async {
+    if (_useTestPrefs) {
+      await (await _legacy()).setDouble(key, value);
+      return;
+    }
+    await _async().setDouble(key, value);
+  }
+
+  @override
+  Future<List<String>?> getStringList(String key) async {
+    if (_useTestPrefs) {
+      return (await _legacy()).getStringList(key);
+    }
+    return _async().getStringList(key);
+  }
+
+  @override
+  Future<void> setStringList(String key, List<String> value) async {
+    if (_useTestPrefs) {
+      await (await _legacy()).setStringList(key, value);
+      return;
+    }
+    await _async().setStringList(key, value);
+  }
+
+  Future<bool> containsKey(String key) async {
+    if (_useTestPrefs) {
+      return (await _legacy()).containsKey(key);
+    }
+    return _async().containsKey(key);
+  }
+
+  // ignore: unused_element
+  Future<Set<String>> getKeys({Set<String>? allowList}) async {
+    if (_useTestPrefs) {
+      final Set<String> keys = (await _legacy()).getKeys();
+      if (allowList == null) return keys;
+      return keys.where(allowList.contains).toSet();
+    }
+    return _async().getKeys(allowList: allowList);
+  }
+
+  @override
+  Future<void> remove(String key) async {
+    if (_useTestPrefs) {
+      await (await _legacy()).remove(key);
+      return;
+    }
+    await _async().remove(key);
+  }
+
+  Future<void> clear({Set<String>? allowList}) async {
+    if (_useTestPrefs) {
+      final SharedPreferences prefs = await _legacy();
+      if (allowList == null) {
+        await prefs.clear();
+      } else {
+        for (final String key in allowList) {
+          await prefs.remove(key);
+        }
+      }
+      return;
+    }
+    await _async().clear(allowList: allowList);
+  }
+
+  Future<void> reload() async {
+    if (_useTestPrefs) {
+      await (await _legacy()).reload();
+    }
+    // SharedPreferencesAsync reads directly from platform storage with no cache.
+  }
+}
 
 /// Uses FlutterSecureStorage for sensitive credentials (refresh token)
-/// with volatile in-memory fallback, and shared_preferences for app settings and cache.
+/// with volatile in-memory fallback, and [_PrefsStore] / [ReservationStore]
+/// for app settings, cache, and unified reservation persistence.
 class StorageService {
+  static const _PrefsStore _prefs = _PrefsStore();
+  static final ReservationStore _defaultReservationStore =
+      ReservationStore(backend: _prefs);
+
   final FlutterSecureStorage _secureStorage;
   final bool _useSecureStorage;
+  final ReservationStore _reservationStore;
 
-  StorageService({FlutterSecureStorage? secureStorage})
-      : _secureStorage = secureStorage ??
+  StorageService({
+    FlutterSecureStorage? secureStorage,
+    ReservationStore? reservationStore,
+  })  : _secureStorage = secureStorage ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(resetOnError: false),
               iOptions: IOSOptions(
@@ -25,9 +180,12 @@ class StorageService {
               ),
             ),
         _useSecureStorage =
-            secureStorage != null || kIsWeb || !_isRunningInFlutterTest();
+            secureStorage != null || kIsWeb || !_isFlutterTestEnvironment(),
+        _reservationStore = reservationStore ?? _defaultReservationStore;
 
-  static bool _isRunningInFlutterTest() {
+  ReservationStore get reservationStore => _reservationStore;
+
+  static bool _isFlutterTestEnvironment() {
     if (kIsWeb) return false;
     if (const bool.fromEnvironment('FLUTTER_TEST')) return true;
     try {
@@ -57,8 +215,6 @@ class StorageService {
   static final Map<String, ({String rawJson, Map<String, DeskOccupant> value})>
       _floorOccupantsCache =
       <String, ({String rawJson, Map<String, DeskOccupant> value})>{};
-  static ({String rawJson, Map<String, Map<String, String>> value})?
-      _userReservationsCache;
   static ({String rawJson, List<AutomationRule> value})? _automationRulesCache;
 
   static void _putBoundedCache<K, V>(Map<K, V> cache, K key, V value) {
@@ -75,15 +231,14 @@ class StorageService {
     _planCache.clear();
     _floorWorkspacesCache.clear();
     _floorOccupantsCache.clear();
-    _userReservationsCache = null;
     _automationRulesCache = null;
+    _reservationStore.clearCache();
   }
 
   /// Clears in-memory caches and reloads SharedPreferences from disk.
   Future<void> reloadFromDisk() async {
     clearMemoryCache();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
+    await _prefs.reload();
   }
 
   static dynamic _clonePlanData(dynamic data) {
@@ -128,126 +283,103 @@ class StorageService {
   // ── Remember Email (Milestone M1 - Requirement R1) ─────────────────────────
 
   Future<void> saveRememberEmail(bool remember) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_rememberEmailKey, remember);
+    await _prefs.setBool(_rememberEmailKey, remember);
   }
 
   Future<bool> getRememberEmail() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_rememberEmailKey) ?? true;
+    return await _prefs.getBool(_rememberEmailKey) ?? true;
   }
 
   Future<void> saveSavedEmail(String email) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_savedEmailKey, email);
+    await _prefs.setString(_savedEmailKey, email);
   }
 
   Future<String?> getSavedEmail() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_savedEmailKey);
+    return _prefs.getString(_savedEmailKey);
   }
 
   Future<void> clearSavedEmail() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_savedEmailKey);
+    await _prefs.remove(_savedEmailKey);
   }
 
   // === UI Settings ===
 
   Future<void> saveIgnoredUpdateVersion(String version) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('ignored_update_version', version);
+    await _prefs.setString('ignored_update_version', version);
   }
 
   Future<String?> getIgnoredUpdateVersion() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('ignored_update_version');
+    return _prefs.getString('ignored_update_version');
   }
 
   Future<void> saveShowDelegatedBookings(bool show) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('show_delegated_bookings', show);
+    await _prefs.setBool('show_delegated_bookings', show);
   }
 
   Future<bool> getShowDelegatedBookings() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('show_delegated_bookings') ?? true;
+    return await _prefs.getBool('show_delegated_bookings') ?? true;
   }
 
   Future<void> saveDelegatedDates(List<String> dates) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('delegated_dates', dates);
+    await _prefs.setStringList('delegated_dates', dates);
   }
 
   Future<List<String>> getDelegatedDates() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('delegated_dates') ?? <String>[];
+    return await _prefs.getStringList('delegated_dates') ?? <String>[];
   }
 
   Future<void> savePullToRefresh(bool enabled) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('pull_to_refresh', enabled);
+    await _prefs.setBool('pull_to_refresh', enabled);
   }
 
   Future<bool> getPullToRefresh() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('pull_to_refresh') ?? true;
+    return await _prefs.getBool('pull_to_refresh') ?? true;
   }
 
   Future<void> saveShowAutomation(bool show) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('show_automation_card', show);
+    await _prefs.setBool('show_automation_card', show);
   }
 
   Future<bool> getShowAutomation() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('show_automation_card') ?? true;
+    return await _prefs.getBool('show_automation_card') ?? true;
   }
 
   Future<void> saveShowStats(bool show) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('show_stats_card', show);
+    await _prefs.setBool('show_stats_card', show);
   }
 
   Future<bool> getShowStats() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('show_stats_card') ?? true;
+    return await _prefs.getBool('show_stats_card') ?? true;
   }
 
   static const String _showFavoriteWeekIndicatorsKey =
       'show_favorite_week_indicators';
 
   Future<void> saveShowFavoriteWeekIndicators(bool show) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_showFavoriteWeekIndicatorsKey, show);
+    await _prefs.setBool(_showFavoriteWeekIndicatorsKey, show);
   }
 
   Future<bool> getShowFavoriteWeekIndicators() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_showFavoriteWeekIndicatorsKey) ?? true;
+    return await _prefs.getBool(_showFavoriteWeekIndicatorsKey) ?? true;
   }
 
   static const String _skipPublicHolidaysKey = 'skip_public_holidays';
   static const String _holidayCountryCodeKey = 'holiday_country_code';
 
   Future<void> saveSkipPublicHolidays(bool skip) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_skipPublicHolidaysKey, skip);
+    await _prefs.setBool(_skipPublicHolidaysKey, skip);
   }
 
   Future<bool> getSkipPublicHolidays() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_skipPublicHolidaysKey) ?? true;
+    return await _prefs.getBool(_skipPublicHolidaysKey) ?? true;
   }
 
   Future<void> saveHolidayCountryCode(String code) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_holidayCountryCodeKey, code);
+    await _prefs.setString(_holidayCountryCodeKey, code);
   }
 
   Future<String> getHolidayCountryCode() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_holidayCountryCodeKey) ?? 'FR';
+    return await _prefs.getString(_holidayCountryCodeKey) ?? 'FR';
   }
 
   // ── Token ─────────────────────────────────────────────────────────────────
@@ -255,8 +387,7 @@ class StorageService {
   Future<void> saveRefreshToken(String token) async {
     if (!_useSecureStorage) {
       _volatileRefreshToken = null;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_refreshTokenKey, token);
+      await _prefs.setString(_refreshTokenKey, token);
       return;
     }
     try {
@@ -278,8 +409,7 @@ class StorageService {
 
   Future<String?> getRefreshToken() async {
     if (!_useSecureStorage) {
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getString(_refreshTokenKey) ?? _volatileRefreshToken;
+      return await _prefs.getString(_refreshTokenKey) ?? _volatileRefreshToken;
     }
     try {
       final secureToken = await _secureStorage.read(key: _refreshTokenKey);
@@ -295,14 +425,13 @@ class StorageService {
     }
 
     // Legacy fallback & auto-migration
-    final prefs = await SharedPreferences.getInstance();
-    final legacyToken = prefs.getString(_refreshTokenKey);
+    final legacyToken = await _prefs.getString(_refreshTokenKey);
 
     if (legacyToken != null && legacyToken.isNotEmpty) {
       try {
         await _secureStorage.write(key: _refreshTokenKey, value: legacyToken);
         // Only delete from SharedPreferences once confirmed written to secure storage
-        await prefs.remove(_refreshTokenKey);
+        await _prefs.remove(_refreshTokenKey);
       } catch (_) {
         _volatileRefreshToken = legacyToken;
       }
@@ -320,10 +449,9 @@ class StorageService {
       } catch (_) {}
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_refreshTokenKey);
-    await prefs.remove('access_token');
-    await prefs.remove('token_expiry');
+    await _prefs.remove(_refreshTokenKey);
+    await _prefs.remove('access_token');
+    await _prefs.remove('token_expiry');
   }
 
   Future<void> clearTokens() async {
@@ -339,13 +467,11 @@ class StorageService {
   // ── Workspace settings ────────────────────────────────────────────────────
 
   Future<void> saveSiteId(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('site_id', id);
+    await _prefs.setString('site_id', id);
   }
 
   Future<String?> getSiteId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('site_id');
+    return _prefs.getString('site_id');
   }
 
   // Building / Site aliases
@@ -353,33 +479,27 @@ class StorageService {
   Future<String?> getBuildingId() => getSiteId();
 
   Future<void> saveFloorId(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('floor_id', id);
+    await _prefs.setString('floor_id', id);
   }
 
   Future<String?> getFloorId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('floor_id');
+    return _prefs.getString('floor_id');
   }
 
   Future<void> saveMapSelectedFloorId(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_mapSelectedFloorIdKey, id);
+    await _prefs.setString(_mapSelectedFloorIdKey, id);
   }
 
   Future<String?> getMapSelectedFloorId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_mapSelectedFloorIdKey);
+    return _prefs.getString(_mapSelectedFloorIdKey);
   }
 
   Future<void> saveWorkspaceId(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('workspace_id', id);
+    await _prefs.setString('workspace_id', id);
   }
 
   Future<String?> getWorkspaceId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('workspace_id');
+    return _prefs.getString('workspace_id');
   }
 
   // Room / Workspace aliases
@@ -387,54 +507,47 @@ class StorageService {
   Future<String?> getRoomId() => getWorkspaceId();
 
   Future<void> saveWorkspaceName(String name) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('workspace_name', name);
+    await _prefs.setString('workspace_name', name);
   }
 
   Future<String?> getWorkspaceName() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('workspace_name');
+    return _prefs.getString('workspace_name');
   }
 
   Future<void> resetWorkspace() async {
     clearMemoryCache();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('floor_id');
-    await prefs.remove(_mapSelectedFloorIdKey);
-    await prefs.remove('workspace_id');
-    await prefs.remove('workspace_name');
+    await _prefs.remove('floor_id');
+    await _prefs.remove(_mapSelectedFloorIdKey);
+    await _prefs.remove('workspace_id');
+    await _prefs.remove('workspace_name');
   }
 
   // ── Calendar Dates ────────────────────────────────────────────────────────
 
   Future<void> saveRequestedDates(List<String> dates) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('requested_dates', dates);
+    await _prefs.setStringList('requested_dates', dates);
   }
 
   Future<List<String>> getRequestedDates() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('requested_dates') ?? <String>[];
+    return await _prefs.getStringList('requested_dates') ?? <String>[];
   }
 
   Future<Map<String, String>> getRequestedWorkspacesMap() async {
-    final prefs = await SharedPreferences.getInstance();
-    return _decodeStringMap(prefs.getString('requested_workspaces_map'));
+    return _decodeStringMap(await _prefs.getString('requested_workspaces_map'));
   }
 
   Future<void> saveRequestedWorkspacesMap(Map<String, String> map) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('requested_workspaces_map', jsonEncode(map));
+    await _prefs.setString('requested_workspaces_map', jsonEncode(map));
   }
 
   Future<Map<String, String>> getRequestedWorkspaceNamesMap() async {
-    final prefs = await SharedPreferences.getInstance();
-    return _decodeStringMap(prefs.getString('requested_workspace_names_map'));
+    return _decodeStringMap(
+      await _prefs.getString('requested_workspace_names_map'),
+    );
   }
 
   Future<void> saveRequestedWorkspaceNamesMap(Map<String, String> map) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('requested_workspace_names_map', jsonEncode(map));
+    await _prefs.setString('requested_workspace_names_map', jsonEncode(map));
   }
 
   /// Associates a specific [workspaceId] (and optional [workspaceName]) to a requested [date].
@@ -526,60 +639,71 @@ class StorageService {
   }
 
   Future<void> saveBookedDates(List<String> dates) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('booked_dates', dates);
+    await _reservationStore.replaceHereDates(
+      dates,
+      defaultWorkspaceId: await getWorkspaceId(),
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
   }
 
   Future<List<String>> getBookedDates() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('booked_dates') ?? <String>[];
+    final Set<String> dates = await _reservationStore.hereDates(
+      await getWorkspaceId(),
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
+    return dates.toList();
   }
 
   Future<void> saveIgnoredDates(List<String> dates) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('ignored_dates', dates);
+    await _prefs.setStringList('ignored_dates', dates);
   }
 
   Future<List<String>> getIgnoredDates() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('ignored_dates') ?? <String>[];
+    return await _prefs.getStringList('ignored_dates') ?? <String>[];
   }
 
   Future<void> saveBookedElsewhereDates(List<String> dates) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('booked_elsewhere_dates', dates);
+    await _reservationStore.replaceElsewhereDates(
+      dates,
+      defaultWorkspaceId: await getWorkspaceId(),
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
   }
 
   // --- ALL-TIME STATS TRACKING ---
   Future<void> saveAllTimeBookedDates(List<String> dates) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('all_time_booked_dates', dates);
+    await _reservationStore.mergeAllTimeBookedDates(
+      dates,
+      defaultWorkspaceId: await getWorkspaceId(),
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
   }
 
   Future<List<String>> getAllTimeBookedDates() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('all_time_booked_dates') ?? <String>[];
+    return _reservationStore.allTimeBookedDates(
+      await getWorkspaceId(),
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
   }
 
   Future<void> saveAllTimeElsewhereDates(List<String> dates) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('all_time_elsewhere_dates', dates);
+    await _reservationStore.mergeAllTimeElsewhereDates(dates);
   }
 
   Future<List<String>> getAllTimeElsewhereDates() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('all_time_elsewhere_dates') ?? <String>[];
+    return _reservationStore.allTimeElsewhereDates(
+      await getWorkspaceId(),
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
   }
   // -------------------------------
 
   Future<Map<String, String>> getDelegatedBookingsMap() async {
-    final prefs = await SharedPreferences.getInstance();
-    return _decodeStringMap(prefs.getString('delegated_bookings_map'));
+    return _decodeStringMap(await _prefs.getString('delegated_bookings_map'));
   }
 
   Future<void> saveDelegatedBookingsMap(Map<String, String> map) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('delegated_bookings_map', jsonEncode(map));
+    await _prefs.setString('delegated_bookings_map', jsonEncode(map));
   }
 
   /// Persists a delegated booking for a given [date] and [workspaceId].
@@ -689,138 +813,38 @@ class StorageService {
   }
 
   Future<List<String>> getBookedElsewhereDates() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('booked_elsewhere_dates') ?? <String>[];
+    final Map<String, String> elsewhere = await getBookedElsewhereMap();
+    return elsewhere.keys.toList();
   }
 
   // ── Personal Elsewhere Reservations Map ───────────────────────────────────
   Future<void> saveBookedElsewhereMap(Map<String, String> map) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('booked_elsewhere_map', jsonEncode(map));
-    await prefs.setStringList('booked_elsewhere_dates', map.keys.toList());
+    await _reservationStore.replaceElsewhereMap(
+      map,
+      defaultWorkspaceId: await getWorkspaceId(),
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
   }
 
   Future<Map<String, String>> getBookedElsewhereMap() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('booked_elsewhere_map');
-    if (jsonStr != null && jsonStr.isNotEmpty) {
-      try {
-        final Object? decoded = jsonDecode(jsonStr);
-        if (decoded is Map<Object?, Object?>) {
-          return decoded.map<String, String>(
-            (k, v) => MapEntry<String, String>(k.toString(), v?.toString() ?? ''),
-          );
-        }
-      } catch (_) {}
-    }
-    // Fallback to legacy string list if map not yet saved
-    final legacyDates =
-        prefs.getStringList('booked_elsewhere_dates') ?? <String>[];
-    return <String, String>{for (final d in legacyDates) d: 'Ailleurs'};
+    return _reservationStore.elsewhereMap(
+      await getWorkspaceId(),
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
   }
 
   // ── Enriched User Reservations Map per Date ──────────────────────────────
-  static const String _userReservationsMapKey = 'user_reservations_map';
 
   /// Retrieves the enriched reservations map: { "YYYY-MM-DD": { "workspaceId": "...", "workspaceName": "..." } }
   Future<Map<String, Map<String, String>>> getUserReservationsMap() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString(_userReservationsMapKey);
-    if (jsonStr != null && jsonStr.isNotEmpty) {
-      final cached = _userReservationsCache;
-      if (cached != null && cached.rawJson == jsonStr) {
-        return <String, Map<String, String>>{
-          for (final entry in cached.value.entries)
-            entry.key: Map<String, String>.from(entry.value),
-        };
-      }
-      try {
-        final Object? decoded = jsonDecode(jsonStr);
-        if (decoded is Map<Object?, Object?>) {
-          final Map<String, Map<String, String>> result =
-              <String, Map<String, String>>{};
-          decoded.forEach((Object? key, Object? val) {
-            if (val is Map<Object?, Object?>) {
-              result[key.toString()] = val.map<String, String>(
-                (k, v) =>
-                    MapEntry<String, String>(k.toString(), v?.toString() ?? ''),
-              );
-            }
-          });
-          _userReservationsCache = (
-            rawJson: jsonStr,
-            value: <String, Map<String, String>>{
-              for (final entry in result.entries)
-                entry.key: Map<String, String>.from(entry.value),
-            },
-          );
-          return result;
-        }
-      } catch (_) {}
-    } else {
-      _userReservationsCache = null;
-    }
-
-    // Fallback & auto-migration from legacy keys
-    final result = <String, Map<String, String>>{};
-    final currentWsId = await getWorkspaceId() ?? '';
-    final currentWsName = await getWorkspaceName() ?? 'Mon bureau';
-    final booked = await getBookedDates();
-    for (final d in booked) {
-      result[d] = <String, String>{
-        'workspaceId': currentWsId,
-        'workspaceName': currentWsName,
-      };
-    }
-    final elsewhere = await getBookedElsewhereMap();
-    for (final entry in elsewhere.entries) {
-      if (!result.containsKey(entry.key)) {
-        result[entry.key] = <String, String>{
-          'workspaceId': '',
-          'workspaceName': entry.value,
-        };
-      }
-    }
-    final elsewhereDates = await getBookedElsewhereDates();
-    for (final d in elsewhereDates) {
-      if (!result.containsKey(d)) {
-        result[d] = <String, String>{
-          'workspaceId': '',
-          'workspaceName': elsewhere[d] ?? 'Ailleurs',
-        };
-      }
-    }
-    return result;
+    return _reservationStore.toLegacyUserReservationsMap();
   }
 
-  /// Persists the enriched reservations map and keeps legacy compatibility keys synchronized.
+  /// Persists the enriched reservations map to the canonical `reservations_v2` store.
   Future<void> saveUserReservationsMap(
     Map<String, Map<String, String>> map,
   ) async {
-    _userReservationsCache = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_userReservationsMapKey, jsonEncode(map));
-
-    final currentWsId = await getWorkspaceId();
-    final List<String> hereDates = <String>[];
-    final Map<String, String> elsewhereMap = <String, String>{};
-
-    for (final entry in map.entries) {
-      final wsId = entry.value['workspaceId'];
-      final wsName = entry.value['workspaceName'] ?? 'Ailleurs';
-      if (currentWsId != null &&
-          currentWsId.isNotEmpty &&
-          wsId != null &&
-          wsId.isNotEmpty &&
-          wsId.toLowerCase() == currentWsId.toLowerCase()) {
-        hereDates.add(entry.key);
-      } else {
-        elsewhereMap[entry.key] = wsName.isNotEmpty ? wsName : 'Ailleurs';
-      }
-    }
-
-    await saveBookedDates(hereDates);
-    await saveBookedElsewhereMap(elsewhereMap);
+    await _reservationStore.replaceFromLegacyUserReservationsMap(map);
   }
 
   /// Saves or updates a single user reservation.
@@ -829,90 +853,60 @@ class StorageService {
     String workspaceId,
     String workspaceName,
   ) async {
-    final map = await getUserReservationsMap();
-    map[date] = <String, String>{
-      'workspaceId': workspaceId,
-      'workspaceName': workspaceName,
-    };
-    await saveUserReservationsMap(map);
+    await _reservationStore.upsert(
+      ReservationEntry(
+        dateIso: date,
+        workspaceId: workspaceId,
+        workspaceName: workspaceName,
+        updatedAt: DateTime.now().toIso8601String(),
+      ),
+    );
   }
 
   /// Removes a single user reservation.
   Future<void> removeUserReservation(String date) async {
-    final map = await getUserReservationsMap();
-    map.remove(date);
-    await saveUserReservationsMap(map);
+    await _reservationStore.remove(date);
   }
 
   /// Dynamically partitions all cached reservations against the provided [currentWorkspaceId].
   Future<({Set<String> here, Map<String, String> elsewhere})>
       partitionUserReservations(String? currentWorkspaceId) async {
-    final map = await getUserReservationsMap();
-    final currentWsName = await getWorkspaceName() ?? 'Mon bureau';
-    final Set<String> here = <String>{};
-    final Map<String, String> elsewhere = <String, String>{};
-
-    for (final entry in map.entries) {
-      final wsId = entry.value['workspaceId'];
-      final wsName = entry.value['workspaceName'];
-      final matchesId = currentWorkspaceId != null &&
-          currentWorkspaceId.isNotEmpty &&
-          wsId != null &&
-          wsId.isNotEmpty &&
-          wsId.toLowerCase() == currentWorkspaceId.toLowerCase();
-      final matchesNameOnly =
-          (currentWorkspaceId == null || currentWorkspaceId.isEmpty) &&
-              currentWsName.isNotEmpty &&
-              wsName != null &&
-              wsName.isNotEmpty &&
-              wsName.toLowerCase() == currentWsName.toLowerCase();
-
-      if (matchesId || matchesNameOnly) {
-        here.add(entry.key);
-      } else {
-        elsewhere[entry.key] =
-            (wsName != null && wsName.isNotEmpty) ? wsName : 'Ailleurs';
-      }
-    }
-    return (here: here, elsewhere: elsewhere);
+    return _reservationStore.partition(
+      currentWorkspaceId,
+      defaultWorkspaceName: await getWorkspaceName(),
+    );
   }
 
   // ── Calendar Occupied by Others Map ───────────────────────────────────────
   Future<void> saveOccupiedByOthers(Map<String, String> map) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('occupied_by_others_map', jsonEncode(map));
+    await _prefs.setString('occupied_by_others_map', jsonEncode(map));
   }
 
   Future<Map<String, String>> getOccupiedByOthers() async {
-    final prefs = await SharedPreferences.getInstance();
-    return _decodeStringMap(prefs.getString('occupied_by_others_map'));
+    return _decodeStringMap(await _prefs.getString('occupied_by_others_map'));
   }
 
   // ── Days (recurring) ──────────────────────────────────────────────────────
 
   Future<void> saveDays(List<int> days) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
+    await _prefs.setStringList(
       'selected_days',
       days.map((e) => e.toString()).toList(),
     );
   }
 
   Future<List<int>> getDays() async {
-    final prefs = await SharedPreferences.getInstance();
-    final days = prefs.getStringList('selected_days');
+    final days = await _prefs.getStringList('selected_days');
     // Default to Tue (2) and Thu (4) — matching the original Python script
     return days?.map(int.parse).toList() ?? <int>[2, 4];
   }
 
   Future<void> saveAutomationEnabled(bool enabled) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('automation_enabled', enabled);
+    await _prefs.setBool('automation_enabled', enabled);
   }
 
   Future<bool> getAutomationEnabled() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('automation_enabled') ?? false;
+    return await _prefs.getBool('automation_enabled') ?? false;
   }
 
   // ── Multi-Desk Automation Rules (v1.7.0) ──────────────────────────────────
@@ -920,13 +914,11 @@ class StorageService {
   static const String _automationRulesKey = 'automation_rules_v1';
 
   Future<bool> hasAutomationRules() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.containsKey(_automationRulesKey);
+    return _prefs.containsKey(_automationRulesKey);
   }
 
   Future<List<AutomationRule>> getAutomationRules() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString(_automationRulesKey);
+    final jsonStr = await _prefs.getString(_automationRulesKey);
     if (jsonStr == null) {
       _automationRulesCache = null;
       final wsId = await getWorkspaceId();
@@ -992,8 +984,7 @@ class StorageService {
       normalized.add(rule.copyWith(days: uniqueDays));
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
+    await _prefs.setString(
       _automationRulesKey,
       jsonEncode(normalized.map((r) => r.toJson()).toList()),
     );
@@ -1027,119 +1018,98 @@ class StorageService {
   // ── Settings ─────────────────────────────────────────────────────────────
 
   Future<bool?> getDarkMode() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('dark_mode');
+    return _prefs.getBool('dark_mode');
   }
 
   Future<void> saveDarkMode(bool isDark) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('dark_mode', isDark);
+    await _prefs.setBool('dark_mode', isDark);
   }
 
   Future<void> saveAutomationTime(int hour, int minute) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('auto_time_hour', hour);
-    await prefs.setInt('auto_time_minute', minute);
+    await _prefs.setInt('auto_time_hour', hour);
+    await _prefs.setInt('auto_time_minute', minute);
   }
 
   Future<Map<String, int>> getAutomationTime() async {
-    final prefs = await SharedPreferences.getInstance();
     return <String, int>{
-      'hour': prefs.getInt('auto_time_hour') ?? 8,
-      'minute': prefs.getInt('auto_time_minute') ?? 0,
+      'hour': await _prefs.getInt('auto_time_hour') ?? 8,
+      'minute': await _prefs.getInt('auto_time_minute') ?? 0,
     };
   }
 
   Future<void> saveNotifySuccess(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('notify_success', val);
+    await _prefs.setBool('notify_success', val);
   }
 
   Future<bool> getNotifySuccess() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('notify_success') ?? true;
+    return await _prefs.getBool('notify_success') ?? true;
   }
 
   Future<void> saveNotifyFailure(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('notify_failure', val);
+    await _prefs.setBool('notify_failure', val);
   }
 
   Future<bool> getNotifyFailure() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('notify_failure') ?? true;
+    return await _prefs.getBool('notify_failure') ?? true;
   }
 
   Future<void> saveThemeColorIndex(int index) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('theme_color_index', index);
+    await _prefs.setInt('theme_color_index', index);
   }
 
   Future<int> getThemeColorIndex() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('theme_color_index') ?? 0;
+    return await _prefs.getInt('theme_color_index') ?? 0;
   }
 
   Future<void> saveAutoSync(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('auto_sync', val);
+    await _prefs.setBool('auto_sync', val);
   }
 
   Future<bool> getAutoSync() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('auto_sync') ?? true;
+    return await _prefs.getBool('auto_sync') ?? true;
   }
 
   Future<void> saveProjectionsCount(int val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('projections_count', val);
+    await _prefs.setInt('projections_count', val);
   }
 
   Future<int> getProjectionsCount() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('projections_count') ?? 4;
+    return await _prefs.getInt('projections_count') ?? 4;
   }
 
   Future<void> saveInitialTab(int val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('initial_tab', val);
+    await _prefs.setInt('initial_tab', val);
   }
 
   Future<int> getInitialTab() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('initial_tab') ?? 0;
+    return await _prefs.getInt('initial_tab') ?? 0;
   }
 
   Future<void> saveThemeModeIndex(int val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('theme_mode', val);
+    await _prefs.setInt('theme_mode', val);
   }
 
   Future<int> getThemeModeIndex() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('theme_mode') ?? 0; // 0: system, 1: light, 2: dark
+    return await _prefs.getInt('theme_mode') ?? 0; // 0: system, 1: light, 2: dark
   }
 
   // ── Hide weekends in calendar ─────────────────────────────────────────────
 
   Future<void> saveHideWeekends(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('hide_weekends', val);
+    await _prefs.setBool('hide_weekends', val);
   }
 
   Future<bool> getHideWeekends() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('hide_weekends') ?? true;
+    return await _prefs.getBool('hide_weekends') ?? true;
   }
 
   // ── Last sync timestamp (cache TTL) ──────────────────────────────────────
 
   Future<void> saveLastSyncTime({bool forceReset = false}) async {
-    final prefs = await SharedPreferences.getInstance();
     if (forceReset) {
-      await prefs.remove('last_sync_time');
+      await _prefs.remove('last_sync_time');
     } else {
-      await prefs.setInt(
+      await _prefs.setInt(
         'last_sync_time',
         DateTime.now().millisecondsSinceEpoch,
       );
@@ -1147,21 +1117,18 @@ class StorageService {
   }
 
   Future<DateTime?> getLastSyncTime() async {
-    final prefs = await SharedPreferences.getInstance();
-    final ms = prefs.getInt('last_sync_time');
+    final ms = await _prefs.getInt('last_sync_time');
     return ms != null ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
   }
 
   // ── New Customizations ───────────────────────────────────────────────────
 
   Future<void> saveVacations(List<Map<String, String>> vacations) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('vacation_periods', jsonEncode(vacations));
+    await _prefs.setString('vacation_periods', jsonEncode(vacations));
   }
 
   Future<List<Map<String, String>>> getVacations() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonString = prefs.getString('vacation_periods');
+    final jsonString = await _prefs.getString('vacation_periods');
     if (jsonString != null) {
       try {
         final Object? decoded = jsonDecode(jsonString);
@@ -1180,8 +1147,8 @@ class StorageService {
       return <Map<String, String>>[];
     } else {
       // Backward-compat: migrate old single-vacation keys
-      final oldStart = prefs.getString('vacation_start');
-      final oldEnd = prefs.getString('vacation_end');
+      final oldStart = await _prefs.getString('vacation_start');
+      final oldEnd = await _prefs.getString('vacation_end');
       if (oldStart != null && oldEnd != null) {
         return <Map<String, String>>[
           <String, String>{'start': oldStart, 'end': oldEnd},
@@ -1193,86 +1160,71 @@ class StorageService {
 
   // Kept for background_task backward-compat
   Future<Map<String, String?>> getVacationDates() async {
-    final prefs = await SharedPreferences.getInstance();
     return <String, String?>{
-      'start': prefs.getString('vacation_start'),
-      'end': prefs.getString('vacation_end'),
+      'start': await _prefs.getString('vacation_start'),
+      'end': await _prefs.getString('vacation_end'),
     };
   }
 
   Future<void> saveCompactMode(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('compact_mode', val);
+    await _prefs.setBool('compact_mode', val);
   }
 
   Future<bool> getCompactMode() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('compact_mode') ?? false;
+    return await _prefs.getBool('compact_mode') ?? false;
   }
 
   Future<void> saveFontFamilyIndex(int val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('font_family_index', val);
+    await _prefs.setInt('font_family_index', val);
   }
 
   Future<int> getFontFamilyIndex() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('font_family_index') ?? 0;
+    return await _prefs.getInt('font_family_index') ?? 0;
   }
 
   Future<void> saveUiScale(double val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('ui_scale', val);
+    await _prefs.setDouble('ui_scale', val);
   }
 
   Future<double> getUiScale() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getDouble('ui_scale') ?? 1.0;
+    return await _prefs.getDouble('ui_scale') ?? 1.0;
   }
 
   // ── Clear all (logout) ────────────────────────────────────────────────────
 
   Future<void> saveHasSeenOptimization(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('has_seen_optimization', val);
+    await _prefs.setBool('has_seen_optimization', val);
   }
 
   Future<bool> getHasSeenOptimization() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('has_seen_optimization') ?? false;
+    return await _prefs.getBool('has_seen_optimization') ?? false;
   }
 
   Future<void> saveAutostartVerified(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('autostart_verified', val);
+    await _prefs.setBool('autostart_verified', val);
   }
 
   Future<void> saveBatteryVerified(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('battery_verified', val);
+    await _prefs.setBool('battery_verified', val);
   }
 
   Future<bool> getBatteryVerified() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('battery_verified') ?? false;
+    return await _prefs.getBool('battery_verified') ?? false;
   }
 
   Future<bool> getAutostartVerified() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('autostart_verified') ?? false;
+    return await _prefs.getBool('autostart_verified') ?? false;
   }
 
   Future<void> saveLastAutomationRun() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(
+    await _prefs.setInt(
       'last_automation_run',
       DateTime.now().millisecondsSinceEpoch,
     );
   }
 
   Future<DateTime?> getLastAutomationRun() async {
-    final prefs = await SharedPreferences.getInstance();
-    final ms = prefs.getInt('last_automation_run');
+    final ms = await _prefs.getInt('last_automation_run');
     return ms != null ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
   }
 
@@ -1288,12 +1240,11 @@ class StorageService {
       } catch (_) {}
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    await _prefs.clear();
 
     if (remember && savedEmail != null && savedEmail.isNotEmpty) {
-      await prefs.setBool(_rememberEmailKey, true);
-      await prefs.setString(_savedEmailKey, savedEmail);
+      await _prefs.setBool(_rememberEmailKey, true);
+      await _prefs.setString(_savedEmailKey, savedEmail);
     }
   }
 
@@ -1305,9 +1256,8 @@ class StorageService {
 
   // 📊 Stats Tracking
   Future<void> recordFirstUse() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!prefs.containsKey('stats_first_use')) {
-      await prefs.setString(
+    if (!await _prefs.containsKey('stats_first_use')) {
+      await _prefs.setString(
         'stats_first_use',
         DateTime.now().toIso8601String(),
       );
@@ -1315,42 +1265,38 @@ class StorageService {
   }
 
   Future<DateTime> getFirstUse() async {
-    final prefs = await SharedPreferences.getInstance();
-    final d = prefs.getString('stats_first_use');
+    final d = await _prefs.getString('stats_first_use');
     if (d != null) {
       return DateTime.parse(d);
     } else {
       final now = DateTime.now();
-      await prefs.setString('stats_first_use', now.toIso8601String());
+      await _prefs.setString('stats_first_use', now.toIso8601String());
       return now;
     }
   }
 
   Future<void> recordBookingStat(bool isAuto) async {
-    final prefs = await SharedPreferences.getInstance();
     if (isAuto) {
-      final count = prefs.getInt('stats_auto_count') ?? 0;
-      await prefs.setInt('stats_auto_count', count + 1);
+      final count = await _prefs.getInt('stats_auto_count') ?? 0;
+      await _prefs.setInt('stats_auto_count', count + 1);
     } else {
-      final count = prefs.getInt('stats_manual_count') ?? 0;
-      await prefs.setInt('stats_manual_count', count + 1);
+      final count = await _prefs.getInt('stats_manual_count') ?? 0;
+      await _prefs.setInt('stats_manual_count', count + 1);
     }
   }
 
   Future<Map<String, int>> getBookingStats() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
+    await _prefs.reload();
     return <String, int>{
-      'manual': prefs.getInt('stats_manual_count') ?? 0,
-      'auto': prefs.getInt('stats_auto_count') ?? 0,
+      'manual': await _prefs.getInt('stats_manual_count') ?? 0,
+      'auto': await _prefs.getInt('stats_auto_count') ?? 0,
     };
   }
 
   // ── Favorite Colleagues (Milestone M2 - Requirement R2) ───────────────────
 
   Future<List<Colleague>> getFavoriteColleagues() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('favorite_colleagues');
+    final jsonStr = await _prefs.getString('favorite_colleagues');
     if (jsonStr != null && jsonStr.isNotEmpty) {
       try {
         final Object? decoded = jsonDecode(jsonStr);
@@ -1366,9 +1312,8 @@ class StorageService {
   }
 
   Future<void> saveFavoriteColleagues(List<Colleague> colleagues) async {
-    final prefs = await SharedPreferences.getInstance();
     final jsonStr = jsonEncode(colleagues.map((c) => c.toJson()).toList());
-    await prefs.setString('favorite_colleagues', jsonStr);
+    await _prefs.setString('favorite_colleagues', jsonStr);
   }
 
   Future<void> mergeFavoriteColleagues(List<Colleague> apiFavorites) async {
@@ -1469,11 +1414,10 @@ class StorageService {
     Map<String, DeskOccupant> occupants,
   ) async {
     _floorOccupantsCache.remove('${floorId}_$date');
-    final prefs = await SharedPreferences.getInstance();
     final jsonMap = occupants.map<String, Map<String, dynamic>>(
       (k, v) => MapEntry<String, Map<String, dynamic>>(k, v.toJson()),
     );
-    await prefs.setString(
+    await _prefs.setString(
       'floor_occupants_${floorId}_$date',
       jsonEncode(jsonMap),
     );
@@ -1484,8 +1428,7 @@ class StorageService {
     String date,
   ) async {
     final cacheKey = '${floorId}_$date';
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('floor_occupants_${floorId}_$date');
+    final jsonStr = await _prefs.getString('floor_occupants_${floorId}_$date');
     if (jsonStr != null && jsonStr.isNotEmpty) {
       final cached = _floorOccupantsCache[cacheKey];
       if (cached != null && cached.rawJson == jsonStr) {
@@ -1522,13 +1465,11 @@ class StorageService {
   // ── Floor Plan & Workspaces Persistence ───────────────────────────────────
   Future<void> saveFloorPlanData(String floorId, dynamic planData) async {
     _planCache.remove(floorId);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('floor_plan_$floorId', jsonEncode(planData));
+    await _prefs.setString('floor_plan_$floorId', jsonEncode(planData));
   }
 
   Future<dynamic> getFloorPlanData(String floorId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('floor_plan_$floorId');
+    final jsonStr = await _prefs.getString('floor_plan_$floorId');
     if (jsonStr != null && jsonStr.isNotEmpty) {
       final cached = _planCache[floorId];
       if (cached != null && cached.rawJson == jsonStr) {
@@ -1554,13 +1495,11 @@ class StorageService {
     List<Map<String, dynamic>> workspaces,
   ) async {
     _floorWorkspacesCache.remove(floorId);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('floor_workspaces_$floorId', jsonEncode(workspaces));
+    await _prefs.setString('floor_workspaces_$floorId', jsonEncode(workspaces));
   }
 
   Future<List<Map<String, dynamic>>> getFloorWorkspaces(String floorId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('floor_workspaces_$floorId');
+    final jsonStr = await _prefs.getString('floor_workspaces_$floorId');
     if (jsonStr != null && jsonStr.isNotEmpty) {
       final cached = _floorWorkspacesCache[floorId];
       if (cached != null && cached.rawJson == jsonStr) {
@@ -1592,13 +1531,11 @@ class StorageService {
 
   // ── Cached Sites & Floors Persistence ─────────────────────────────────────
   Future<void> saveCachedSites(List<Map<String, dynamic>> sites) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('cached_sites', jsonEncode(sites));
+    await _prefs.setString('cached_sites', jsonEncode(sites));
   }
 
   Future<List<Map<String, dynamic>>> getCachedSites() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('cached_sites');
+    final jsonStr = await _prefs.getString('cached_sites');
     if (jsonStr != null && jsonStr.isNotEmpty) {
       try {
         final Object? decoded = jsonDecode(jsonStr);
@@ -1617,13 +1554,11 @@ class StorageService {
     String siteId,
     List<Map<String, dynamic>> floors,
   ) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('cached_floors_$siteId', jsonEncode(floors));
+    await _prefs.setString('cached_floors_$siteId', jsonEncode(floors));
   }
 
   Future<List<Map<String, dynamic>>> getCachedFloors(String siteId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('cached_floors_$siteId');
+    final jsonStr = await _prefs.getString('cached_floors_$siteId');
     if (jsonStr != null && jsonStr.isNotEmpty) {
       try {
         final Object? decoded = jsonDecode(jsonStr);

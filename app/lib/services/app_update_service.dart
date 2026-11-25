@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import '../storage_service.dart';
+import '../utils/abi_helper.dart';
 
 /// Status returned by [AppUpdateService.checkForUpdates].
 enum AppUpdateStatus {
@@ -17,6 +18,8 @@ class AppUpdateInfo {
   final String latestVersion;
   final String releaseNotes;
   final String? apkUrl;
+  final String? universalApkUrl;
+  final String? matchedAbi;
   final String? zipUrl;
   final String? htmlUrl;
 
@@ -24,6 +27,8 @@ class AppUpdateInfo {
     required this.latestVersion,
     required this.releaseNotes,
     this.apkUrl,
+    this.universalApkUrl,
+    this.matchedAbi,
     this.zipUrl,
     this.htmlUrl,
   });
@@ -51,14 +56,17 @@ class AppUpdateService {
   final http.Client? client;
   final StorageService _storage;
   final Future<String> Function() _currentVersionProvider;
+  final Future<String?> Function() _abiProvider;
 
   AppUpdateService({
     this.client,
     StorageService? storage,
     Future<String> Function()? currentVersionProvider,
+    Future<String?> Function()? abiProvider,
   })  : _storage = storage ?? StorageService(),
         _currentVersionProvider =
-            currentVersionProvider ?? _defaultVersionProvider;
+            currentVersionProvider ?? _defaultVersionProvider,
+        _abiProvider = abiProvider ?? getPrimaryAndroidAbi;
 
   static Future<String> _defaultVersionProvider() async {
     final PackageInfo packageInfo = await PackageInfo.fromPlatform();
@@ -125,7 +133,8 @@ class AppUpdateService {
         return const AppUpdateCheckResult(status: AppUpdateStatus.upToDate);
       }
 
-      String? apkUrl;
+      final List<({String name, String url})> apkAssets =
+          <({String name, String url})>[];
       String? zipUrl;
       final Object? rawAssets = decoded['assets'];
       if (rawAssets is List<Object?>) {
@@ -135,14 +144,39 @@ class AppUpdateService {
                 (asset['name']?.toString() ?? '').toLowerCase();
             final String? downloadUrl =
                 asset['browser_download_url']?.toString();
-            if (name.endsWith('.apk') && apkUrl == null) {
-              apkUrl = downloadUrl;
+            if (name.endsWith('.apk') &&
+                downloadUrl != null &&
+                downloadUrl.isNotEmpty) {
+              apkAssets.add((name: name, url: downloadUrl));
             }
             if (name.endsWith('.zip') && zipUrl == null) {
               zipUrl = downloadUrl;
             }
           }
         }
+      }
+
+      final String? universalApkUrl = _findUniversalApkUrl(apkAssets);
+      final String? firstApkUrl =
+          apkAssets.isNotEmpty ? apkAssets.first.url : null;
+
+      String? matchedAbi;
+      String? apkUrl;
+      if (apkAssets.isNotEmpty) {
+        final String? rawAbi = await _abiProvider();
+        final String? abi =
+            (rawAbi != null && rawAbi.trim().isNotEmpty) ? rawAbi.trim() : null;
+        if (abi != null) {
+          final String abiSuffix = '-${abi.toLowerCase()}.apk';
+          for (final ({String name, String url}) asset in apkAssets) {
+            if (asset.name.contains(abiSuffix)) {
+              apkUrl = asset.url;
+              matchedAbi = abi;
+              break;
+            }
+          }
+        }
+        apkUrl ??= universalApkUrl ?? firstApkUrl;
       }
 
       final String releaseNotes = decoded['body']?.toString() ?? '';
@@ -154,6 +188,8 @@ class AppUpdateService {
           latestVersion: latestVersion,
           releaseNotes: releaseNotes,
           apkUrl: apkUrl,
+          universalApkUrl: universalApkUrl,
+          matchedAbi: matchedAbi,
           zipUrl: zipUrl,
           htmlUrl: htmlUrl,
         ),
@@ -167,5 +203,32 @@ class AppUpdateService {
         httpClient.close();
       }
     }
+  }
+
+  static const List<String> _abiSpecificSuffixes = <String>[
+    '-arm64-v8a.apk',
+    '-armeabi-v7a.apk',
+    '-x86_64.apk',
+    '-x86.apk',
+    '-riscv64.apk',
+  ];
+
+  static String? _findUniversalApkUrl(
+    List<({String name, String url})> apkAssets,
+  ) {
+    for (final ({String name, String url}) asset in apkAssets) {
+      if (asset.name.contains('-universal.apk')) {
+        return asset.url;
+      }
+    }
+    for (final ({String name, String url}) asset in apkAssets) {
+      final bool isAbiSpecific = _abiSpecificSuffixes.any(
+        (String suffix) => asset.name.endsWith(suffix),
+      );
+      if (!isAbiSpecific) {
+        return asset.url;
+      }
+    }
+    return null;
   }
 }

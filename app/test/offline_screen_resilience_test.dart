@@ -43,6 +43,11 @@ void main() {
       if (targetDate.weekday == DateTime.sunday) targetDate = targetDate.add(const Duration(days: 1));
       final dateStr = targetDate.toIso8601String().split('T').first;
 
+      var elsewhereDate = targetDate.add(const Duration(days: 1));
+      if (elsewhereDate.weekday == DateTime.saturday) elsewhereDate = elsewhereDate.add(const Duration(days: 2));
+      if (elsewhereDate.weekday == DateTime.sunday) elsewhereDate = elsewhereDate.add(const Duration(days: 1));
+      final elsewhereDateStr = elsewhereDate.toIso8601String().split('T').first;
+
       // 1. Seed storage with cached bookings, delegated bookings, and third-party occupancy
       SharedPreferences.setMockInitialValues({
         'refresh_token': 'mock-refresh-token',
@@ -51,8 +56,8 @@ void main() {
         'workspace_name': 'Bureau Principal 4A',
         'floor_id': 'fl-floor-1',
         'booked_dates': [dateStr],
-        'booked_elsewhere_map': jsonEncode({dateStr: 'Site Nord - Desk 12'}),
-        'booked_elsewhere_dates': [dateStr],
+        'booked_elsewhere_map': jsonEncode({elsewhereDateStr: 'Site Nord - Desk 12'}),
+        'booked_elsewhere_dates': [elsewhereDateStr],
         'delegated_bookings_map': jsonEncode({dateStr: 'Alice Dupont|Desk 3'}),
         'occupied_by_others_map': jsonEncode({dateStr: 'DUPONT Jean'}),
         'selected_days': ['1', '2', '3', '4', '5'],
@@ -88,7 +93,7 @@ void main() {
       final persistedOccupied = await storage.getOccupiedByOthers();
 
       expect(persistedBooked, contains(dateStr), reason: 'Personal reservations must not be wiped');
-      expect(persistedElsewhere.containsKey(dateStr), isTrue, reason: 'Elsewhere reservations must not be wiped');
+      expect(persistedElsewhere.containsKey(elsewhereDateStr), isTrue, reason: 'Elsewhere reservations must not be wiped');
       expect(persistedDelegated.containsKey(dateStr), isTrue, reason: 'Delegated reservations must not be wiped');
       expect(persistedOccupied.containsKey(dateStr), isTrue, reason: 'Occupancy must not be wiped');
 

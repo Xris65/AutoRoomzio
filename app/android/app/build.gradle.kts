@@ -24,6 +24,16 @@ android {
         manifestPlaceholders["appName"] = "AutoRoomzio"
     }
 
+    val isSplitPerAbi = project.findProperty("split-per-abi")?.toString()?.toBoolean() == true
+    if (isSplitPerAbi) {
+        splits {
+            abi {
+                isEnable = true
+                isUniversalApk = true
+            }
+        }
+    }
+
     val fallbackKeystore = file("autoroomzio.jks")
     val envKeystorePath = System.getenv("KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
     val resolvedReleaseKeystore = envKeystorePath?.let { file(it) }

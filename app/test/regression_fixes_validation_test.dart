@@ -40,19 +40,25 @@ void main() {
       await storage.saveWorkspaceId('ws-new-2');
       await storage.saveWorkspaceName('Bureau Nouveau');
 
-      // The new logic does NOT purge the storage!
-      // Verify storage still contains all booked and requested dates
-      final booked = await storage.getBookedDates();
-      expect(booked, containsAll(['2026-11-05', '2026-11-06']));
+      // The canonical ReservationStore does NOT purge reservations on workspace
+      // change: previous desk bookings remain preserved in reservations_v2 and
+      // automatically reclassify into bookedElsewhere until switched back.
+      final userMap = await storage.getUserReservationsMap();
+      expect(userMap.keys, containsAll(['2026-11-05', '2026-11-06', '2026-11-07']));
 
       final requested = await storage.getRequestedDates();
       expect(requested, contains('2026-11-12'));
 
       final elsewhere = await storage.getBookedElsewhereDates();
-      expect(elsewhere, contains('2026-11-07'));
+      expect(elsewhere, containsAll(['2026-11-05', '2026-11-06', '2026-11-07']));
 
       final wsName = await storage.getWorkspaceName();
       expect(wsName, equals('Bureau Nouveau'));
+
+      // Switching back to ws-old-1 immediately restores them as "here" dates
+      await storage.saveWorkspaceId('ws-old-1');
+      final bookedOnOld = await storage.getBookedDates();
+      expect(bookedOnOld, containsAll(['2026-11-05', '2026-11-06']));
     });
 
     testWidgets('Offline calendar sync preserves local cache and never overwrites with empty lists', (tester) async {
